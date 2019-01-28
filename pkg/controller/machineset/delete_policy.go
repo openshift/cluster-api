@@ -17,7 +17,7 @@ limitations under the License.
 package machineset
 
 import (
-	"sigs.k8s.io/cluster-api/pkg/apis/cluster/v1alpha1"
+	"sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
 )
 
 type deletePriority int
@@ -29,9 +29,9 @@ const (
 	mustNotDelete deletePriority = 0
 )
 
-type deletePriorityFunc func(machine *v1alpha1.Machine) deletePriority
+type deletePriorityFunc func(machine *v1beta1.Machine) deletePriority
 
-func simpleDeletePriority(machine *v1alpha1.Machine) deletePriority {
+func simpleDeletePriority(machine *v1beta1.Machine) deletePriority {
 	if machine.DeletionTimestamp != nil && !machine.DeletionTimestamp.IsZero() {
 		return mustDelete
 	}
@@ -43,21 +43,21 @@ func simpleDeletePriority(machine *v1alpha1.Machine) deletePriority {
 
 // TODO: Define machines deletion policies.
 // see: https://github.com/kubernetes/kube-deploy/issues/625
-func getMachinesToDeletePrioritized(filteredMachines []*v1alpha1.Machine, diff int, fun deletePriorityFunc) []*v1alpha1.Machine {
+func getMachinesToDeletePrioritized(filteredMachines []*v1beta1.Machine, diff int, fun deletePriorityFunc) []*v1beta1.Machine {
 	if diff >= len(filteredMachines) {
 		return filteredMachines
 	} else if diff <= 0 {
-		return []*v1alpha1.Machine{}
+		return []*v1beta1.Machine{}
 	}
 
-	machines := make(map[deletePriority][]*v1alpha1.Machine)
+	machines := make(map[deletePriority][]*v1beta1.Machine)
 
 	for _, machine := range filteredMachines {
 		priority := fun(machine)
 		machines[priority] = append(machines[priority], machine)
 	}
 
-	result := []*v1alpha1.Machine{}
+	result := []*v1beta1.Machine{}
 	for _, priority := range []deletePriority{
 		mustDelete,
 		betterDelete,

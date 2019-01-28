@@ -23,7 +23,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/cluster-api/pkg/apis/cluster/v1alpha1"
+	"sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -31,17 +31,17 @@ import (
 )
 
 func TestMachineSetToMachines(t *testing.T) {
-	machineSetList := &v1alpha1.MachineSetList{
+	machineSetList := &v1beta1.MachineSetList{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "MachineSetList",
 		},
-		Items: []v1alpha1.MachineSet{
+		Items: []v1beta1.MachineSet{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "withMatchingLabels",
 					Namespace: "test",
 				},
-				Spec: v1alpha1.MachineSetSpec{
+				Spec: v1beta1.MachineSetSpec{
 					Selector: metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"foo": "bar",
@@ -52,7 +52,7 @@ func TestMachineSetToMachines(t *testing.T) {
 		},
 	}
 	controller := true
-	m := v1alpha1.Machine{
+	m := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
@@ -68,7 +68,7 @@ func TestMachineSetToMachines(t *testing.T) {
 			},
 		},
 	}
-	m2 := v1alpha1.Machine{
+	m2 := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
@@ -77,7 +77,7 @@ func TestMachineSetToMachines(t *testing.T) {
 			Namespace: "test",
 		},
 	}
-	m3 := v1alpha1.Machine{
+	m3 := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
@@ -90,7 +90,7 @@ func TestMachineSetToMachines(t *testing.T) {
 		},
 	}
 	testsCases := []struct {
-		machine   v1alpha1.Machine
+		machine   v1beta1.Machine
 		mapObject handler.MapObject
 		expected  []reconcile.Request
 	}{
@@ -122,7 +122,7 @@ func TestMachineSetToMachines(t *testing.T) {
 		},
 	}
 
-	v1alpha1.AddToScheme(scheme.Scheme)
+	v1beta1.AddToScheme(scheme.Scheme)
 	r := &ReconcileMachineSet{
 		Client: fake.NewFakeClient(&m, &m2, &m3, machineSetList),
 		scheme: scheme.Scheme,
@@ -139,13 +139,13 @@ func TestMachineSetToMachines(t *testing.T) {
 func TestShouldExcludeMachine(t *testing.T) {
 	controller := true
 	testCases := []struct {
-		machineSet v1alpha1.MachineSet
-		machine    v1alpha1.Machine
+		machineSet v1beta1.MachineSet
+		machine    v1beta1.Machine
 		expected   bool
 	}{
 		{
-			machineSet: v1alpha1.MachineSet{},
-			machine: v1alpha1.Machine{
+			machineSet: v1beta1.MachineSet{},
+			machine: v1beta1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "withNoMatchingOwnerRef",
 					Namespace: "test",
@@ -161,8 +161,8 @@ func TestShouldExcludeMachine(t *testing.T) {
 			expected: true,
 		},
 		{
-			machineSet: v1alpha1.MachineSet{
-				Spec: v1alpha1.MachineSetSpec{
+			machineSet: v1beta1.MachineSet{
+				Spec: v1beta1.MachineSetSpec{
 					Selector: metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"foo": "bar",
@@ -170,7 +170,7 @@ func TestShouldExcludeMachine(t *testing.T) {
 					},
 				},
 			},
-			machine: v1alpha1.Machine{
+			machine: v1beta1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "withMatchingLabels",
 					Namespace: "test",
@@ -182,8 +182,8 @@ func TestShouldExcludeMachine(t *testing.T) {
 			expected: false,
 		},
 		{
-			machineSet: v1alpha1.MachineSet{},
-			machine: v1alpha1.Machine{
+			machineSet: v1beta1.MachineSet{},
+			machine: v1beta1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "withDeletionTimestamp",
 					Namespace:         "test",
@@ -206,12 +206,12 @@ func TestShouldExcludeMachine(t *testing.T) {
 }
 
 func TestAdoptOrphan(t *testing.T) {
-	m := v1alpha1.Machine{
+	m := v1beta1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "orphanMachine",
 		},
 	}
-	ms := v1alpha1.MachineSet{
+	ms := v1beta1.MachineSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "adoptOrphanMachine",
 		},
@@ -219,8 +219,8 @@ func TestAdoptOrphan(t *testing.T) {
 	controller := true
 	blockOwnerDeletion := true
 	testCases := []struct {
-		machineSet v1alpha1.MachineSet
-		machine    v1alpha1.Machine
+		machineSet v1beta1.MachineSet
+		machine    v1beta1.Machine
 		expected   []metav1.OwnerReference
 	}{
 		{
@@ -228,7 +228,7 @@ func TestAdoptOrphan(t *testing.T) {
 			machineSet: ms,
 			expected: []metav1.OwnerReference{
 				{
-					APIVersion:         v1alpha1.SchemeGroupVersion.String(),
+					APIVersion:         v1beta1.SchemeGroupVersion.String(),
 					Kind:               "MachineSet",
 					Name:               "adoptOrphanMachine",
 					UID:                "",
@@ -239,7 +239,7 @@ func TestAdoptOrphan(t *testing.T) {
 		},
 	}
 
-	v1alpha1.AddToScheme(scheme.Scheme)
+	v1beta1.AddToScheme(scheme.Scheme)
 	r := &ReconcileMachineSet{
 		Client: fake.NewFakeClient(&m),
 		scheme: scheme.Scheme,

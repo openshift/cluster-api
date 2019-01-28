@@ -18,27 +18,28 @@ package machineset
 
 import (
 	"context"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog"
-	"sigs.k8s.io/cluster-api/pkg/apis/cluster/v1alpha1"
+	"sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (c *ReconcileMachineSet) getMachineSetsForMachine(m *v1alpha1.Machine) []*v1alpha1.MachineSet {
+func (c *ReconcileMachineSet) getMachineSetsForMachine(m *v1beta1.Machine) []*v1beta1.MachineSet {
 	if len(m.Labels) == 0 {
 		klog.Warningf("No machine sets found for Machine %v because it has no labels", m.Name)
 		return nil
 	}
 
-	msList := &v1alpha1.MachineSetList{}
+	msList := &v1beta1.MachineSetList{}
 	listOptions := &client.ListOptions{
 		Namespace: m.Namespace,
 		// This is set so the fake client can be used for unit test. See:
 		// https://github.com/kubernetes-sigs/controller-runtime/issues/168
 		Raw: &metav1.ListOptions{
 			TypeMeta: metav1.TypeMeta{
-				APIVersion: v1alpha1.SchemeGroupVersion.String(),
+				APIVersion: v1beta1.SchemeGroupVersion.String(),
 				Kind:       "MachineSet",
 			},
 		},
@@ -50,7 +51,7 @@ func (c *ReconcileMachineSet) getMachineSetsForMachine(m *v1alpha1.Machine) []*v
 		return nil
 	}
 
-	var mss []*v1alpha1.MachineSet
+	var mss []*v1beta1.MachineSet
 	for idx := range msList.Items {
 		ms := &msList.Items[idx]
 		if hasMatchingLabels(ms, m) {
@@ -61,7 +62,7 @@ func (c *ReconcileMachineSet) getMachineSetsForMachine(m *v1alpha1.Machine) []*v
 	return mss
 }
 
-func hasMatchingLabels(machineSet *v1alpha1.MachineSet, machine *v1alpha1.Machine) bool {
+func hasMatchingLabels(machineSet *v1beta1.MachineSet, machine *v1beta1.Machine) bool {
 	selector, err := metav1.LabelSelectorAsSelector(&machineSet.Spec.Selector)
 	if err != nil {
 		klog.Warningf("unable to convert selector: %v", err)

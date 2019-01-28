@@ -24,7 +24,7 @@ import (
 
 	"context"
 
-	"sigs.k8s.io/cluster-api/pkg/apis/cluster/v1alpha1"
+	"sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
 	"sigs.k8s.io/cluster-api/pkg/controller/noderefutil"
 	"sigs.k8s.io/cluster-api/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,10 +32,10 @@ import (
 
 const (
 	// MachineAnnotationKey annotation used to link node and machine resource
-	MachineAnnotationKey = "cluster.k8s.io/machine"
+	MachineAnnotationKey = "machine.openshift.io/machine"
 )
 
-// We are using "cluster.k8s.io/machine" annotation to link node and machine resource. The "cluster.k8s.io/machine"
+// We are using "machine.openshift.io/machine" annotation to link node and machine resource. The "machine.openshift.io/machine"
 // annotation is an implementation detail of how the two objects can get linked together, but it is
 // not required behavior. However, in the event that a Machine.Spec update requires replacing the
 // Node, this can allow for faster turn-around time by allowing a new Node to be created with a new
@@ -66,7 +66,7 @@ func (c *ReconcileNode) link(node *corev1.Node) error {
 	namespace = util.GetNamespaceOrDefault(namespace)
 	key := client.ObjectKey{Namespace: namespace, Name: mach}
 
-	machine := &v1alpha1.Machine{}
+	machine := &v1beta1.Machine{}
 	if err = c.Client.Get(context.Background(), key, machine); err != nil {
 		klog.Errorf("Error getting machine %v: %v\n", mach, err)
 		return err
@@ -100,7 +100,7 @@ func (c *ReconcileNode) unlink(node *corev1.Node) error {
 	namespace = util.GetNamespaceOrDefault(namespace)
 	key := client.ObjectKey{Namespace: namespace, Name: mach}
 
-	machine := &v1alpha1.Machine{}
+	machine := &v1beta1.Machine{}
 	if err = c.Client.Get(context.Background(), key, machine); err != nil {
 		klog.Errorf("Error getting machine %v: %v\n", mach, err)
 		return err
