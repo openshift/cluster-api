@@ -31,10 +31,17 @@ const (
 
 type deletePriorityFunc func(machine *v1beta1.Machine) deletePriority
 
+// machineDeleteAnnotationKey annotates machines to be delete among first ones
+var machineDeleteAnnotationKey = "machine.openshift.io/cluster-api-delete-machine"
+
 func simpleDeletePriority(machine *v1beta1.Machine) deletePriority {
 	if machine.DeletionTimestamp != nil && !machine.DeletionTimestamp.IsZero() {
 		return mustDelete
 	}
+	if _, exists := machine.Annotations[machineDeleteAnnotationKey]; exists {
+		return mustDelete
+	}
+
 	if machine.Status.ErrorReason != nil || machine.Status.ErrorMessage != nil {
 		return betterDelete
 	}
