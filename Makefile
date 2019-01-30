@@ -63,6 +63,8 @@ deploy: manifests ## Deploy controller in the configured Kubernetes cluster in ~
 .PHONY: manifests
 manifests: ## Generate manifests e.g. CRD, RBAC etc.
 	go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go all
+	go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go crd --domain openshift.io
+	git checkout config/crds/cluster_v1alpha1_*
 
 .PHONY: fmt
 fmt: ## Run go fmt against code
