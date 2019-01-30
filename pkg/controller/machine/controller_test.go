@@ -23,49 +23,49 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/cluster-api/pkg/apis/cluster/v1alpha1"
+	"sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 func TestReconcileRequest(t *testing.T) {
-	machine1 := v1alpha1.Machine{
+	machine1 := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "create",
 			Namespace:  "default",
-			Finalizers: []string{v1alpha1.MachineFinalizer},
+			Finalizers: []string{v1beta1.MachineFinalizer},
 		},
 	}
-	machine2 := v1alpha1.Machine{
+	machine2 := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "update",
 			Namespace:  "default",
-			Finalizers: []string{v1alpha1.MachineFinalizer},
+			Finalizers: []string{v1beta1.MachineFinalizer},
 		},
 	}
 	time := metav1.Now()
-	machine3 := v1alpha1.Machine{
+	machine3 := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "delete",
 			Namespace:         "default",
-			Finalizers:        []string{v1alpha1.MachineFinalizer},
+			Finalizers:        []string{v1beta1.MachineFinalizer},
 			DeletionTimestamp: &time,
 		},
 	}
-	clusterList := v1alpha1.ClusterList{
+	clusterList := v1beta1.ClusterList{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "ClusterList",
 		},
-		Items: []v1alpha1.Cluster{
+		Items: []v1beta1.Cluster{
 			{
 				TypeMeta: metav1.TypeMeta{
 					Kind: "Cluster",
@@ -131,7 +131,7 @@ func TestReconcileRequest(t *testing.T) {
 	for _, tc := range testCases {
 		act := newTestActuator()
 		act.ExistsValue = tc.existsValue
-		v1alpha1.AddToScheme(scheme.Scheme)
+		v1beta1.AddToScheme(scheme.Scheme)
 		r := &ReconcileMachine{
 			Client:   fake.NewFakeClient(&clusterList, &machine1, &machine2, &machine3),
 			scheme:   scheme.Scheme,
