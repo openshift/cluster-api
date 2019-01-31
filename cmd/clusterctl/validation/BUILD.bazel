@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = ["validate_cluster_api_objects.go"],
-    importpath = "sigs.k8s.io/cluster-api/cmd/clusterctl/validation",
+    importpath = "github.com/openshift/cluster-api/cmd/clusterctl/validation",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/apis/cluster/common:go_default_library",
