@@ -19,13 +19,13 @@ limitations under the License.
 package fake
 
 import (
+	v1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	testing "k8s.io/client-go/testing"
-	v1beta1 "sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
 )
 
 // FakeMachines implements MachineInterface
@@ -131,7 +131,7 @@ func (c *FakeMachines) DeleteCollection(options *v1.DeleteOptions, listOptions v
 // Patch applies the patch and returns the patched machine.
 func (c *FakeMachines) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1beta1.Machine, err error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceAction(machinesResource, c.ns, name, data, subresources...), &v1beta1.Machine{})
+		Invokes(testing.NewPatchSubresourceAction(machinesResource, c.ns, name, pt, data, subresources...), &v1beta1.Machine{})
 
 	if obj == nil {
 		return nil, err
