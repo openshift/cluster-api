@@ -17,12 +17,13 @@ limitations under the License.
 package cert_test
 
 import (
+	"github.com/openshift/cluster-api/pkg/cert"
 	"io/ioutil"
 	"os"
 	"path"
 	"testing"
 
-	"sigs.k8s.io/cluster-api/pkg/cert"
+	"github.com/openshift/cluster-api/pkg/cert"
 )
 
 var (

@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"k8s.io/klog"
-	"sigs.k8s.io/cluster-api/cmd/clusterctl/clusterdeployer/clusterclient"
-	"sigs.k8s.io/cluster-api/cmd/clusterctl/clusterdeployer/provider"
-	clusterv1 "sigs.k8s.io/cluster-api/pkg/apis/cluster/v1alpha1"
-	"sigs.k8s.io/cluster-api/pkg/util"
+	"github.com/openshift/cluster-api/cmd/clusterctl/clusterdeployer/clusterclient"
+	"github.com/openshift/cluster-api/cmd/clusterctl/clusterdeployer/provider"
+	clusterv1 "github.com/openshift/cluster-api/pkg/apis/cluster/v1alpha1"
+	"github.com/openshift/cluster-api/pkg/util"
 )
 
 const (
