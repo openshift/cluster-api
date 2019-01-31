@@ -19,12 +19,12 @@ limitations under the License.
 package v1beta1
 
 import (
+	v1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
+	scheme "github.com/openshift/cluster-api/pkg/client/clientset_generated/clientset/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	rest "k8s.io/client-go/rest"
-	v1beta1 "sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
-	scheme "sigs.k8s.io/cluster-api/pkg/client/clientset_generated/clientset/scheme"
 )
 
 // MachineClassesGetter has a method to return a MachineClassInterface.

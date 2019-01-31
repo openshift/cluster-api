@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 
+	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,10 +32,9 @@ import (
 	apirand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog"
-	machinev1beta1 "sigs.k8s.io/cluster-api/pkg/apis/machine/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	dutil "sigs.k8s.io/cluster-api/pkg/controller/machinedeployment/util"
+	dutil "github.com/openshift/cluster-api/pkg/controller/machinedeployment/util"
 )
 
 // sync is responsible for reconciling deployments on scaling events or when they
