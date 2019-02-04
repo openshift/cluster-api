@@ -20,6 +20,13 @@ set -o pipefail
 
 REPO_ROOT=$(dirname "${BASH_SOURCE}")/..
 
+go get -u github.com/golang/dep/cmd/dep
+wget -q https://github.com/bazelbuild/bazel/releases/download/0.22.0/bazel-0.22.0-linux-x86_64 -O bazel
+chmod +x bazel
+export PATH="$(pwd):${PATH}"
+export USER=root
+export TEST_TMPDIR="$(pwd)/_output/.cache"
+
 cd $REPO_ROOT && \
 	source ./scripts/fetch_ext_bins.sh && \
 	fetch_tools && \
