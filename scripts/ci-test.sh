@@ -18,8 +18,6 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-export SKIP_FETCH_TOOLS=1
-
 REPO_ROOT=$(dirname "${BASH_SOURCE}")/..
 
 cd $REPO_ROOT && \
