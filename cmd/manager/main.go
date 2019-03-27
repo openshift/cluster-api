@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 
 	"github.com/openshift/cluster-api/pkg/apis"
 	"github.com/openshift/cluster-api/pkg/controller"
@@ -41,7 +42,10 @@ func main() {
 	}
 
 	// Create a new Cmd to provide shared dependencies and start components
-	mgr, err := manager.New(cfg, manager.Options{})
+	syncPeriod := 10 * time.Minute
+	mgr, err := manager.New(cfg, manager.Options{
+		SyncPeriod: &syncPeriod,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
