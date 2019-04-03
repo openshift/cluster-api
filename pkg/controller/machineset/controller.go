@@ -234,6 +234,10 @@ func (c *ReconcileMachineSet) syncReplicas(ms *machinev1beta1.MachineSet, machin
 	}
 	diff := len(machines) - int(*(ms.Spec.Replicas))
 
+	if err := r.resyncExistingReplicas(ms, machines); err != nil {
+		return errors.Errorf("error resyncing existing replicas: %v", err)
+	}
+
 	if diff < 0 {
 		diff *= -1
 		klog.Infof("Too few replicas for %v %s/%s, need %d, creating %d", controllerKind, ms.Namespace, ms.Name, *(ms.Spec.Replicas), diff)
@@ -384,5 +388,63 @@ func (c *ReconcileMachineSet) waitForMachineDeletion(machineList []*machinev1bet
 			return errors.Wrap(pollErr, "failed waiting for machine object to be deleted")
 		}
 	}
+	return nil
+}
+
+func (r *ReconcileMachineSet) resyncExistingReplicas(ms *machinev1beta1.MachineSet, machines []*machinev1beta1.Machine) error {
+	var errstrings []string
+
+	// Sync new labels and taints additivelly
+	for i := range machines {
+		klog.V(4).Infof("Applying ms.Spec.Template.Spec.Labels: %v", ms.Spec.Template.Spec.Labels)
+
+		if machines[i].Spec.Labels == nil {
+			machines[i].Spec.Labels = make(map[string]string)
+		}
+
+		if machines[i].Spec.Taints == nil {
+			machines[i].Spec.Taints = make([]corev1.Taint, 0)
+		}
+
+		modified := false
+		for key, value := range ms.Spec.Template.Spec.Labels {
+			if _, exists := machines[i].Spec.Labels[key]; exists {
+				continue
+			}
+			// Only add new labels
+			machines[i].Spec.Labels[key] = value
+			klog.Infof("Addding label %v to machine %v", value, machines[i].Name)
+			modified = true
+		}
+
+		for i, taint := range ms.Spec.Template.Spec.Taints {
+			klog.Infof("Adding taint %v from machineset %q to machine %q", taint, ms.Name, machines[i].Name)
+			alreadyPresent := false
+			for _, machineTaint := range machines[i].Spec.Taints {
+				if taint.Key == machineTaint.Key && taint.Effect == machineTaint.Effect {
+					klog.Infof("Skipping to add machineset taint, %v, to the machine. Machine already has a taint with the same key and effect", machineTaint)
+					alreadyPresent = true
+					break
+				}
+			}
+			if !alreadyPresent {
+				machines[i].Spec.Taints = append(machines[i].Spec.Taints, taint)
+			}
+			modified = true
+		}
+
+		if modified {
+			// TODO(jchaloup): use Patch operation once implemented in the controller-runtime
+			if err := r.Client.Update(context.Background(), machines[i]); err != nil {
+				errstrings = append(errstrings, err.Error())
+				klog.Errorf("Unable to add labels to machine %q: %v", machines[i].Name, err)
+			}
+		}
+	}
+
+	if len(errstrings) > 0 {
+		return errors.New(strings.Join(errstrings, "; "))
+	}
+
 	return nil
 }
