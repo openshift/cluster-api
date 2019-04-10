@@ -170,17 +170,13 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 		// deleted without a manual intervention.
 		if _, exists := m.ObjectMeta.Annotations[ExcludeNodeDrainingAnnotation]; !exists && m.Status.NodeRef != nil {
 			if err := r.drainNode(m); err != nil {
-				return reconcile.Result{}, err
+				return delayIfRequeueAfterError(err)
 			}
 		}
 
 		if err := r.actuator.Delete(ctx, cluster, m); err != nil {
 			klog.Errorf("Error deleting machine object %v; %v", name, err)
-			if requeueErr, ok := err.(*controllerError.RequeueAfterError); ok {
-				klog.Infof("Actuator returned requeue-after error: %v", requeueErr)
-				return reconcile.Result{Requeue: true, RequeueAfter: requeueErr.RequeueAfter}, nil
-			}
-			return reconcile.Result{}, err
+			return delayIfRequeueAfterError(err)
 		}
 
 		if m.Status.NodeRef != nil {
@@ -209,11 +205,7 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 	if exist {
 		klog.Infof("Reconciling machine object %v triggers idempotent update.", name)
 		if err := r.actuator.Update(ctx, cluster, m); err != nil {
-			if requeueErr, ok := err.(*controllerError.RequeueAfterError); ok {
-				klog.Infof("Actuator returned requeue-after error: %v", requeueErr)
-				return reconcile.Result{Requeue: true, RequeueAfter: requeueErr.RequeueAfter}, nil
-			}
-			return reconcile.Result{}, err
+			return delayIfRequeueAfterError(err)
 		}
 		return reconcile.Result{}, nil
 	}
@@ -221,11 +213,7 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 	klog.Infof("Reconciling machine object %v triggers idempotent create.", m.ObjectMeta.Name)
 	if err := r.actuator.Create(ctx, cluster, m); err != nil {
 		klog.Warningf("unable to create machine %v: %v", name, err)
-		if requeueErr, ok := err.(*controllerError.RequeueAfterError); ok {
-			klog.Infof("Actuator returned requeue-after error: %v", requeueErr)
-			return reconcile.Result{Requeue: true, RequeueAfter: requeueErr.RequeueAfter}, nil
-		}
-		return reconcile.Result{}, err
+		return delayIfRequeueAfterError(err)
 	}
 	return reconcile.Result{}, nil
 }
@@ -322,4 +310,13 @@ func (r *ReconcileMachine) deleteNode(ctx context.Context, name string) error {
 		return err
 	}
 	return r.Client.Delete(ctx, &node)
+}
+
+func delayIfRequeueAfterError(err error) (reconcile.Result, error) {
+	switch t := err.(type) {
+	case *controllerError.RequeueAfterError:
+		klog.Infof("Actuator returned requeue-after error: %v", err)
+		return reconcile.Result{Requeue: true, RequeueAfter: t.RequeueAfter}, nil
+	}
+	return reconcile.Result{}, err
 }
