@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/cluster-api/pkg/apis/cluster/common"
 )
 
@@ -234,6 +235,18 @@ type MachineVersionInfo struct {
 }
 
 /// [MachineVersionInfo]
+
+func (m *Machine) Validate() field.ErrorList {
+	errors := field.ErrorList{}
+
+	// validate provider config is set
+	fldPath := field.NewPath("spec")
+	if m.Spec.ProviderSpec.Value == nil && m.Spec.ProviderSpec.ValueFrom == nil {
+		errors = append(errors, field.Invalid(fldPath.Child("spec").Child("providerspec"), m.Spec.ProviderSpec, "at least one of value or valueFrom fields must be set"))
+	}
+
+	return errors
+}
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
