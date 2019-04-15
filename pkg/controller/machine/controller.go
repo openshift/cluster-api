@@ -198,7 +198,9 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 		// by cloud controller manager. In that case some machines would never get
 		// deleted without a manual intervention.
 		if _, exists := m.ObjectMeta.Annotations[ExcludeNodeDrainingAnnotation]; !exists && m.Status.NodeRef != nil {
+			klog.Infof("Draining node %q for machine %q", m.Status.NodeRef.Name, m.Name)
 			if err := r.drainNode(m); err != nil {
+				klog.Errorf("Error draining node %q", m.Status.NodeRef.Name)
 				return delayIfRequeueAfterError(err)
 			}
 		}
@@ -259,6 +261,10 @@ func (r *ReconcileMachine) drainNode(machine *machinev1.Machine) error {
 	}
 	node, err := kubeClient.CoreV1().Nodes().Get(machine.Status.NodeRef.Name, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.Infof("Skipping node draining, node %v does not exist", machine.ObjectMeta.Name)
+			return nil
+		}
 		return fmt.Errorf("unable to get node %q: %v", machine.Status.NodeRef.Name, err)
 	}
 
