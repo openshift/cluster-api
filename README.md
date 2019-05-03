@@ -1,4 +1,10 @@
 # Cluster API
+
+## OpenShift Machine API Implementation
+This branch focuses on the machine API piece of the [Cluster API project](https://github.com/kubernetes-sigs/cluster-api).
+It provides ability to manage Kubernetes supportable hosts in the context of OpenShift.
+Once the Cluster API project becomes stable we might consolidate this branch back with the Upstream API and controllers
+
 ## What is the Cluster API?
 
 The Cluster API is a Kubernetes project to bring declarative, Kubernetes-style
