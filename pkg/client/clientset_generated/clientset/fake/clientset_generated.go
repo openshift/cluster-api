@@ -75,8 +75,3 @@ var _ clientset.Interface = &Clientset{}
 func (c *Clientset) ClusterV1alpha1() clusterv1alpha1.ClusterV1alpha1Interface {
 	return &fakeclusterv1alpha1.FakeClusterV1alpha1{Fake: &c.Fake}
 }
-
-// Cluster retrieves the ClusterV1alpha1Client
-func (c *Clientset) Cluster() clusterv1alpha1.ClusterV1alpha1Interface {
-	return &fakeclusterv1alpha1.FakeClusterV1alpha1{Fake: &c.Fake}
-}
