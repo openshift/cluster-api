@@ -26,6 +26,7 @@ import (
 	clusterv1 "github.com/openshift/cluster-api/pkg/apis/cluster/v1alpha1"
 	machinev1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 	controllerError "github.com/openshift/cluster-api/pkg/controller/error"
+	"github.com/openshift/cluster-api/pkg/metrics"
 	"github.com/openshift/cluster-api/pkg/util"
 	kubedrain "github.com/openshift/kubernetes-drain"
 	corev1 "k8s.io/api/core/v1"
@@ -203,11 +204,15 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 				return delayIfRequeueAfterError(err)
 			}
 		}
-
+		metrics.RegisterMachineDelete()
+		deleteStartTime := time.Now()
 		if err := r.actuator.Delete(ctx, cluster, m); err != nil {
 			klog.Errorf("Failed to delete machine %q: %v", name, err)
+			metrics.UpdateDurationFromStart(metrics.Delete, deleteStartTime)
+			metrics.RegisterFailedMachineDelete(err.Error())
 			return delayIfRequeueAfterError(err)
 		}
+		metrics.UpdateDurationFromStart(metrics.Delete, deleteStartTime)
 
 		if m.Status.NodeRef != nil {
 			klog.Infof("Deleting node %q for machine %q", m.Status.NodeRef.Name, m.Name)
@@ -245,10 +250,15 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 
 	// Machine resource created. Machine does not yet exist.
 	klog.Infof("Reconciling machine object %v triggers idempotent create.", m.ObjectMeta.Name)
+	metrics.RegisterMachineCreate()
+	createStartTime := time.Now()
 	if err := r.actuator.Create(ctx, cluster, m); err != nil {
+		metrics.UpdateDurationFromStart(metrics.Create, createStartTime)
 		klog.Warningf("Failed to create machine %q: %v", name, err)
+		metrics.RegisterFailedMachineCreate(err.Error())
 		return delayIfRequeueAfterError(err)
 	}
+	metrics.UpdateDurationFromStart(metrics.Create, createStartTime)
 
 	return reconcile.Result{}, nil
 }
