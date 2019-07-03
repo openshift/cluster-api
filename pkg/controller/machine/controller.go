@@ -335,6 +335,11 @@ func (r *ReconcileMachine) getCluster(ctx context.Context, machine *machinev1.Ma
 }
 
 func (r *ReconcileMachine) isDeleteAllowed(machine *machinev1.Machine) bool {
+	_, exists := m.ObjectMeta.Annotations[machinev1.PreserveInstanceAnnotation]
+	if exists {
+		return false
+	}
+
 	if r.nodeName == "" || machine.Status.NodeRef == nil {
 		return true
 	}

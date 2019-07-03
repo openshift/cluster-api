@@ -37,6 +37,10 @@ const (
 	// MachineClusterIDLabel is the label that a machine must have to identify the
 	// cluster to which it belongs.
 	MachineClusterIDLabel = "machine.openshift.io/cluster-api-cluster"
+
+	// PreserveInstanceAnnotation prevents a VM from being deleted by the
+	// machine-controller and will cause machine-controller to requeue.
+	PreserveInstanceAnnotation = "machine.openshift.io/preserve-instance"
 )
 
 // +genclient
