@@ -335,29 +335,8 @@ func (r *ReconcileMachine) getCluster(ctx context.Context, machine *machinev1.Ma
 }
 
 func (r *ReconcileMachine) isDeleteAllowed(machine *machinev1.Machine) bool {
-	_, exists := m.ObjectMeta.Annotations[machinev1.PreserveInstanceAnnotation]
-	if exists {
-		return false
-	}
-
-	if r.nodeName == "" || machine.Status.NodeRef == nil {
-		return true
-	}
-
-	if machine.Status.NodeRef.Name != r.nodeName {
-		return true
-	}
-
-	node := &corev1.Node{}
-	if err := r.Client.Get(context.Background(), client.ObjectKey{Name: r.nodeName}, node); err != nil {
-		klog.Infof("Failed to determine if controller's node %q is associated with machine %q: %v", r.nodeName, machine.Name, err)
-		return true
-	}
-
-	// When the UID of the machine's node reference and this controller's actual node match then then the request is to
-	// delete the machine this machine-controller is running on. Return false to not allow machine controller to delete its
-	// own machine.
-	return node.UID != machine.Status.NodeRef.UID
+	_, exists := machine.ObjectMeta.Annotations[machinev1.PreserveInstanceAnnotation]
+	return !exists
 }
 
 func (r *ReconcileMachine) deleteNode(ctx context.Context, name string) error {
