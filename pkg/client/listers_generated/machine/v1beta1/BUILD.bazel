@@ -12,7 +12,7 @@ go_library(
     importpath = "github.com/openshift/cluster-api/pkg/client/listers_generated/machine/v1beta1",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/apis/machine/v1beta1:go_default_library",
+        "//vendor/github.com/openshift/cluster-api/pkg/apis/machine/v1beta1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/api/errors:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/labels:go_default_library",
         "//vendor/k8s.io/client-go/tools/cache:go_default_library",

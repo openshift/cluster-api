@@ -13,8 +13,8 @@ go_library(
     importpath = "github.com/openshift/cluster-api/pkg/client/clientset_generated/clientset/typed/machine/v1beta1/fake",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/apis/machine/v1beta1:go_default_library",
-        "//pkg/client/clientset_generated/clientset/typed/machine/v1beta1:go_default_library",
+        "//vendor/github.com/openshift/cluster-api/pkg/apis/machine/v1beta1:go_default_library",
+        "//vendor/github.com/openshift/cluster-api/pkg/client/clientset_generated/clientset/typed/machine/v1beta1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/labels:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/runtime/schema:go_default_library",
