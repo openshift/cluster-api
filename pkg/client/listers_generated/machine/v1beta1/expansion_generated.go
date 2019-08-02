@@ -34,6 +34,14 @@ type MachineClassListerExpansion interface{}
 // MachineClassNamespaceLister.
 type MachineClassNamespaceListerExpansion interface{}
 
+// MachineControlPlaneSetListerExpansion allows custom methods to be added to
+// MachineControlPlaneSetLister.
+type MachineControlPlaneSetListerExpansion interface{}
+
+// MachineControlPlaneSetNamespaceListerExpansion allows custom methods to be added to
+// MachineControlPlaneSetNamespaceLister.
+type MachineControlPlaneSetNamespaceListerExpansion interface{}
+
 // MachineDeploymentListerExpansion allows custom methods to be added to
 // MachineDeploymentLister.
 type MachineDeploymentListerExpansion interface{}

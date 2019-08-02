@@ -29,6 +29,7 @@ type MachineV1beta1Interface interface {
 	RESTClient() rest.Interface
 	MachinesGetter
 	MachineClassesGetter
+	MachineControlPlaneSetsGetter
 	MachineDeploymentsGetter
 	MachineSetsGetter
 }
@@ -44,6 +45,10 @@ func (c *MachineV1beta1Client) Machines(namespace string) MachineInterface {
 
 func (c *MachineV1beta1Client) MachineClasses(namespace string) MachineClassInterface {
 	return newMachineClasses(c, namespace)
+}
+
+func (c *MachineV1beta1Client) MachineControlPlaneSets(namespace string) MachineControlPlaneSetInterface {
+	return newMachineControlPlaneSets(c, namespace)
 }
 
 func (c *MachineV1beta1Client) MachineDeployments(namespace string) MachineDeploymentInterface {

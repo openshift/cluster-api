@@ -20,6 +20,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+/// [MachineControlPlaneSet]
+// MachineControlPlaneSet is the Schema for the machineControlPlaneSet API
+// +k8s:openapi-gen=true
+// +kubebuilder:subresource:status
 type MachineControlPlaneSet struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -28,17 +35,25 @@ type MachineControlPlaneSet struct {
 	Status MachineControlPlaneSetStatus `json:"status,omitempty"`
 }
 
+/// [MachineControlPlaneSet]
+
+/// [MachineControlPlaneSetSpec]
+// MachineControlPlaneSetSpec is spec for mcps
 type MachineControlPlaneSetSpec struct {
 	// PlaceHolder doesn't do much
 	PlaceHolder string `json:"placeHolder,omitempty"`
 }
 
-/// [MachineSetStatus]
-// MachineSetStatus defines the observed state of MachineSet
+/// [MachineControlPlaneSetSpec]
+
+/// [MachineControlPlaneSetStatus]
+// MachineControlPlaneSetStatus defines the observed state of MachineControlPlaneSet
 type MachineControlPlaneSetStatus struct {
 	// Replicas is the most recently observed number of replicas.
 	ControlPlaneMachines []ControlPlaneMachine `json:"controlPlaneMachines,omitempty"`
 }
+
+/// [MachineControlPlaneSetStatus]
 
 type ControlPlaneMachine struct {
 	Name string `json:"name,omitempty"`
@@ -46,7 +61,9 @@ type ControlPlaneMachine struct {
 	ReplacementInProgress *bool `json:"replacementInProgress,omitempty"`
 }
 
-// MachineList contains a list of Machine
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// MachineControlPlaneSetList contains a list of MachineControlPlaneSet
 type MachineControlPlaneSetList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

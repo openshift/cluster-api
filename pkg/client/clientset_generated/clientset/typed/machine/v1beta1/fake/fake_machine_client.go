@@ -36,6 +36,10 @@ func (c *FakeMachineV1beta1) MachineClasses(namespace string) v1beta1.MachineCla
 	return &FakeMachineClasses{c, namespace}
 }
 
+func (c *FakeMachineV1beta1) MachineControlPlaneSets(namespace string) v1beta1.MachineControlPlaneSetInterface {
+	return &FakeMachineControlPlaneSets{c, namespace}
+}
+
 func (c *FakeMachineV1beta1) MachineDeployments(namespace string) v1beta1.MachineDeploymentInterface {
 	return &FakeMachineDeployments{c, namespace}
 }

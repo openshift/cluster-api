@@ -28,6 +28,8 @@ type Interface interface {
 	Machines() MachineInformer
 	// MachineClasses returns a MachineClassInformer.
 	MachineClasses() MachineClassInformer
+	// MachineControlPlaneSets returns a MachineControlPlaneSetInformer.
+	MachineControlPlaneSets() MachineControlPlaneSetInformer
 	// MachineDeployments returns a MachineDeploymentInformer.
 	MachineDeployments() MachineDeploymentInformer
 	// MachineSets returns a MachineSetInformer.
@@ -53,6 +55,11 @@ func (v *version) Machines() MachineInformer {
 // MachineClasses returns a MachineClassInformer.
 func (v *version) MachineClasses() MachineClassInformer {
 	return &machineClassInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// MachineControlPlaneSets returns a MachineControlPlaneSetInformer.
+func (v *version) MachineControlPlaneSets() MachineControlPlaneSetInformer {
+	return &machineControlPlaneSetInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // MachineDeployments returns a MachineDeploymentInformer.

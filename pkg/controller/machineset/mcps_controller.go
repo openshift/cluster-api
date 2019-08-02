@@ -23,6 +23,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+    "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
+    "sigs.k8s.io/controller-runtime/pkg/source"
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 )
 

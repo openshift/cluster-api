@@ -22,6 +22,8 @@ type MachineExpansion interface{}
 
 type MachineClassExpansion interface{}
 
+type MachineControlPlaneSetExpansion interface{}
+
 type MachineDeploymentExpansion interface{}
 
 type MachineSetExpansion interface{}
