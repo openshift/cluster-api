@@ -116,11 +116,10 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 
     added := r.findAddMasters(mcps, allMachinesList.Items)
     if len(added) > 0 {
-        replacing := false
         for _, mName := range added {
             cpToAdd := machinev1beta1.ControlPlaneMachine{
-                Name: &mName,
-                ReplacementInProgress: &replacing,
+                Name: mName,
+                ReplacementInProgress: false,
             }
             newStatusCPM = append(newStatusCPM, cpToAdd)
         }
@@ -150,10 +149,7 @@ func (r *ReconcileMachineControlPlaneSet) findAddMasters(mcps *machinev1beta1.Ma
     for _, machineName := range cpMachineNames {
         exists := false
         for _, cp := range mcps.Status.ControlPlaneMachines {
-            if cp.Name == nil {
-                continue
-            }
-            if machineName == *cp.Name {
+            if machineName == cp.Name {
                 exists = true
                 break
             }
