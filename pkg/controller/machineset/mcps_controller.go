@@ -114,11 +114,20 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
         return reconcile.Result{}, errors.Wrap(err, "failed to list machines")
     }
 
-    added := r.findAddMasters(mcps, &newStatusCPM, allMachinesList.Items)
-    if added {
-        mcps.Status.ControlPlaneMachines = newStatusCPM
+    added := r.findAddMasters(mcps, allMachinesList.Items)
+    if len(added) > 0 {
+        replacing := false
+        for _, mName := range added {
+            cpToAdd := machinev1beta1.ControlPlaneMachine{
+                Name: &mName,
+                ReplacementInProgress: &replacing,
+            }
+            newStatusCPM = append(newStatusCPM, cpToAdd)
+        }
+        newMCPS := mcps.DeepCopy()
+        newMCPS.Status.ControlPlaneMachines = newStatusCPM
         klog.Infof("mcps status: %v", mcps.Status)
-        if err := r.Client.Status().Update(context.Background(), mcps); err != nil {
+        if err := r.Client.Status().Update(context.Background(), newMCPS); err != nil {
 			klog.Errorf("Failed to add masters: %v", err)
 			return reconcile.Result{}, err
 		}
@@ -133,14 +142,17 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
     return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineControlPlaneSet) findAddMasters(mcps *machinev1beta1.MachineControlPlaneSet, newStatusCPM *[]machinev1beta1.ControlPlaneMachine, allMachines []machinev1beta1.Machine) bool {
+func (r *ReconcileMachineControlPlaneSet) findAddMasters(mcps *machinev1beta1.MachineControlPlaneSet, allMachines []machinev1beta1.Machine) []string {
     klog.Infof("Looking for masters")
     cpMachineNames := r.filterMasters(allMachines)
     klog.Infof("found masters: %v", cpMachineNames)
-    added := false
+    mastersToAdd := []string{}
     for _, machineName := range cpMachineNames {
         exists := false
         for _, cp := range mcps.Status.ControlPlaneMachines {
+            if cp.Name == nil {
+                continue
+            }
             if machineName == *cp.Name {
                 exists = true
                 break
@@ -149,16 +161,10 @@ func (r *ReconcileMachineControlPlaneSet) findAddMasters(mcps *machinev1beta1.Ma
         if exists {
             continue
         }
-        replacing := false
-        cpToAdd := machinev1beta1.ControlPlaneMachine{
-            Name: &machineName,
-            ReplacementInProgress: &replacing,
-        }
         klog.Infof("adding master to status: %v", machineName)
-        *newStatusCPM = append(*newStatusCPM, cpToAdd)
-        added = true
+        mastersToAdd = append(mastersToAdd, machineName)
     }
-    return added
+    return mastersToAdd
 }
 
 func (r *ReconcileMachineControlPlaneSet) filterMasters(machines []machinev1beta1.Machine) []string {
