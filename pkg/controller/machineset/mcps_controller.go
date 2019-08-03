@@ -17,6 +17,7 @@ limitations under the License.
 package machineset
 
 import (
+    "context"
     "k8s.io/klog"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -25,13 +26,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
     "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+    "github.com/pkg/errors"
     "sigs.k8s.io/controller-runtime/pkg/source"
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
+    apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
 	// controllerNameMCPS is the name of this controller
 	controllerNameMCPS = "MCPS_controller"
+    machineRoleLabel = "machine.openshift.io/cluster-api-machine-role"
+    machineTypeLable = "machine.openshift.io/cluster-api-machine-type"
+    masterMachineRoleType = "master"
+)
+
+var (
+    labelsToCheck = map[string]string{
+        machineRoleLabel: masterMachineRoleType,
+        machineTypeLable: masterMachineRoleType,
+    }
 )
 
 // ReconcileMachineSet reconciles a MachineSet object
@@ -67,6 +80,106 @@ func addMCPS(mgr manager.Manager, r reconcile.Reconciler) error {
 // +kubebuilder:rbac:groups=machine.openshift.io,resources=machinesets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=machine.openshift.io,resources=machines,verbs=get;list;watch;create;update;patch;delete
 func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-    klog.Infof("mcps reconciled")
+    klog.Infof("Reconciling: %v", request.NamespacedName)
+    // Fetch the MachineSet instance
+	ctx := context.TODO()
+    if request.NamespacedName.Namespace != "openshift-machine-api" || request.NamespacedName.Name != "default" {
+        klog.Error("We don't process those")
+        return reconcile.Result{}, nil
+    }
+	mcps := &machinev1beta1.MachineControlPlaneSet{}
+	if err := r.Get(ctx, request.NamespacedName, mcps); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Object not found, return.  Created objects are automatically garbage collected.
+			// For additional cleanup logic use finalizers.
+			return reconcile.Result{}, nil
+		}
+		// Error reading the object - requeue the request.
+		return reconcile.Result{}, err
+	}
+    klog.Infof("mcps status original: %v", mcps.Status)
+
+    var newStatusCPM []machinev1beta1.ControlPlaneMachine
+    if mcps.Status.ControlPlaneMachines == nil {
+        klog.Infof("new status cpm was nil")
+        newStatusCPM = []machinev1beta1.ControlPlaneMachine{}
+    } else {
+        newStatusCPM := []machinev1beta1.ControlPlaneMachine{}
+        for _, item := range mcps.Status.ControlPlaneMachines {
+            newStatusCPM = append(newStatusCPM, item)
+        }
+    }
+    allMachinesList := &machinev1beta1.MachineList{}
+    if err := r.Client.List(context.Background(), allMachinesList, client.InNamespace(mcps.Namespace)); err != nil {
+        return reconcile.Result{}, errors.Wrap(err, "failed to list machines")
+    }
+
+    added := r.findAddMasters(mcps, &newStatusCPM, allMachinesList.Items)
+    if added {
+        mcps.Status.ControlPlaneMachines = newStatusCPM
+        klog.Infof("mcps status: %v", mcps.Status)
+        if err := r.Client.Status().Update(context.Background(), mcps); err != nil {
+			klog.Errorf("Failed to add masters: %v", err)
+			return reconcile.Result{}, err
+		}
+		// return since we updated, we'll reconcile again.
+        return reconcile.Result{}, nil
+    }
+    if len(mcps.Status.ControlPlaneMachines) < 3 {
+        // Less than 3 masters, don't do anything else.
+        return reconcile.Result{}, nil
+    }
+
     return reconcile.Result{}, nil
+}
+
+func (r *ReconcileMachineControlPlaneSet) findAddMasters(mcps *machinev1beta1.MachineControlPlaneSet, newStatusCPM *[]machinev1beta1.ControlPlaneMachine, allMachines []machinev1beta1.Machine) bool {
+    klog.Infof("Looking for masters")
+    cpMachineNames := r.filterMasters(allMachines)
+    klog.Infof("found masters: %v", cpMachineNames)
+    added := false
+    for _, machineName := range cpMachineNames {
+        exists := false
+        for _, cp := range mcps.Status.ControlPlaneMachines {
+            if machineName == *cp.Name {
+                exists = true
+                break
+            }
+        }
+        if exists {
+            continue
+        }
+        replacing := false
+        cpToAdd := machinev1beta1.ControlPlaneMachine{
+            Name: &machineName,
+            ReplacementInProgress: &replacing,
+        }
+        klog.Infof("adding master to status: %v", machineName)
+        *newStatusCPM = append(*newStatusCPM, cpToAdd)
+        added = true
+    }
+    return added
+}
+
+func (r *ReconcileMachineControlPlaneSet) filterMasters(machines []machinev1beta1.Machine) []string {
+    cpMachines := []string{}
+    for _, machine := range machines {
+        if machineIsMaster(&machine) {
+            cpMachines = append(cpMachines, machine.Name)
+        }
+    }
+    return cpMachines
+}
+
+func machineIsMaster(machine *machinev1beta1.Machine) bool {
+    for key, value := range labelsToCheck {
+        _, ok := machine.ObjectMeta.Labels[key]
+        if !ok {
+            return false
+        }
+        if machine.ObjectMeta.Labels[key] != value {
+            return false
+        }
+    }
+    return true
 }

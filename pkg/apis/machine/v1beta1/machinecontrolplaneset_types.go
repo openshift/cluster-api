@@ -56,8 +56,8 @@ type MachineControlPlaneSetStatus struct {
 /// [MachineControlPlaneSetStatus]
 
 type ControlPlaneMachine struct {
-	Name string `json:"name,omitempty"`
-	Replaces string `json:"name,omitempty"`
+	Name *string `json:"name,omitempty"`
+	Replaces *string `json:"name,omitempty"`
 	ReplacementInProgress *bool `json:"replacementInProgress,omitempty"`
 }
 
