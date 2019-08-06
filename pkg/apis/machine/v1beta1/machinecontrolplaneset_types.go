@@ -56,9 +56,9 @@ type MachineControlPlaneSetStatus struct {
 /// [MachineControlPlaneSetStatus]
 
 type ControlPlaneMachine struct {
-	Name string `json:"name"`
-	Replaces string `json:"replaces,omitempty"`
-	ReplacementInProgress bool `json:"replacementInProgress"`
+	Name                  string `json:"name"`
+	Replaces              string `json:"replaces,omitempty"`
+	ReplacementInProgress bool   `json:"replacementInProgress"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
