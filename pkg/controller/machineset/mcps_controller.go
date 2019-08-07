@@ -23,6 +23,7 @@ import (
 	"github.com/openshift/cluster-api/pkg/util"
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog"
@@ -79,6 +80,10 @@ func addMCPS(mgr manager.Manager, r reconcile.Reconciler) error {
 
 func (r *ReconcileMachineControlPlaneSet) addMasterFinalizers(masters []machinev1beta1.Machine) error {
 	for _, m := range masters {
+		if !m.ObjectMeta.DeletionTimestamp.IsZero() {
+			// Don't re-add finalizers to deleted masters
+			continue
+		}
 		if !util.Contains(m.Finalizers, mcpsMasterFinalizer) {
 			m.Finalizers = append(m.ObjectMeta.Finalizers, mcpsMasterFinalizer)
 			ctx := context.TODO()
@@ -155,6 +160,8 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 	var missingMasterName string
 	klog.Infof("ranging cpms for validity")
 	var cpIndex int
+	var oldMaster machinev1beta1.Machine
+	cpsToPop := []int{}
 	for i, cp := range newMCPS.Status.ControlPlaneMachines {
 		if cp.ReplacementInProgress {
 			inProcess += 1
@@ -165,11 +172,22 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 		masterFound := false
 		for _, mstr := range masters {
 			if mstr.Name == cp.Name {
+				if cpInProcess.Name == mstr.Name {
+					// we have something in process, get the master so we can
+					// copy it.
+					oldMaster = mstr
+				}
 				masterFound = true
 				break
 			}
 		}
 		if !masterFound {
+			if len(cp.Replaces) > 0 {
+				// If the master is gone and it has a replacement listed,
+				// We will remove it from ControlPlaneMachines
+				cpsToPop = append(cpsToPop, i)
+				continue
+			}
 			masterMissing = true
 			missingMasterName = cp.Name
 			break
@@ -183,12 +201,38 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 		// Should set some status and emit an event that this is fatal.
 		return reconcile.Result{}, nil
 	}
+	// Process cpsToPop
+	if len(cpsToPop) > 0 {
+		newCPL := []machinev1beta1.ControlPlaneMachine{}
+		for i, cp := range newMCPS.Status.ControlPlaneMachines {
+			skip := false
+			for _, index := range cpsToPop {
+				if i == index {
+					// In the list to pop, let's skip it.
+					skip = true
+					break
+				}
+			}
+			if skip {
+				// Don't want to append it to the list.
+				continue
+			}
+			newCPL = append(newCPL, cp)
+		}
+		// We had at least one item to remove (really should only ever be one max...)
+		newMCPS.Status.ControlPlaneMachines = newCPL
+		klog.Infof("updating mcps to remove old masters: %v", newMCPS.Status.ControlPlaneMachines)
+		if err := r.Client.Status().Update(context.Background(), newMCPS); err != nil {
+			klog.Errorf("Failed to remove masters: %v", err)
+			return reconcile.Result{}, err
+		}
+	}
 	if inProcess > 1 {
 		klog.Errorf("Unable to proceed.  More than one master is marked as being replaced")
 		return reconcile.Result{}, fmt.Errorf("Cannot process more than one replacement")
 	} else if inProcess == 1 {
 		klog.Infof("We're replacing something")
-		return r.processReplace(newMCPS, cpInProcess, cpIndex)
+		return r.processReplace(newMCPS, cpInProcess, cpIndex, oldMaster)
 	}
 
 	// Nothing was found to be in process, let's look at the masters and
@@ -226,7 +270,7 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineControlPlaneSet) processReplace(newMCPS *machinev1beta1.MachineControlPlaneSet, cpInProcess machinev1beta1.ControlPlaneMachine, cpIndex int) (reconcile.Result, error) {
+func (r *ReconcileMachineControlPlaneSet) processReplace(newMCPS *machinev1beta1.MachineControlPlaneSet, cpInProcess machinev1beta1.ControlPlaneMachine, cpIndex int, oldMaster machinev1beta1.Machine) (reconcile.Result, error) {
 	// This function does the real work.
 	klog.Infof("processing replace of %v", cpInProcess)
 	if len(cpInProcess.Replaces) == 0 {
@@ -251,17 +295,58 @@ func (r *ReconcileMachineControlPlaneSet) processReplace(newMCPS *machinev1beta1
 		if apierrors.IsNotFound(err) {
 			// Replacement machine not found, we need to create it.
 			// Don't return here because creating a machine doesn't requeue us
-			r.createReplacementMachine(newMCPS, cpInProcess)
+			err = r.createReplacementMachine(newMCPS, cpInProcess, oldMaster)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+			klog.Infof("Create machine success, returning err to requeue")
+			return reconcile.Result{}, fmt.Errorf("returning err to requeue")
 		}
 		klog.Errorf("Unable to retrieve Machine %v from store: %v", key, err)
 		return reconcile.Result{}, err
 	}
 
+	// So, the new machine now exists, wait for it to have nodeRef
+	if newm.Status.NodeRef == nil || newm.Status.NodeRef.Name == "" {
+		klog.Infof("Waiting for new master to join the cluster, returning error to requeue")
+		return reconcile.Result{}, fmt.Errorf("returning err to requeue")
+	}
+	// New machine has nodeRef, we can remove finalizers
+	oldMaster.ObjectMeta.Finalizers = util.Filter(oldMaster.ObjectMeta.Finalizers, mcpsMasterFinalizer)
+	if err := r.Client.Update(context.Background(), &oldMaster); err != nil {
+		klog.Errorf("Failed to remove finalizer from machine %q: %v", oldMaster.Name, err)
+		return reconcile.Result{}, err
+	}
+	// And that should be it.
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineControlPlaneSet) createReplacementMachine(newMCPS *machinev1beta1.MachineControlPlaneSet, cpInProcess machinev1beta1.ControlPlaneMachine) error {
+func (r *ReconcileMachineControlPlaneSet) createReplacementMachine(newMCPS *machinev1beta1.MachineControlPlaneSet, cpInProcess machinev1beta1.ControlPlaneMachine, oldMaster machinev1beta1.Machine) error {
 	klog.Infof("Replacement Creation Called")
+	// createMachine creates a machine resource.
+	// the name of the newly created resource is going to be created by the API server, we set the generateName field
+
+	gv := machinev1beta1.SchemeGroupVersion
+	om := metav1.ObjectMeta{
+		Name:        cpInProcess.Replaces,
+		Labels:      oldMaster.Labels,
+		Annotations: oldMaster.Annotations,
+	}
+	machine := &machinev1beta1.Machine{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       gv.WithKind("Machine").Kind,
+			APIVersion: gv.String(),
+		},
+		ObjectMeta: om,
+		Spec:       oldMaster.Spec,
+	}
+	machine.Namespace = oldMaster.Namespace
+
+	if err := r.Client.Create(context.Background(), machine); err != nil {
+		klog.Errorf("Unable to create Machine %q: %v", machine.Name, err)
+		return err
+	}
+
 	return nil
 }
 
