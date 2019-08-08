@@ -99,7 +99,7 @@ func (r *ReconcileMachineControlPlaneSet) addMasterFinalizers(masters []machinev
 // Reconcile reads that state of the cluster for a MachineSet object and makes changes based on the state read
 // and what is in the MachineSet.Spec
 // Automatically generate RBAC rules to allow the Controller to read and write Deployments
-// +kubebuilder:rbac:groups=machine.openshift.io,resources=machinesets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=machine.openshift.io,resources=machinecontrolplanesets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=machine.openshift.io,resources=machines,verbs=get;list;watch;create;update;patch;delete
 func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	klog.Infof("Reconciling: %v", request.NamespacedName)
@@ -119,7 +119,6 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 		// Error reading the object - requeue the request.
 		return reconcile.Result{}, err
 	}
-	// klog.Infof("mcps status original: %v", mcps.Status)
 
 	newMCPS := mcps.DeepCopy()
 	allMachinesList := &machinev1beta1.MachineList{}
@@ -136,13 +135,8 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 
 	added := r.addMastersToStatus(&newMCPS.Status.ControlPlaneMachines, masters)
 	if added {
-		klog.Infof("updating mcps status: %v", newMCPS.Status)
-		if err := r.Client.Status().Update(context.Background(), newMCPS); err != nil {
-			klog.Errorf("Failed to add masters: %v", err)
-			return reconcile.Result{}, err
-		}
 		// return since we updated, we'll reconcile again.
-		return reconcile.Result{}, nil
+		return r.updateMCPSStatus(newMCPS)
 	}
 	klog.Infof("after add Masters")
 	if len(mcps.Status.ControlPlaneMachines) < 3 {
@@ -201,42 +195,59 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 		// Should set some status and emit an event that this is fatal.
 		return reconcile.Result{}, nil
 	}
-	// Process cpsToPop
+	// Process cpsToPop; this removes masters that are missing that have been replaced.
 	if len(cpsToPop) > 0 {
-		newCPL := []machinev1beta1.ControlPlaneMachine{}
-		for i, cp := range newMCPS.Status.ControlPlaneMachines {
-			skip := false
-			for _, index := range cpsToPop {
-				if i == index {
-					// In the list to pop, let's skip it.
-					skip = true
-					break
-				}
-			}
-			if skip {
-				// Don't want to append it to the list.
-				continue
-			}
-			newCPL = append(newCPL, cp)
-		}
-		// We had at least one item to remove (really should only ever be one max...)
-		newMCPS.Status.ControlPlaneMachines = newCPL
-		klog.Infof("updating mcps to remove old masters: %v", newMCPS.Status.ControlPlaneMachines)
-		if err := r.Client.Status().Update(context.Background(), newMCPS); err != nil {
-			klog.Errorf("Failed to remove masters: %v", err)
-			return reconcile.Result{}, err
-		}
+		return r.updateCPL(newMCPS, cpsToPop)
 	}
 	if inProcess > 1 {
 		klog.Errorf("Unable to proceed.  More than one master is marked as being replaced")
 		return reconcile.Result{}, fmt.Errorf("Cannot process more than one replacement")
 	} else if inProcess == 1 {
 		klog.Infof("We're replacing something")
-		return r.processReplace(newMCPS, cpInProcess, cpIndex, oldMaster)
+		if len(cpInProcess.Replaces) == 0 {
+			return r.addReplacedBy(newMCPS, cpInProcess, cpIndex)
+		}
+		return r.processReplace(newMCPS, cpInProcess, oldMaster)
 	}
 
 	// Nothing was found to be in process, let's look at the masters and
 	// determine if we need to replace one.
+	return r.processMastersToReplace(newMCPS, masters)
+}
+
+func (r *ReconcileMachineControlPlaneSet) updateCPL(newMCPS *machinev1beta1.MachineControlPlaneSet, cpsToPop []int) (reconcile.Result, error) {
+	newCPL := []machinev1beta1.ControlPlaneMachine{}
+	for i, cp := range newMCPS.Status.ControlPlaneMachines {
+		skip := false
+		for _, index := range cpsToPop {
+			if i == index {
+				// In the list to pop, let's skip it.
+				skip = true
+				break
+			}
+		}
+		if skip {
+			// Don't want to append it to the list.
+			continue
+		}
+		newCPL = append(newCPL, cp)
+	}
+	// We had at least one item to remove (really should only ever be one max...)
+	newMCPS.Status.ControlPlaneMachines = newCPL
+	klog.Infof("updating mcps to remove old masters: %v", newMCPS.Status.ControlPlaneMachines)
+	return r.updateMCPSStatus(newMCPS)
+}
+
+func (r *ReconcileMachineControlPlaneSet) updateMCPSStatus(newMCPS *machinev1beta1.MachineControlPlaneSet) (reconcile.Result, error) {
+	klog.Infof("updating mcps status: %v", newMCPS.Status)
+	if err := r.Client.Status().Update(context.Background(), newMCPS); err != nil {
+		klog.Errorf("Failed to add masters: %v", err)
+		return reconcile.Result{}, err
+	}
+	return reconcile.Result{}, nil
+}
+
+func (r *ReconcileMachineControlPlaneSet) processMastersToReplace(newMCPS *machinev1beta1.MachineControlPlaneSet, masters []machinev1beta1.Machine) (reconcile.Result, error) {
 	var masterToReplace string
 	for _, mstr := range masters {
 		// More than one master can have a deletion timestamp, that's okay.
@@ -255,38 +266,29 @@ func (r *ReconcileMachineControlPlaneSet) Reconcile(request reconcile.Request) (
 				cp.ReplacementInProgress = true
 				// We're going to update our status so we requeue to process replacement.
 				newMCPS.Status.ControlPlaneMachines[i] = cp
-				if err := r.Client.Status().Update(context.Background(), newMCPS); err != nil {
-					klog.Errorf("Failed to add masters: %v", err)
-					return reconcile.Result{}, err
-				}
-				// return since we updated, we'll reconcile again.
-				return reconcile.Result{}, nil
+				return r.updateMCPSStatus(newMCPS)
 			}
-
 		}
 	}
-
 	// No masters need to be replaced, return nil.
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineControlPlaneSet) processReplace(newMCPS *machinev1beta1.MachineControlPlaneSet, cpInProcess machinev1beta1.ControlPlaneMachine, cpIndex int, oldMaster machinev1beta1.Machine) (reconcile.Result, error) {
+func (r *ReconcileMachineControlPlaneSet) addReplacedBy(newMCPS *machinev1beta1.MachineControlPlaneSet, cpInProcess machinev1beta1.ControlPlaneMachine, cpIndex int) (reconcile.Result, error) {
+	// Need to make sure this new name we're construction doesn't already exist as a machine.
+	// This part is tricky....
+	// Might want to create new machine, give it an annotation of some kind,
+	// then scrape the name.
+	cpInProcess.Replaces = fmt.Sprintf("%sa", cpInProcess.Name)
+	newMCPS.Status.ControlPlaneMachines[cpIndex] = cpInProcess
+	// Fill out the field with a new name and reconcile again next time
+	klog.Infof("updating mcps status: %v", newMCPS.Status)
+	return r.updateMCPSStatus(newMCPS)
+}
+
+func (r *ReconcileMachineControlPlaneSet) processReplace(newMCPS *machinev1beta1.MachineControlPlaneSet, cpInProcess machinev1beta1.ControlPlaneMachine, oldMaster machinev1beta1.Machine) (reconcile.Result, error) {
 	// This function does the real work.
 	klog.Infof("processing replace of %v", cpInProcess)
-	if len(cpInProcess.Replaces) == 0 {
-		// Need to make sure this new name we're construction doesn't already exist as a machine.
-		// This part is tricky....
-		// Might want to create new machine, give it an annotation of some kind,
-		// then scrape the name.
-		cpInProcess.Replaces = fmt.Sprintf("%sa", cpInProcess.Name)
-		newMCPS.Status.ControlPlaneMachines[cpIndex] = cpInProcess
-		// Fill out the field with a new name and reconcile again next time
-		klog.Infof("updating mcps status: %v", newMCPS.Status)
-		if err := r.Client.Status().Update(context.Background(), newMCPS); err != nil {
-			klog.Errorf("Failed to add masters: %v", err)
-			return reconcile.Result{}, err
-		}
-	}
 
 	newm := &machinev1beta1.Machine{}
 	key := client.ObjectKey{Namespace: newMCPS.ObjectMeta.GetNamespace(), Name: cpInProcess.Replaces}
@@ -311,7 +313,11 @@ func (r *ReconcileMachineControlPlaneSet) processReplace(newMCPS *machinev1beta1
 		klog.Infof("Waiting for new master to join the cluster, returning error to requeue")
 		return reconcile.Result{}, fmt.Errorf("returning err to requeue")
 	}
-	// New machine has nodeRef, we can remove finalizers
+
+	// Do etcd / DNS steps here, whatever those are.
+
+	// New machine has nodeRef, and other steps are complete, we can remove finalizers
+	// from the old master
 	oldMaster.ObjectMeta.Finalizers = util.Filter(oldMaster.ObjectMeta.Finalizers, mcpsMasterFinalizer)
 	if err := r.Client.Update(context.Background(), &oldMaster); err != nil {
 		klog.Errorf("Failed to remove finalizer from machine %q: %v", oldMaster.Name, err)
