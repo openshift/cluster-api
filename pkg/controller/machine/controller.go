@@ -197,7 +197,7 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 		// can be unlinked from a machine when the node goes NotReady and is removed
 		// by cloud controller manager. In that case some machines would never get
 		// deleted without a manual intervention.
-		if _, exists := m.ObjectMeta.Annotations[ExcludeNodeDrainingAnnotation]; !exists && m.Status.NodeRef != nil {
+		if _, exists := m.ObjectMeta.Annotations[ExcludeNodeDrainingAnnotation]; !exists && m.Status.NodeRef != nil && r.isNodeReady(ctx, m.Status.NodeRef.Name) {
 			if err := r.drainNode(m); err != nil {
 				klog.Errorf("Failed to drain node for machine %q: %v", name, err)
 				return delayIfRequeueAfterError(err)
@@ -344,6 +344,21 @@ func (r *ReconcileMachine) deleteNode(ctx context.Context, name string) error {
 		return err
 	}
 	return r.Client.Delete(ctx, &node)
+}
+
+func (r *ReconcileMachine) isNodeReady(ctx context.Context, name string) bool {
+	var node corev1.Node
+	if err := r.Client.Get(ctx, client.ObjectKey{Name: name}, &node); err != nil {
+		klog.V(2).Infof("Node %q not found", name)
+		return false
+	}
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	klog.V(2).Infof("Node %q not found to be ready", name)
+	return false
 }
 
 func delayIfRequeueAfterError(err error) (reconcile.Result, error) {
