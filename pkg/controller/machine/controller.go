@@ -185,11 +185,6 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 			return reconcile.Result{}, nil
 		}
 
-		if !r.isDeleteAllowed(m) {
-			klog.Infof("Deleting machine hosting this controller is not allowed. Skipping reconciliation of machine %q", name)
-			return reconcile.Result{}, nil
-		}
-
 		klog.Infof("Reconciling machine %q triggers delete", name)
 
 		// Drain node before deletion
