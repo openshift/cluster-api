@@ -340,6 +340,9 @@ func (r *ReconcileMachineControlPlaneSet) processReplace(newMCPS *machinev1beta1
 	// So, the new machine now exists, wait for it to have nodeRef
 	if newm.Status.NodeRef == nil || newm.Status.NodeRef.Name == "" {
 		klog.Infof("Waiting for new master to join the cluster, returning error to requeue")
+		// Since we're watching for updates on masters, we probably don't need
+		// to return error here, we'll be queued when nodelink adds the noderef
+		// to the machine.
 		return reconcile.Result{}, fmt.Errorf("returning err to requeue")
 	}
 
