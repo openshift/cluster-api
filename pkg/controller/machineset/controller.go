@@ -61,7 +61,7 @@ var (
 // The Manager will set fields on the Controller and Start it when the Manager is Started.
 func Add(mgr manager.Manager) error {
 	rMCPS := newMCPSReconciler(mgr)
-	if err := addMCPS(mgr, rMCPS); err != nil {
+	if err := addMCPS(mgr, rMCPS, rMCPS.MachineToMCPS); err != nil {
 		return err
 	}
 	r := newReconciler(mgr)

@@ -64,9 +64,18 @@ func newMCPSReconciler(mgr manager.Manager) *ReconcileMachineControlPlaneSet {
 }
 
 // add adds a new Controller to mgr with r as the reconcile.Reconciler.
-func addMCPS(mgr manager.Manager, r reconcile.Reconciler) error {
+func addMCPS(mgr manager.Manager, r reconcile.Reconciler, mapFn handler.ToRequestsFunc) error {
 	// Create a new controller.
 	c, err := controller.New(controllerNameMCPS, mgr, controller.Options{Reconciler: r})
+	if err != nil {
+		return err
+	}
+
+	// Map Machine changes to MachineSets by machining labels.
+	err = c.Watch(
+		&source.Kind{Type: &machinev1beta1.Machine{}},
+		&handler.EnqueueRequestsFromMapFunc{ToRequests: mapFn},
+	)
 	if err != nil {
 		return err
 	}
@@ -76,6 +85,26 @@ func addMCPS(mgr manager.Manager, r reconcile.Reconciler) error {
 		&source.Kind{Type: &machinev1beta1.MachineControlPlaneSet{}},
 		&handler.EnqueueRequestForObject{},
 	)
+}
+
+func (r *ReconcileMachineControlPlaneSet) MachineToMCPS(o handler.MapObject) []reconcile.Request {
+	result := []reconcile.Request{}
+	m := &machinev1beta1.Machine{}
+	key := client.ObjectKey{Namespace: o.Meta.GetNamespace(), Name: o.Meta.GetName()}
+	err := r.Client.Get(context.Background(), key, m)
+	if err != nil {
+		klog.Errorf("Unable to retrieve Machine %v from store: %v", key, err)
+		return nil
+	}
+	ml := []machinev1beta1.Machine{
+		*m,
+	}
+	masters := r.filterMasters(ml)
+	if len(masters) > 0 {
+		name := client.ObjectKey{Namespace: m.Namespace, Name: "default"}
+		result = append(result, reconcile.Request{NamespacedName: name})
+	}
+	return result
 }
 
 func (r *ReconcileMachineControlPlaneSet) addMasterFinalizers(masters []machinev1beta1.Machine) error {
@@ -381,13 +410,13 @@ func (r *ReconcileMachineControlPlaneSet) addMastersToStatus(cpSet *[]machinev1b
 }
 
 func (r *ReconcileMachineControlPlaneSet) filterMasters(machines []machinev1beta1.Machine) []machinev1beta1.Machine {
-	cpMachines := []machinev1beta1.Machine{}
+	masters := []machinev1beta1.Machine{}
 	for _, machine := range machines {
 		if machineIsMaster(&machine) {
-			cpMachines = append(cpMachines, machine)
+			masters = append(masters, machine)
 		}
 	}
-	return cpMachines
+	return masters
 }
 
 func machineIsMaster(machine *machinev1beta1.Machine) bool {
