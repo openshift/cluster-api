@@ -7,6 +7,7 @@ go_library(
         "machine.go",
         "machineclass.go",
         "machinedeployment.go",
+        "machinereplicaset.go",
         "machineset.go",
     ],
     importpath = "github.com/openshift/cluster-api/pkg/client/listers_generated/machine/v1beta1",

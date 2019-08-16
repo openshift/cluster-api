@@ -70,10 +70,10 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Machine().V1beta1().Machines().Informer()}, nil
 	case v1beta1.SchemeGroupVersion.WithResource("machineclasses"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Machine().V1beta1().MachineClasses().Informer()}, nil
-	case v1beta1.SchemeGroupVersion.WithResource("machinecontrolplanesets"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Machine().V1beta1().MachineControlPlaneSets().Informer()}, nil
 	case v1beta1.SchemeGroupVersion.WithResource("machinedeployments"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Machine().V1beta1().MachineDeployments().Informer()}, nil
+	case v1beta1.SchemeGroupVersion.WithResource("machinereplicasets"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Machine().V1beta1().MachineReplicaSets().Informer()}, nil
 	case v1beta1.SchemeGroupVersion.WithResource("machinesets"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Machine().V1beta1().MachineSets().Informer()}, nil
 

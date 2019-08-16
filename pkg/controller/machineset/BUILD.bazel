@@ -6,6 +6,7 @@ go_library(
         "controller.go",
         "delete_policy.go",
         "machine.go",
+        "machinereplicaset_controller.go",
         "status.go",
     ],
     importpath = "github.com/openshift/cluster-api/pkg/controller/machineset",

@@ -1,4 +1,4 @@
-updateMRL/*
+/*
 Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,10 +97,10 @@ func (r *ReconcileMachineReplicaSet) MachineToMRS(o handler.MapObject) []reconci
 		klog.Errorf("Unable to retrieve Machine %v from store: %v", key, err)
 		return nil
 	}
+	/*
 	ml := []machinev1beta1.Machine{
 		*m,
 	}
-	/*
 	matchingMachines := r.filterMRSMachines(ml)
 	if len(matchingMachines) > 0 {
 		name := client.ObjectKey{Namespace: m.Namespace, Name: "default"}
@@ -108,6 +108,7 @@ func (r *ReconcileMachineReplicaSet) MachineToMRS(o handler.MapObject) []reconci
 	}
 	*/
 	// append everything for now
+	name := client.ObjectKey{Namespace: m.Namespace, Name: "default"}
 	result = append(result, reconcile.Request{NamespacedName: name})
 	return result
 }
@@ -159,8 +160,10 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 	if err := r.Client.List(context.Background(), allMachinesList, client.InNamespace(mrs.Namespace)); err != nil {
 		return reconcile.Result{}, errors.Wrap(err, "failed to list machines")
 	}
-	matchingMachines := hasMatchingMRSLabels()
-	machines := r.filterMRSMachines(mrs, allMachinesList.Items)
+	machines, err := r.filterMRSMachines(mrs, allMachinesList.Items)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
 
 	// We only queue requests here if a machines is deleted, so don't return
 	// after updating machines finalizers
@@ -173,8 +176,12 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 		// return since we updated, we'll reconcile again.
 		return r.updateMRSStatus(newMRS)
 	}
-	klog.Infof("after add Masters")
-	if len(mrs.Status.Replicas) < mrs.Spec. {
+	klog.Infof("after add Machines")
+	minReplicas := 3
+	if mrs.Spec.MinReplicas != nil {
+		minReplicas = int(*mrs.Spec.MinReplicas)
+	}
+	if len(mrs.Status.Replicas) <  minReplicas {
 		klog.Errorf("Less than 3 machines")
 		// Less than 3 machines, don't do anything else.
 		return reconcile.Result{}, nil
@@ -189,7 +196,7 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 	var missingMachineName string
 	klog.Infof("ranging mrs.Status.Replicas for validity")
 	var mrIndex int
-	var oldMaster machinev1beta1.Machine
+	var oldMachine machinev1beta1.Machine
 	mrsToPop := []int{}
 	for i, mr := range newMRS.Status.Replicas {
 		if mr.ReplacementInProgress {
@@ -204,7 +211,7 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 				if replicaInProcess.Name == m.Name {
 					// we have something in process, get the machine so we can
 					// copy it.
-					oldM = m
+					oldMachine = m
 				}
 				machineFound = true
 				break
@@ -242,12 +249,12 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 		if len(replicaInProcess.Replaces) == 0 {
 			return r.addReplacedBy(newMRS, replicaInProcess, mrIndex)
 		}
-		return r.processReplace(newMRS, replicaInProcess, oldMaster)
+		return r.processReplace(newMRS, replicaInProcess, oldMachine)
 	}
 
 	// Nothing was found to be in process, let's look at the machines and
 	// determine if we need to replace one.
-	return r.processMastersToReplace(newMRS, machines)
+	return r.processMachinesToReplace(newMRS, machines)
 }
 
 func (r *ReconcileMachineReplicaSet) updateMRL(newMRS *machinev1beta1.MachineReplicaSet, mrsToPop []int) (reconcile.Result, error) {
@@ -282,7 +289,7 @@ func (r *ReconcileMachineReplicaSet) updateMRSStatus(newMRS *machinev1beta1.Mach
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineReplicaSet) processMastersToReplace(newMRS *machinev1beta1.MachineReplicaSet, machines []machinev1beta1.Machine) (reconcile.Result, error) {
+func (r *ReconcileMachineReplicaSet) processMachinesToReplace(newMRS *machinev1beta1.MachineReplicaSet, machines []machinev1beta1.Machine) (reconcile.Result, error) {
 	var machineToReplace string
 	for _, m := range machines {
 		// More than one machine can have a deletion timestamp, that's okay.
@@ -321,7 +328,7 @@ func (r *ReconcileMachineReplicaSet) addReplacedBy(newMRS *machinev1beta1.Machin
 	return r.updateMRSStatus(newMRS)
 }
 
-func (r *ReconcileMachineReplicaSet) processReplace(newMRS *machinev1beta1.MachineReplicaSet, replicaInProcess machinev1beta1.MachineReplica, oldMaster machinev1beta1.Machine) (reconcile.Result, error) {
+func (r *ReconcileMachineReplicaSet) processReplace(newMRS *machinev1beta1.MachineReplicaSet, replicaInProcess machinev1beta1.MachineReplica, oldMachine machinev1beta1.Machine) (reconcile.Result, error) {
 	// This function does the real work.
 	klog.Infof("processing replace of %v", replicaInProcess)
 
@@ -332,7 +339,7 @@ func (r *ReconcileMachineReplicaSet) processReplace(newMRS *machinev1beta1.Machi
 		if apierrors.IsNotFound(err) {
 			// Replacement machine not found, we need to create it.
 			// Don't return here because creating a machine doesn't requeue us
-			err = r.createReplacementMachine(newMRS, replicaInProcess, oldMaster)
+			err = r.createReplacementMachine(newMRS, replicaInProcess, oldMachine)
 			if err != nil {
 				return reconcile.Result{}, err
 			}
@@ -356,16 +363,16 @@ func (r *ReconcileMachineReplicaSet) processReplace(newMRS *machinev1beta1.Machi
 
 	// New machine has nodeRef, and other steps are complete, we can remove finalizers
 	// from the old machine
-	oldMaster.ObjectMeta.Finalizers = util.Filter(oldMaster.ObjectMeta.Finalizers, mrsFinalizer)
-	if err := r.Client.Update(context.Background(), &oldMaster); err != nil {
-		klog.Errorf("Failed to remove finalizer from machine %q: %v", oldMaster.Name, err)
+	oldMachine.ObjectMeta.Finalizers = util.Filter(oldMachine.ObjectMeta.Finalizers, mrsFinalizer)
+	if err := r.Client.Update(context.Background(), &oldMachine); err != nil {
+		klog.Errorf("Failed to remove finalizer from machine %q: %v", oldMachine.Name, err)
 		return reconcile.Result{}, err
 	}
 	// And that should be it.
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileMachineReplicaSet) createReplacementMachine(newMRS *machinev1beta1.MachineReplicaSet, replicaInProcess machinev1beta1.MachineReplica, oldMaster machinev1beta1.Machine) error {
+func (r *ReconcileMachineReplicaSet) createReplacementMachine(newMRS *machinev1beta1.MachineReplicaSet, replicaInProcess machinev1beta1.MachineReplica, oldMachine machinev1beta1.Machine) error {
 	klog.Infof("Replacement Creation Called")
 	// createMachine creates a machine resource.
 	// the name of the newly created resource is going to be created by the API server, we set the generateName field
@@ -373,8 +380,8 @@ func (r *ReconcileMachineReplicaSet) createReplacementMachine(newMRS *machinev1b
 	gv := machinev1beta1.SchemeGroupVersion
 	om := metav1.ObjectMeta{
 		Name:        replicaInProcess.Replaces,
-		Labels:      oldMaster.Labels,
-		Annotations: oldMaster.Annotations,
+		Labels:      oldMachine.Labels,
+		Annotations: oldMachine.Annotations,
 	}
 	machine := &machinev1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
@@ -382,9 +389,9 @@ func (r *ReconcileMachineReplicaSet) createReplacementMachine(newMRS *machinev1b
 			APIVersion: gv.String(),
 		},
 		ObjectMeta: om,
-		Spec:       oldMaster.Spec,
+		Spec:       oldMachine.Spec,
 	}
-	machine.Namespace = oldMaster.Namespace
+	machine.Namespace = oldMachine.Namespace
 
 	if err := r.Client.Create(context.Background(), machine); err != nil {
 		klog.Errorf("Unable to create Machine %q: %v", machine.Name, err)
@@ -418,9 +425,9 @@ func (r *ReconcileMachineReplicaSet) addMachineToStatus(mrSet *[]machinev1beta1.
 	return added
 }
 
-func (r *ReconcileMachineReplicaSet) filterMRSMachines(mrs machinev1beta1.MachineReplicaSet, machines []machinev1beta1.Machine) []machinev1beta1.Machine, error {
+func (r *ReconcileMachineReplicaSet) filterMRSMachines(mrs *machinev1beta1.MachineReplicaSet, machines []machinev1beta1.Machine) ([]machinev1beta1.Machine, error) {
 	matchingMachines := []machinev1beta1.Machine{}
-	selector, err := metav1.LabelSelectorAsSelector(mrs.Spec.Selector)
+	selector, err := metav1.LabelSelectorAsSelector(&mrs.Spec.Selector)
 	if err != nil {
 		klog.Errorf("unable to convert selector: %v", err)
 		return matchingMachines, err
@@ -433,7 +440,7 @@ func (r *ReconcileMachineReplicaSet) filterMRSMachines(mrs machinev1beta1.Machin
 	return matchingMachines, nil
 }
 
-func hasMatchingMRSLabels(selector string, machine *v1beta1.Machine) bool {
+func hasMatchingMRSLabels(selector labels.Selector, machine *machinev1beta1.Machine) bool {
 	if selector.Empty() {
 		return false
 	}

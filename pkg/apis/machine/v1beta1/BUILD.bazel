@@ -9,6 +9,7 @@ go_library(
         "machine_types.go",
         "machineclass_types.go",
         "machinedeployment_types.go",
+        "machinereplicaset_types.go",
         "machineset_types.go",
         "register.go",
         "zz_generated.deepcopy.go",

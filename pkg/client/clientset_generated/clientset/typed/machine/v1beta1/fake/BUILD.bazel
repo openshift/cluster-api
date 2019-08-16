@@ -8,6 +8,7 @@ go_library(
         "fake_machine_client.go",
         "fake_machineclass.go",
         "fake_machinedeployment.go",
+        "fake_machinereplicaset.go",
         "fake_machineset.go",
     ],
     importpath = "github.com/openshift/cluster-api/pkg/client/clientset_generated/clientset/typed/machine/v1beta1/fake",

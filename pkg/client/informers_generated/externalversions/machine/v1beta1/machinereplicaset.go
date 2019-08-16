@@ -31,59 +31,59 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// MachineControlPlaneSetInformer provides access to a shared informer and lister for
-// MachineControlPlaneSets.
-type MachineControlPlaneSetInformer interface {
+// MachineReplicaSetInformer provides access to a shared informer and lister for
+// MachineReplicaSets.
+type MachineReplicaSetInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1beta1.MachineControlPlaneSetLister
+	Lister() v1beta1.MachineReplicaSetLister
 }
 
-type machineControlPlaneSetInformer struct {
+type machineReplicaSetInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
 	namespace        string
 }
 
-// NewMachineControlPlaneSetInformer constructs a new informer for MachineControlPlaneSet type.
+// NewMachineReplicaSetInformer constructs a new informer for MachineReplicaSet type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewMachineControlPlaneSetInformer(client clientset.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredMachineControlPlaneSetInformer(client, namespace, resyncPeriod, indexers, nil)
+func NewMachineReplicaSetInformer(client clientset.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredMachineReplicaSetInformer(client, namespace, resyncPeriod, indexers, nil)
 }
 
-// NewFilteredMachineControlPlaneSetInformer constructs a new informer for MachineControlPlaneSet type.
+// NewFilteredMachineReplicaSetInformer constructs a new informer for MachineReplicaSet type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredMachineControlPlaneSetInformer(client clientset.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredMachineReplicaSetInformer(client clientset.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MachineV1beta1().MachineControlPlaneSets(namespace).List(options)
+				return client.MachineV1beta1().MachineReplicaSets(namespace).List(options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MachineV1beta1().MachineControlPlaneSets(namespace).Watch(options)
+				return client.MachineV1beta1().MachineReplicaSets(namespace).Watch(options)
 			},
 		},
-		&machinev1beta1.MachineControlPlaneSet{},
+		&machinev1beta1.MachineReplicaSet{},
 		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *machineControlPlaneSetInformer) defaultInformer(client clientset.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredMachineControlPlaneSetInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *machineReplicaSetInformer) defaultInformer(client clientset.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	return NewFilteredMachineReplicaSetInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
-func (f *machineControlPlaneSetInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&machinev1beta1.MachineControlPlaneSet{}, f.defaultInformer)
+func (f *machineReplicaSetInformer) Informer() cache.SharedIndexInformer {
+	return f.factory.InformerFor(&machinev1beta1.MachineReplicaSet{}, f.defaultInformer)
 }
 
-func (f *machineControlPlaneSetInformer) Lister() v1beta1.MachineControlPlaneSetLister {
-	return v1beta1.NewMachineControlPlaneSetLister(f.Informer().GetIndexer())
+func (f *machineReplicaSetInformer) Lister() v1beta1.MachineReplicaSetLister {
+	return v1beta1.NewMachineReplicaSetLister(f.Informer().GetIndexer())
 }
