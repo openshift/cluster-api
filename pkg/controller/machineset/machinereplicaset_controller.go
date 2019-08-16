@@ -38,18 +38,11 @@ import (
 
 const (
 	// controllerNameMRS is the name of this controller
-	controllerNameMRS    = "MRS_controller"
-	machineRoleLabel      = "machine.openshift.io/cluster-api-machine-role"
-	machineTypeLable      = "machine.openshift.io/cluster-api-machine-type"
-	masterMachineRoleType = "master"
-	mrsFinalizer   = "machine.openshift.io/mrs-managed"
-)
-
-var (
-	labelsToCheck = map[string]string{
-		machineRoleLabel: masterMachineRoleType,
-		machineTypeLable: masterMachineRoleType,
-	}
+	controllerNameMRS = "MRS_controller"
+	// machineRoleLabel      = "machine.openshift.io/cluster-api-machine-role"
+	// machineTypeLable      = "machine.openshift.io/cluster-api-machine-type"
+	// masterMachineRoleType = "master"
+	mrsFinalizer = "machine.openshift.io/mrs-managed"
 )
 
 // ReconcileMachineSet reconciles a MachineSet object
@@ -98,18 +91,23 @@ func (r *ReconcileMachineReplicaSet) MachineToMRS(o handler.MapObject) []reconci
 		return nil
 	}
 	/*
-	ml := []machinev1beta1.Machine{
-		*m,
-	}
-	matchingMachines := r.filterMRSMachines(ml)
-	if len(matchingMachines) > 0 {
-		name := client.ObjectKey{Namespace: m.Namespace, Name: "default"}
-		result = append(result, reconcile.Request{NamespacedName: name})
-	}
+		ml := []machinev1beta1.Machine{
+			*m,
+		}
+		matchingMachines := r.filterMRSMachines(ml)
+		if len(matchingMachines) > 0 {
+			name := client.ObjectKey{Namespace: m.Namespace, Name: "default"}
+			result = append(result, reconcile.Request{NamespacedName: name})
+		}
 	*/
 	// append everything for now
-	name := client.ObjectKey{Namespace: m.Namespace, Name: "default"}
-	result = append(result, reconcile.Request{NamespacedName: name})
+	machineReplicaSets := r.getMachineReplicaSetsForMachine(m)
+
+	// If we have more than one match, something is wrong.
+	if len(machineReplicaSets) == 1 {
+		name := client.ObjectKey{Namespace: m.Namespace, Name: machineReplicaSets[0].Name}
+		result = append(result, reconcile.Request{NamespacedName: name})
+	}
 	return result
 }
 
@@ -181,7 +179,7 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 	if mrs.Spec.MinReplicas != nil {
 		minReplicas = int(*mrs.Spec.MinReplicas)
 	}
-	if len(mrs.Status.Replicas) <  minReplicas {
+	if len(mrs.Status.Replicas) < minReplicas {
 		klog.Errorf("Less than 3 machines")
 		// Less than 3 machines, don't do anything else.
 		return reconcile.Result{}, nil
@@ -449,4 +447,33 @@ func hasMatchingMRSLabels(selector labels.Selector, machine *machinev1beta1.Mach
 		return false
 	}
 	return true
+}
+
+func (c *ReconcileMachineReplicaSet) getMachineReplicaSetsForMachine(m *machinev1beta1.Machine) []*machinev1beta1.MachineReplicaSet {
+	if len(m.Labels) == 0 {
+		klog.Warningf("No machine sets found for Machine %v because it has no labels", m.Name)
+		return nil
+	}
+
+	mrsList := &machinev1beta1.MachineReplicaSetList{}
+	err := c.Client.List(context.Background(), mrsList, client.InNamespace(m.Namespace))
+	if err != nil {
+		klog.Errorf("Failed to list machine sets, %v", err)
+		return nil
+	}
+
+	var machineReplicaSets []*machinev1beta1.MachineReplicaSet
+	for idx := range mrsList.Items {
+		mrs := &mrsList.Items[idx]
+		selector, err := metav1.LabelSelectorAsSelector(&mrs.Spec.Selector)
+		if err != nil {
+			// Ignore MRS with broken selectors
+			continue
+		}
+		if hasMatchingMRSLabels(selector, m) {
+			machineReplicaSets = append(machineReplicaSets, mrs)
+		}
+	}
+
+	return machineReplicaSets
 }
