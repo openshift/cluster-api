@@ -4,12 +4,12 @@ metadata:
   creationTimestamp: null
   labels:
     controller-tools.k8s.io: "1.0"
-  name: machinecontrolplanesets.machine.openshift.io
+  name: machinereplicasets.machine.openshift.io
 spec:
   group: machine.openshift.io
   names:
-    kind: MachineControlPlaneSet
-    plural: machinecontrolplanesets
+    kind: MachineReplicaSet
+    plural: machinereplicasets
   scope: Namespaced
   subresources:
     status: {}
@@ -34,10 +34,18 @@ spec:
               type: string
         status:
           properties:
-            controlPlaneMachines:
-              items:
-                type: object
-              type: array
+            minReplicas:
+              description: MinReplicas is the number of replicas that need to be present to operate.
+                This is a pointer to distinguish between explicit zero and unspecified. Defaults to
+                3.
+              format: int32
+              type: integer
+            selector:
+              description: 'Selector is a label query over machines that should match
+                the replica count. Label keys and values that must match in order
+                to be controlled by this MachineSet. It must match the machine template''s
+                labels. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors'
+              type: object
   version: v1beta1
 status:
   acceptedNames:
