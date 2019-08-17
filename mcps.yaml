@@ -1,0 +1,10 @@
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineReplicaSet
+metadata:
+  name: default
+spec:
+  minReplicas: 3
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-machine-role: master
+      machine.openshift.io/cluster-api-machine-type: master

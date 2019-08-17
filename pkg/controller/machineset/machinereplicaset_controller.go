@@ -158,18 +158,18 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 	if err := r.Client.List(context.Background(), allMachinesList, client.InNamespace(mrs.Namespace)); err != nil {
 		return reconcile.Result{}, errors.Wrap(err, "failed to list machines")
 	}
-	machines, err := r.filterMRSMachines(mrs, allMachinesList.Items)
+	matchingMachines, err := r.filterMRSMachines(mrs, allMachinesList.Items)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
 	// We only queue requests here if a machines is deleted, so don't return
 	// after updating machines finalizers
-	if err := r.addMRSFinalizers(machines); err != nil {
+	if err := r.addMRSFinalizers(matchingMachines); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	added := r.addMachineToStatus(&newMRS.Status.Replicas, machines)
+	added := r.addMachineToStatus(&newMRS.Status.Replicas, matchingMachines)
 	if added {
 		// return since we updated, we'll reconcile again.
 		return r.updateMRSStatus(newMRS)
@@ -204,7 +204,7 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 			mrIndex = i
 		}
 		machineFound := false
-		for _, m := range machines {
+		for _, m := range matchingMachines {
 			if m.Name == mr.Name {
 				if replicaInProcess.Name == m.Name {
 					// we have something in process, get the machine so we can
@@ -252,7 +252,7 @@ func (r *ReconcileMachineReplicaSet) Reconcile(request reconcile.Request) (recon
 
 	// Nothing was found to be in process, let's look at the machines and
 	// determine if we need to replace one.
-	return r.processMachinesToReplace(newMRS, machines)
+	return r.processMachinesToReplace(newMRS, matchingMachines)
 }
 
 func (r *ReconcileMachineReplicaSet) updateMRL(newMRS *machinev1beta1.MachineReplicaSet, mrsToPop []int) (reconcile.Result, error) {
