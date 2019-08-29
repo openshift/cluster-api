@@ -165,7 +165,8 @@ func Drain(client kubernetes.Interface, nodes []*corev1.Node, options *DrainOpti
 	var fatal error
 
 	for _, node := range nodes {
-		err := DeleteOrEvictPods(client, node, options)
+		nodeReady := isNodeReady(node)
+		err := DeleteOrEvictPods(client, node, options, nodeReady)
 		if err == nil {
 			drainedNodes.Insert(node.Name)
 			logf(options.Logger, "drained node %q", node.Name)
@@ -194,13 +195,13 @@ func Drain(client kubernetes.Interface, nodes []*corev1.Node, options *DrainOpti
 // DeleteOrEvictPods deletes or (where supported) evicts pods from the
 // target node and waits until the deletion/eviction completes,
 // Timeout elapses, or an error occurs.
-func DeleteOrEvictPods(client kubernetes.Interface, node *corev1.Node, options *DrainOptions) error {
+func DeleteOrEvictPods(client kubernetes.Interface, node *corev1.Node, options *DrainOptions, nodeReady bool) error {
 	pods, err := getPodsForDeletion(client, node, options)
 	if err != nil {
 		return err
 	}
 
-	err = deleteOrEvictPods(client, pods, options)
+	err = deleteOrEvictPods(client, pods, options, nodeReady)
 	if err != nil {
 		pendingPods, newErr := getPodsForDeletion(client, node, options)
 		if newErr != nil {
@@ -388,7 +389,7 @@ func evictPod(client typedpolicyv1beta1.PolicyV1beta1Interface, pod corev1.Pod, 
 }
 
 // deleteOrEvictPods deletes or evicts the pods on the api server
-func deleteOrEvictPods(client kubernetes.Interface, pods []corev1.Pod, options *DrainOptions) error {
+func deleteOrEvictPods(client kubernetes.Interface, pods []corev1.Pod, options *DrainOptions, nodeReady bool) error {
 	if len(pods) == 0 {
 		return nil
 	}
@@ -404,13 +405,13 @@ func deleteOrEvictPods(client kubernetes.Interface, pods []corev1.Pod, options *
 
 	if len(policyGroupVersion) > 0 {
 		// Remember to change change the URL manipulation func when Evction's version change
-		return evictPods(client.PolicyV1beta1(), pods, policyGroupVersion, options, getPodFn)
+		return evictPods(client.PolicyV1beta1(), pods, policyGroupVersion, options, getPodFn, nodeReady)
 	} else {
-		return deletePods(client.CoreV1(), pods, options, getPodFn)
+		return deletePods(client.CoreV1(), pods, options, getPodFn, nodeReady)
 	}
 }
 
-func evictPods(client typedpolicyv1beta1.PolicyV1beta1Interface, pods []corev1.Pod, policyGroupVersion string, options *DrainOptions, getPodFn func(namespace, name string) (*corev1.Pod, error)) error {
+func evictPods(client typedpolicyv1beta1.PolicyV1beta1Interface, pods []corev1.Pod, policyGroupVersion string, options *DrainOptions, getPodFn func(namespace, name string) (*corev1.Pod, error), nodeReady bool) error {
 	returnCh := make(chan error, 1)
 
 	for _, pod := range pods {
@@ -432,7 +433,7 @@ func evictPods(client typedpolicyv1beta1.PolicyV1beta1Interface, pods []corev1.P
 				}
 			}
 			podArray := []corev1.Pod{pod}
-			_, err = waitForDelete(podArray, 1*time.Second, time.Duration(math.MaxInt64), true, options.Logger, getPodFn)
+			_, err = waitForDelete(podArray, 1*time.Second, time.Duration(math.MaxInt64), true, options.Logger, getPodFn, nodeReady)
 			if err == nil {
 				returnCh <- nil
 			} else {
@@ -467,7 +468,7 @@ func evictPods(client typedpolicyv1beta1.PolicyV1beta1Interface, pods []corev1.P
 	return utilerrors.NewAggregate(errors)
 }
 
-func deletePods(client typedcorev1.CoreV1Interface, pods []corev1.Pod, options *DrainOptions, getPodFn func(namespace, name string) (*corev1.Pod, error)) error {
+func deletePods(client typedcorev1.CoreV1Interface, pods []corev1.Pod, options *DrainOptions, getPodFn func(namespace, name string) (*corev1.Pod, error), nodeReady bool) error {
 	// 0 timeout means infinite, we use MaxInt64 to represent it.
 	var globalTimeout time.Duration
 	if options.Timeout == 0 {
@@ -486,11 +487,12 @@ func deletePods(client typedcorev1.CoreV1Interface, pods []corev1.Pod, options *
 			return err
 		}
 	}
-	_, err := waitForDelete(pods, 1*time.Second, globalTimeout, false, options.Logger, getPodFn)
+
+	_, err := waitForDelete(pods, 1*time.Second, globalTimeout, false, options.Logger, getPodFn, nodeReady)
 	return err
 }
 
-func waitForDelete(pods []corev1.Pod, interval, timeout time.Duration, usingEviction bool, logger golog.Logger, getPodFn func(string, string) (*corev1.Pod, error)) ([]corev1.Pod, error) {
+func waitForDelete(pods []corev1.Pod, interval, timeout time.Duration, usingEviction bool, logger golog.Logger, getPodFn func(string, string) (*corev1.Pod, error), nodeReady bool) ([]corev1.Pod, error) {
 	var verbStr string
 	if usingEviction {
 		verbStr = "evicted"
@@ -508,6 +510,10 @@ func waitForDelete(pods []corev1.Pod, interval, timeout time.Duration, usingEvic
 			} else if err != nil {
 				return false, err
 			} else {
+				// Need to maybe make this tunable
+				if !nodeReady && !p.ObjectMeta.DeletionTimestamp.IsZero() && time.Now().Sub(p.ObjectMeta.GetDeletionTimestamp().Time).Minutes() > 5 {
+					continue
+				}
 				pendingPods = append(pendingPods, pods[i])
 			}
 		}
@@ -591,4 +597,13 @@ func logf(logger golog.Logger, format string, v ...interface{}) {
 	if logger != nil {
 		logger.Logf(format, v...)
 	}
+}
+
+func isNodeReady(node *corev1.Node) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
