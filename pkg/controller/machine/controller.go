@@ -152,53 +152,7 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 	}
 
 	if !m.ObjectMeta.DeletionTimestamp.IsZero() {
-		// no-op if finalizer has been removed.
-		if !util.Contains(m.ObjectMeta.Finalizers, machinev1.MachineFinalizer) {
-			klog.Infof("reconciling machine object %v causes a no-op as there is no finalizer.", name)
-			return reconcile.Result{}, nil
-		}
-		if !r.isDeleteAllowed(m) {
-			klog.Infof("Deleting machine hosting this controller is not allowed. Skipping reconciliation of machine %q", name)
-			return reconcile.Result{}, nil
-		}
-		klog.Infof("reconciling machine object %v triggers delete.", name)
-
-		// Drain node before deletion
-		// If a machine is not linked to a node, just delete the machine. Since a node
-		// can be unlinked from a machine when the node goes NotReady and is removed
-		// by cloud controller manager. In that case some machines would never get
-		// deleted without a manual intervention.
-		if _, exists := m.ObjectMeta.Annotations[ExcludeNodeDrainingAnnotation]; !exists && m.Status.NodeRef != nil {
-			if err := r.drainNode(m); err != nil {
-				return reconcile.Result{}, err
-			}
-		}
-
-		if err := r.actuator.Delete(ctx, cluster, m); err != nil {
-			klog.Errorf("Error deleting machine object %v; %v", name, err)
-			if requeueErr, ok := err.(*controllerError.RequeueAfterError); ok {
-				klog.Infof("Actuator returned requeue-after error: %v", requeueErr)
-				return reconcile.Result{Requeue: true, RequeueAfter: requeueErr.RequeueAfter}, nil
-			}
-			return reconcile.Result{}, err
-		}
-
-		if m.Status.NodeRef != nil {
-			klog.Infof("Deleting node %q for machine %q", m.Status.NodeRef.Name, m.Name)
-			if err := r.deleteNode(ctx, m.Status.NodeRef.Name); err != nil {
-				klog.Errorf("Error deleting node %q for machine %q", name, err)
-				return reconcile.Result{}, err
-			}
-		}
-
-		// Remove finalizer on successful deletion.
-		klog.Infof("machine object %v deletion successful, removing finalizer.", name)
-		m.ObjectMeta.Finalizers = util.Filter(m.ObjectMeta.Finalizers, machinev1.MachineFinalizer)
-		if err := r.Client.Update(context.Background(), m); err != nil {
-			klog.Errorf("Error removing finalizer from machine object %v; %v", name, err)
-			return reconcile.Result{}, err
-		}
-		return reconcile.Result{}, nil
+		return r.deleteMachine(ctx, m, cluster)
 	}
 
 	exist, err := r.actuator.Exists(ctx, cluster, m)
@@ -225,6 +179,60 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 			klog.Infof("Actuator returned requeue-after error: %v", requeueErr)
 			return reconcile.Result{Requeue: true, RequeueAfter: requeueErr.RequeueAfter}, nil
 		}
+		// Delete the machine that couldn't be created
+		klog.Warningf("Deleting the machine %v", name)
+		return r.deleteMachine(ctx, m, cluster)
+	}
+	return reconcile.Result{}, nil
+}
+
+func (r *ReconcileMachine) deleteMachine(ctx context.Context, m *machinev1.Machine, cluster *machinev1.Cluster) (reconcile.Result, error) {
+	name := m.Name
+
+	// no-op if finalizer has been removed.
+	if !util.Contains(m.ObjectMeta.Finalizers, machinev1.MachineFinalizer) {
+		klog.Infof("reconciling machine object %v causes a no-op as there is no finalizer.", name)
+		return reconcile.Result{}, nil
+	}
+	if !r.isDeleteAllowed(m) {
+		klog.Infof("Deleting machine hosting this controller is not allowed. Skipping reconciliation of machine %q", name)
+		return reconcile.Result{}, nil
+	}
+	klog.Infof("reconciling machine object %v triggers delete.", name)
+
+	// Drain node before deletion
+	// If a machine is not linked to a node, just delete the machine. Since a node
+	// can be unlinked from a machine when the node goes NotReady and is removed
+	// by cloud controller manager. In that case some machines would never get
+	// deleted without a manual intervention.
+	if _, exists := m.ObjectMeta.Annotations[ExcludeNodeDrainingAnnotation]; !exists && m.Status.NodeRef != nil {
+		if err := r.drainNode(m); err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+
+	if err := r.actuator.Delete(ctx, cluster, m); err != nil {
+		klog.Errorf("Error deleting machine object %v; %v", name, err)
+		if requeueErr, ok := err.(*controllerError.RequeueAfterError); ok {
+			klog.Infof("Actuator returned requeue-after error: %v", requeueErr)
+			return reconcile.Result{Requeue: true, RequeueAfter: requeueErr.RequeueAfter}, nil
+		}
+		return reconcile.Result{}, err
+	}
+
+	if m.Status.NodeRef != nil {
+		klog.Infof("Deleting node %q for machine %q", m.Status.NodeRef.Name, m.Name)
+		if err := r.deleteNode(ctx, m.Status.NodeRef.Name); err != nil {
+			klog.Errorf("Error deleting node %q for machine %q", name, err)
+			return reconcile.Result{}, err
+		}
+	}
+
+	// Remove finalizer on successful deletion.
+	klog.Infof("machine object %v deletion successful, removing finalizer.", name)
+	m.ObjectMeta.Finalizers = util.Filter(m.ObjectMeta.Finalizers, machinev1.MachineFinalizer)
+	if err := r.Client.Update(context.Background(), m); err != nil {
+		klog.Errorf("Error removing finalizer from machine object %v; %v", name, err)
 		return reconcile.Result{}, err
 	}
 	return reconcile.Result{}, nil
