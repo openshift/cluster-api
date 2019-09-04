@@ -18,9 +18,10 @@ package machine
 
 import (
 	"errors"
-	controllerError "github.com/openshift/cluster-api/pkg/controller/error"
 	"testing"
 	"time"
+
+	controllerError "github.com/openshift/cluster-api/pkg/controller/error"
 )
 
 func mockDrainNode(shouldDelay bool) error {
