@@ -225,7 +225,7 @@ func (r *ReconcileMachine) Reconcile(request reconcile.Request) (reconcile.Resul
 			// after an instance was created. So only a small window is left when
 			// we can loose instances, e.g. right after request to create one
 			// was sent and before a list of node addresses was set.
-			if  len(m.Status.Addresses) > 0 || !isInvalidMachineConfigurationError(err) {
+			if len(m.Status.Addresses) > 0 || !isInvalidMachineConfigurationError(err) {
 				klog.Errorf("Failed to delete machine %q: %v", name, err)
 				return delayIfRequeueAfterError(err)
 			}
