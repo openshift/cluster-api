@@ -60,9 +60,6 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: machinev1beta1.MachineSpec{
-					Versions: machinev1beta1.MachineVersionInfo{Kubelet: "1.10.3"},
-				},
 			},
 		},
 	}
@@ -92,7 +89,7 @@ func TestReconcile(t *testing.T) {
 	// Verify that the MachineSet was created.
 	machineSets := &machinev1beta1.MachineSetList{}
 	expectInt(t, 1, func(ctx context.Context) int {
-		if err := c.List(ctx, &client.ListOptions{}, machineSets); err != nil {
+		if err := c.List(ctx, machineSets); err != nil {
 			return -1
 		}
 		return len(machineSets.Items)
@@ -102,9 +99,6 @@ func TestReconcile(t *testing.T) {
 	if r := *ms.Spec.Replicas; r != 2 {
 		t.Errorf("replicas was %d not 2", r)
 	}
-	if k := ms.Spec.Template.Spec.Versions.Kubelet; k != "1.10.3" {
-		t.Errorf("kubelet was %q not '1.10.3'", k)
-	}
 
 	// Delete a MachineSet and expect Reconcile to be called to replace it.
 	if err := c.Delete(context.TODO(), &ms); err != nil {
@@ -112,7 +106,7 @@ func TestReconcile(t *testing.T) {
 	}
 	expectReconcile(t, requests, errors)
 	expectInt(t, 1, func(ctx context.Context) int {
-		if err := c.List(ctx, &client.ListOptions{}, machineSets); err != nil {
+		if err := c.List(ctx, machineSets); err != nil {
 			return -1
 		}
 		return len(machineSets.Items)
@@ -127,7 +121,7 @@ func TestReconcile(t *testing.T) {
 	}
 	expectReconcile(t, requests, errors)
 	expectInt(t, 5, func(ctx context.Context) int {
-		if err := c.List(ctx, &client.ListOptions{}, machineSets); err != nil {
+		if err := c.List(ctx, machineSets); err != nil {
 			return -1
 		}
 		if len(machineSets.Items) != 1 {
@@ -145,7 +139,7 @@ func TestReconcile(t *testing.T) {
 	}
 	expectReconcile(t, requests, errors)
 	expectInt(t, 2, func(ctx context.Context) int {
-		if err := c.List(ctx, &client.ListOptions{}, machineSets); err != nil {
+		if err := c.List(ctx, machineSets); err != nil {
 			return -1
 		}
 		return len(machineSets.Items)
@@ -228,7 +222,7 @@ func TestReconcile(t *testing.T) {
 
 	// Expect the old MachineSet to be removed
 	expectInt(t, 1, func(ctx context.Context) int {
-		if err := c.List(ctx, &client.ListOptions{}, machineSets); err != nil {
+		if err := c.List(ctx, machineSets); err != nil {
 			return -1
 		}
 		return len(machineSets.Items)

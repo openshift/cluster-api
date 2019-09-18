@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
-        "cluster_types.go",
         "common_types.go",
         "defaults.go",
         "doc.go",
@@ -26,14 +25,13 @@ go_library(
         "//vendor/k8s.io/apimachinery/pkg/runtime/schema:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/util/intstr:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/util/validation/field:go_default_library",
-        "//vendor/sigs.k8s.io/controller-runtime/pkg/runtime/scheme:go_default_library",
+        "//vendor/sigs.k8s.io/controller-runtime/pkg/scheme:go_default_library",
     ],
 )
 
 go_test(
     name = "go_default_test",
     srcs = [
-        "cluster_types_test.go",
         "machine_types_test.go",
         "machinedeployment_types_test.go",
         "machineset_types_test.go",
