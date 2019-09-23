@@ -20,15 +20,36 @@ required = [
   go-tests = true
   unused-packages = true
 
+[[override]]
+  name = "k8s.io/code-generator"
+  version = "kubernetes-1.14.1"
+
+[[override]]
+  name = "k8s.io/api"
+  version = "kubernetes-1.14.1"
+
+[[override]]
+  name = "k8s.io/apiextensions-apiserver"
+  version = "kubernetes-1.14.1"
+
+[[override]]
+  name = "k8s.io/apimachinery"
+  version = "kubernetes-1.14.1"
+
+[[override]]
+  name = "k8s.io/client-go"
+  version = "kubernetes-1.14.1"
+
 # STANZAS BELOW ARE GENERATED AND MAY BE WRITTEN - DO NOT MODIFY BELOW THIS LINE.
 
 [[constraint]]
-  name="sigs.k8s.io/controller-runtime"
-  version="v0.1.1"
+  name = "sigs.k8s.io/controller-runtime"
+  # release-0.2 since it imports kubernetes 1.14
+  branch="release-0.2"
 
 [[constraint]]
   name="sigs.k8s.io/controller-tools"
-  version="v0.1.1"
+  version="v0.1.9"
 
 # For dependency below: Refer to issue https://github.com/golang/dep/issues/1799
 [[override]]
