@@ -1014,6 +1014,7 @@
     "k8s.io/code-generator/cmd/lister-gen",
     "k8s.io/klog",
     "k8s.io/utils/integer",
+    "k8s.io/utils/pointer",
     "sigs.k8s.io/controller-runtime/pkg/client",
     "sigs.k8s.io/controller-runtime/pkg/client/config",
     "sigs.k8s.io/controller-runtime/pkg/client/fake",
