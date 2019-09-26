@@ -17,16 +17,18 @@ limitations under the License.
 package machine
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime"
-
-	"github.com/openshift/cluster-api/pkg/apis/cluster/v1alpha1"
 	"github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
+	machinev1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -36,7 +38,7 @@ var (
 )
 
 func TestReconcileRequest(t *testing.T) {
-	machine1 := v1beta1.Machine{
+	machineProvisioning := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
@@ -45,8 +47,7 @@ func TestReconcileRequest(t *testing.T) {
 			Namespace:  "default",
 			Finalizers: []string{v1beta1.MachineFinalizer, metav1.FinalizerDeleteDependents},
 			Labels: map[string]string{
-				v1beta1.MachineClusterLabelName: "testcluster",
-				v1beta1.MachineClusterIDLabel:   "testcluster",
+				v1beta1.MachineClusterIDLabel: "testcluster",
 			},
 		},
 		Spec: v1beta1.MachineSpec{
@@ -57,7 +58,7 @@ func TestReconcileRequest(t *testing.T) {
 			},
 		},
 	}
-	machine2 := v1beta1.Machine{
+	machineProvisioned := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
@@ -66,8 +67,7 @@ func TestReconcileRequest(t *testing.T) {
 			Namespace:  "default",
 			Finalizers: []string{v1beta1.MachineFinalizer, metav1.FinalizerDeleteDependents},
 			Labels: map[string]string{
-				v1beta1.MachineClusterLabelName: "testcluster",
-				v1beta1.MachineClusterIDLabel:   "testcluster",
+				v1beta1.MachineClusterIDLabel: "testcluster",
 			},
 		},
 		Spec: v1beta1.MachineSpec{
@@ -77,9 +77,17 @@ func TestReconcileRequest(t *testing.T) {
 				},
 			},
 		},
+		Status: machinev1.MachineStatus{
+			Addresses: []corev1.NodeAddress{
+				{
+					Type:    corev1.NodeInternalIP,
+					Address: "0.0.0.0",
+				},
+			},
+		},
 	}
 	time := metav1.Now()
-	machine3 := v1beta1.Machine{
+	machineDeleting := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "Machine",
 		},
@@ -89,8 +97,7 @@ func TestReconcileRequest(t *testing.T) {
 			Finalizers:        []string{v1beta1.MachineFinalizer, metav1.FinalizerDeleteDependents},
 			DeletionTimestamp: &time,
 			Labels: map[string]string{
-				v1beta1.MachineClusterLabelName: "testcluster",
-				v1beta1.MachineClusterIDLabel:   "testcluster",
+				v1beta1.MachineClusterIDLabel: "testcluster",
 			},
 		},
 		Spec: v1beta1.MachineSpec{
@@ -101,28 +108,64 @@ func TestReconcileRequest(t *testing.T) {
 			},
 		},
 	}
-	clusterList := v1alpha1.ClusterList{
+	machineFailed := v1beta1.Machine{
 		TypeMeta: metav1.TypeMeta{
-			Kind: "ClusterList",
+			Kind: "Machine",
 		},
-		Items: []v1alpha1.Cluster{
-			{
-				TypeMeta: metav1.TypeMeta{
-					Kind: "Cluster",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "testcluster",
-					Namespace: "default",
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "failed",
+			Namespace:  "default",
+			Finalizers: []string{v1beta1.MachineFinalizer, metav1.FinalizerDeleteDependents},
+			Labels: map[string]string{
+				v1beta1.MachineClusterIDLabel: "testcluster",
+			},
+		},
+		Spec: v1beta1.MachineSpec{
+			ProviderID: pointer.StringPtr("providerID"),
+			ProviderSpec: v1beta1.ProviderSpec{
+				Value: &runtime.RawExtension{
+					Raw: []byte("{}"),
 				},
 			},
-			{
-				TypeMeta: metav1.TypeMeta{
-					Kind: "Cluster",
+		},
+		Status: machinev1.MachineStatus{
+			Addresses: []corev1.NodeAddress{
+				{
+					Type:    corev1.NodeInternalIP,
+					Address: "0.0.0.0",
 				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "rainbow",
-					Namespace: "foo",
+			},
+		},
+	}
+	machineRunning := v1beta1.Machine{
+		TypeMeta: metav1.TypeMeta{
+			Kind: "Machine",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "running",
+			Namespace:  "default",
+			Finalizers: []string{v1beta1.MachineFinalizer, metav1.FinalizerDeleteDependents},
+			Labels: map[string]string{
+				v1beta1.MachineClusterIDLabel: "testcluster",
+			},
+		},
+		Spec: v1beta1.MachineSpec{
+			ProviderID: pointer.StringPtr("providerID"),
+			ProviderSpec: v1beta1.ProviderSpec{
+				Value: &runtime.RawExtension{
+					Raw: []byte("{}"),
 				},
+			},
+		},
+		Status: machinev1.MachineStatus{
+			Addresses: []corev1.NodeAddress{
+				{
+					Type:    corev1.NodeInternalIP,
+					Address: "0.0.0.0",
+				},
+			},
+			NodeRef: &corev1.ObjectReference{
+				Name: "a node",
 			},
 		},
 	}
@@ -134,6 +177,7 @@ func TestReconcileRequest(t *testing.T) {
 		deleteCallCount int64
 		result          reconcile.Result
 		error           bool
+		phase           string
 	}
 	testCases := []struct {
 		request     reconcile.Request
@@ -141,7 +185,8 @@ func TestReconcileRequest(t *testing.T) {
 		expected    expected
 	}{
 		{
-			request: reconcile.Request{NamespacedName: types.NamespacedName{Name: machine1.Name, Namespace: machine1.Namespace}},
+			request:     reconcile.Request{NamespacedName: types.NamespacedName{Name: machineProvisioning.Name, Namespace: machineProvisioning.Namespace}},
+			existsValue: false,
 			expected: expected{
 				createCallCount: 1,
 				existCallCount:  1,
@@ -149,10 +194,11 @@ func TestReconcileRequest(t *testing.T) {
 				deleteCallCount: 0,
 				result:          reconcile.Result{},
 				error:           false,
+				phase:           phaseProvisioning,
 			},
 		},
 		{
-			request:     reconcile.Request{NamespacedName: types.NamespacedName{Name: machine2.Name, Namespace: machine2.Namespace}},
+			request:     reconcile.Request{NamespacedName: types.NamespacedName{Name: machineProvisioned.Name, Namespace: machineProvisioned.Namespace}},
 			existsValue: true,
 			expected: expected{
 				createCallCount: 0,
@@ -161,10 +207,11 @@ func TestReconcileRequest(t *testing.T) {
 				deleteCallCount: 0,
 				result:          reconcile.Result{},
 				error:           false,
+				phase:           phaseProvisioned,
 			},
 		},
 		{
-			request:     reconcile.Request{NamespacedName: types.NamespacedName{Name: machine3.Name, Namespace: machine3.Namespace}},
+			request:     reconcile.Request{NamespacedName: types.NamespacedName{Name: machineDeleting.Name, Namespace: machineDeleting.Namespace}},
 			existsValue: true,
 			expected: expected{
 				createCallCount: 0,
@@ -173,6 +220,33 @@ func TestReconcileRequest(t *testing.T) {
 				deleteCallCount: 1,
 				result:          reconcile.Result{},
 				error:           false,
+				phase:           phaseDeleting,
+			},
+		},
+		{
+			request:     reconcile.Request{NamespacedName: types.NamespacedName{Name: machineFailed.Name, Namespace: machineFailed.Namespace}},
+			existsValue: false,
+			expected: expected{
+				createCallCount: 0,
+				existCallCount:  1,
+				updateCallCount: 0,
+				deleteCallCount: 0,
+				result:          reconcile.Result{},
+				error:           false,
+				phase:           phaseFailed, // A machine which does not exist but has providerID or addresses
+			},
+		},
+		{
+			request:     reconcile.Request{NamespacedName: types.NamespacedName{Name: machineRunning.Name, Namespace: machineRunning.Namespace}},
+			existsValue: true,
+			expected: expected{
+				createCallCount: 0,
+				existCallCount:  1,
+				updateCallCount: 1,
+				deleteCallCount: 0,
+				result:          reconcile.Result{},
+				error:           false,
+				phase:           phaseRunning,
 			},
 		},
 	}
@@ -182,7 +256,13 @@ func TestReconcileRequest(t *testing.T) {
 		act.ExistsValue = tc.existsValue
 		v1beta1.AddToScheme(scheme.Scheme)
 		r := &ReconcileMachine{
-			Client:   fake.NewFakeClient(&clusterList, &machine1, &machine2, &machine3),
+			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
+				&machineProvisioning,
+				&machineProvisioned,
+				&machineDeleting,
+				&machineFailed,
+				&machineRunning,
+			),
 			scheme:   scheme.Scheme,
 			actuator: act,
 		}
@@ -215,6 +295,206 @@ func TestReconcileRequest(t *testing.T) {
 
 		if act.DeleteCallCount != tc.expected.deleteCallCount {
 			t.Errorf("Case %s. Got: %d deleteCallCount, expected %d", tc.request.Name, act.DeleteCallCount, tc.expected.deleteCallCount)
+		}
+
+		machine := &v1beta1.Machine{}
+		if err := r.Client.Get(context.TODO(), tc.request.NamespacedName, machine); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if tc.expected.phase != stringPointerDeref(machine.Status.Phase) {
+			t.Errorf("Case %s. Got: %v, expected: %v", tc.request.Name, stringPointerDeref(machine.Status.Phase), tc.expected.phase)
+		}
+	}
+}
+
+func TestSetPhase(t *testing.T) {
+	name := "test"
+	namespace := "test"
+	namespacedName := types.NamespacedName{
+		Namespace: namespace,
+		Name:      name,
+	}
+
+	machine := &machinev1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Status: machinev1.MachineStatus{},
+	}
+	v1beta1.AddToScheme(scheme.Scheme)
+	reconciler := &ReconcileMachine{
+		Client: fake.NewFakeClientWithScheme(scheme.Scheme, machine),
+		scheme: scheme.Scheme,
+	}
+
+	if err := reconciler.setPhase(machine, phaseRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	// validate persisted object
+	got := machinev1.Machine{}
+	err := reconciler.Client.Get(context.TODO(), namespacedName, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Phase == nil {
+		t.Fatal("Got phase nil")
+	}
+	if *got.Status.Phase != phaseRunning {
+		t.Errorf("Got: %v, expected: %v", *got.Status.Phase, phaseRunning)
+	}
+	lastUpdated := got.Status.LastUpdated
+	if lastUpdated == nil {
+		t.Errorf("Expected lastUpdated field to be updated")
+	}
+	// validate passed object
+	if *machine.Status.Phase != phaseRunning {
+		t.Errorf("Got: %v, expected: %v", *machine.Status.Phase, phaseRunning)
+	}
+	objectLastUpdated := machine.Status.LastUpdated
+	if objectLastUpdated == nil {
+		t.Errorf("Expected lastUpdated field to be updated")
+	}
+
+	// Set the same phase should not modify lastUpdated
+	if err := reconciler.setPhase(machine, phaseRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	// validate persisted object
+	got = machinev1.Machine{}
+	err = reconciler.Client.Get(context.TODO(), namespacedName, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *lastUpdated != *got.Status.LastUpdated {
+		t.Errorf("Expected: %v, got: %v", *lastUpdated, *got.Status.LastUpdated)
+	}
+	// validate passed object
+	if *objectLastUpdated != *machine.Status.LastUpdated {
+		t.Errorf("Expected: %v, got: %v", *objectLastUpdated, *machine.Status.LastUpdated)
+	}
+
+	// Set phaseFailed with an errorMessage should store the message
+	expecterErrorMessage := "test"
+	if err := reconciler.setPhase(machine, phaseFailed, expecterErrorMessage); err != nil {
+		t.Fatal(err)
+	}
+	got = machinev1.Machine{}
+	err = reconciler.Client.Get(context.TODO(), namespacedName, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// validate persisted object
+	if expecterErrorMessage != *got.Status.ErrorMessage {
+		t.Errorf("Expected: %v, got: %v", expecterErrorMessage, *got.Status.ErrorMessage)
+	}
+	// validate passed object
+	if expecterErrorMessage != *machine.Status.ErrorMessage {
+		t.Errorf("Expected: %v, got: %v", expecterErrorMessage, *machine.Status.ErrorMessage)
+	}
+}
+
+func TestMachineIsProvisioned(t *testing.T) {
+	name := "test"
+	namespace := "test"
+	providerID := "providerID"
+
+	testCases := []struct {
+		machine  *machinev1.Machine
+		expected bool
+	}{
+		{
+			machine: &machinev1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Status: machinev1.MachineStatus{},
+			},
+			expected: false,
+		},
+		{
+			machine: &machinev1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Status: machinev1.MachineStatus{
+					Addresses: []corev1.NodeAddress{
+						{
+							Type:    corev1.NodeInternalIP,
+							Address: "0.0.0.0",
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			machine: &machinev1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Spec: machinev1.MachineSpec{
+					ProviderID: &providerID,
+				},
+				Status: machinev1.MachineStatus{},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		if got := machineIsProvisioned(tc.machine); got != tc.expected {
+			t.Errorf("Got: %v, expected: %v", got, tc.expected)
+		}
+	}
+}
+
+func TestStringPointerDeref(t *testing.T) {
+	value := "test"
+	testCases := []struct {
+		stringPointer *string
+		expected      string
+	}{
+		{
+			stringPointer: nil,
+			expected:      "",
+		},
+		{
+			stringPointer: &value,
+			expected:      value,
+		},
+	}
+	for _, tc := range testCases {
+		if got := stringPointerDeref(tc.stringPointer); got != tc.expected {
+			t.Errorf("Got: %v, expected: %v", got, tc.expected)
+		}
+	}
+}
+
+func TestMachineIsFailed(t *testing.T) {
+	testCases := []struct {
+		machine  *machinev1.Machine
+		expected bool
+	}{
+		{
+			machine: &machinev1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "fromNilPhase",
+					Namespace: "test",
+				},
+				Status: machinev1.MachineStatus{},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		if got := machineIsFailed(tc.machine); got {
+			t.Errorf("Expected: %v, got: %v", got, tc.expected)
 		}
 	}
 }
