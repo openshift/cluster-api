@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "expansion.go",
         "lister.go",
-        "tags.go",
     ],
     importmap = "github.com/openshift/cluster-api/vendor/k8s.io/code-generator/cmd/lister-gen/generators",
     importpath = "k8s.io/code-generator/cmd/lister-gen/generators",
