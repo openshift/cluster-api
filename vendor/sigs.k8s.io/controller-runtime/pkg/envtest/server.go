@@ -81,16 +81,23 @@ type Environment struct {
 	// loading.
 	Config *rest.Config
 
-	// CRDs is a list of CRDs to install
+	// CRDInstallOptions are the options for installing CRDs.
+	CRDInstallOptions CRDInstallOptions
+
+	// CRDs is a list of CRDs to install.
+	// If both this field and CRDs field in CRDInstallOptions are specified, the
+	// values are merged.
 	CRDs []*apiextensionsv1beta1.CustomResourceDefinition
 
 	// CRDDirectoryPaths is a list of paths containing CRD yaml or json configs.
+	// If both this field and Paths field in CRDInstallOptions are specified, the
+	// values are merged.
 	CRDDirectoryPaths []string
 
 	// UseExisting indicates that this environments should use an
 	// existing kubeconfig, instead of trying to stand up a new control plane.
 	// This is useful in cases that need aggregated API servers and the like.
-	UseExistingCluster bool
+	UseExistingCluster *bool
 
 	// ControlPlaneStartTimeout is the maximum duration each controlplane component
 	// may take to start. It defaults to the KUBEBUILDER_CONTROLPLANE_START_TIMEOUT
@@ -113,7 +120,7 @@ type Environment struct {
 
 // Stop stops a running server
 func (te *Environment) Stop() error {
-	if te.UseExistingCluster {
+	if te.useExistingCluster() {
 		return nil
 	}
 	return te.ControlPlane.Stop()
@@ -130,11 +137,7 @@ func (te Environment) getAPIServerFlags() []string {
 
 // Start starts a local Kubernetes server and updates te.ApiserverPort with the port it is listening on
 func (te *Environment) Start() (*rest.Config, error) {
-	if !te.UseExistingCluster {
-		// Check USE_EXISTING_CLUSTER env then
-		te.UseExistingCluster = strings.ToLower(os.Getenv(envUseExistingCluster)) == "true"
-	}
-	if te.UseExistingCluster {
+	if te.useExistingCluster() {
 		log.V(1).Info("using existing cluster")
 		if te.Config == nil {
 			// we want to allow people to pass in their own config, so
@@ -207,10 +210,9 @@ func (te *Environment) Start() (*rest.Config, error) {
 	}
 
 	log.V(1).Info("installing CRDs")
-	_, err := InstallCRDs(te.Config, CRDInstallOptions{
-		Paths: te.CRDDirectoryPaths,
-		CRDs:  te.CRDs,
-	})
+	te.CRDInstallOptions.CRDs = mergeCRDs(te.CRDInstallOptions.CRDs, te.CRDs)
+	te.CRDInstallOptions.Paths = mergePaths(te.CRDInstallOptions.Paths, te.CRDDirectoryPaths)
+	_, err := InstallCRDs(te.Config, te.CRDInstallOptions)
 	return te.Config, err
 }
 
@@ -255,4 +257,11 @@ func (te *Environment) defaultTimeouts() error {
 		}
 	}
 	return nil
+}
+
+func (te *Environment) useExistingCluster() bool {
+	if te.UseExistingCluster == nil {
+		return strings.ToLower(os.Getenv(envUseExistingCluster)) == "true"
+	}
+	return *te.UseExistingCluster
 }

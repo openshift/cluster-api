@@ -42,7 +42,8 @@ dep-ensure: ## Runs dep-ensure and rebuilds Bazel gazelle files.
 
 .PHONY: test
 test: gazelle verify generate fmt vet manifests ## Run tests
-	go test -v -timeout=20m -tags=integration ./pkg/... ./cmd/...
+    # TODO(alberto) remove unused code carried over from upstream.
+	go test -v -timeout=20m -tags=integration ./pkg/... ./cmd/manager/...
 
 .PHONY: manager
 manager: generate fmt vet ## Build manager binary
@@ -62,11 +63,9 @@ deploy: manifests ## Deploy controller in the configured Kubernetes cluster in ~
 
 .PHONY: manifests
 manifests: ## Generate manifests e.g. CRD, RBAC etc.
-	go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go all
-	cp -f ./config/rbac/rbac*.yaml ./config/ci/rbac/
-	cp -f ./config/manager/manager*.yaml ./config/ci/manager/
-	go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go crd --domain openshift.io
-	git checkout config/crds/cluster_v1alpha1_*
+	go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go crd \
+	    paths=./pkg/apis/machine/... \
+	    output:crd:dir=./config/crds
 
 .PHONY: fmt
 fmt: ## Run go fmt against code
