@@ -764,3 +764,43 @@ func objBody(codec runtime.Codec, obj runtime.Object) io.ReadCloser {
 func stringBody(body string) io.ReadCloser {
 	return ioutil.NopCloser(bytes.NewReader([]byte(body)))
 }
+
+func TestBuildDeleteOptions(t *testing.T) {
+	tests := []struct {
+		description    string
+		podGracePeriod int64
+		gracePeriod    int
+		// -1 signals not set
+		expected int64
+	}{
+		{
+			description:    "library grace period seconds cannot exceed pod's",
+			podGracePeriod: 30,
+			gracePeriod:    600,
+			expected:       30,
+		},
+		{
+			description:    "library grace period negative doesn't set delete options",
+			podGracePeriod: 30,
+			gracePeriod:    -1,
+			expected:       -1,
+		},
+		{
+			description:    "library's grace period is honored if lower than pod's",
+			podGracePeriod: 30,
+			gracePeriod:    10,
+			expected:       10,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.description, func(t *testing.T) {
+			doptions := buildDeleteOptions(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{DeletionGracePeriodSeconds: &test.podGracePeriod}}, test.gracePeriod)
+			if doptions.GracePeriodSeconds != nil && *doptions.GracePeriodSeconds != test.expected {
+				t.Fatalf("expected delete options grace period of %d, got %d instead", test.expected, *doptions.GracePeriodSeconds)
+			}
+			if doptions.GracePeriodSeconds != nil && test.expected == -1 {
+				t.Fatalf("expected nil delete options grace period, got %d instead", *doptions.GracePeriodSeconds)
+			}
+		})
+	}
+}
