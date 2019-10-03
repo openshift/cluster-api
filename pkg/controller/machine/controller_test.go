@@ -89,8 +89,8 @@ func TestReconcileRequest(t *testing.T) {
 			Finalizers:        []string{v1beta1.MachineFinalizer, metav1.FinalizerDeleteDependents},
 			DeletionTimestamp: &time,
 			Labels: map[string]string{
-				v1alpha1.MachineClusterLabelName: "testcluster",
-				v1beta1.MachineClusterIDLabel:    "testcluster",
+				v1beta1.MachineClusterLabelName: "testcluster",
+				v1beta1.MachineClusterIDLabel:   "testcluster",
 			},
 		},
 		Spec: v1beta1.MachineSpec{
