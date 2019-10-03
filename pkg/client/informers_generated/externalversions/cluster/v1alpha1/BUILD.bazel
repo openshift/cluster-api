@@ -5,10 +5,6 @@ go_library(
     srcs = [
         "cluster.go",
         "interface.go",
-        "machine.go",
-        "machineclass.go",
-        "machinedeployment.go",
-        "machineset.go",
     ],
     importpath = "github.com/openshift/cluster-api/pkg/client/informers_generated/externalversions/cluster/v1alpha1",
     visibility = ["//visibility:public"],
