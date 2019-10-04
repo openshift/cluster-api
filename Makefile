@@ -30,19 +30,12 @@ all: test manager clusterctl
 help:  ## Display this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-.PHONY: gazelle
-gazelle: ## Run Bazel Gazelle
-	(which bazel && ./hack/update-bazel.sh) || true
-
 .PHONY: dep-ensure
-dep-ensure: ## Runs dep-ensure and rebuilds Bazel gazelle files.
-	find vendor -name 'BUILD.bazel' -delete
+dep-ensure: ## Runs dep-ensure.
 	(which dep && dep ensure -v) || true
-	$(MAKE) gazelle
 
 .PHONY: test
-test: gazelle verify generate fmt vet manifests ## Run tests
-    # TODO(alberto) remove unused code carried over from upstream.
+test: verify generate fmt vet manifests ## Run tests
 	go test -v -timeout=20m -tags=integration ./pkg/... ./cmd/manager/...
 
 .PHONY: manager
@@ -79,17 +72,9 @@ goimports: ## Go fmt your code
 vet: ## Run go vet against code
 	go vet ./pkg/... ./cmd/...
 
-.PHONY: lint
-lint: dep-ensure ## Lint codebase
-	bazel run //:lint $(BAZEL_ARGS)
-
-lint-full: dep-ensure ## Run slower linters to detect possible issues
-	bazel run //:lint-full $(BAZEL_ARGS)
-
 .PHONY: generate
 generate: clientset dep-ensure ## Generate code
 	go generate ./pkg/... ./cmd/...
-	$(MAKE) gazelle
 
 .PHONY: clientset
 clientset: ## Generate a typed clientset
@@ -106,11 +91,7 @@ clientset: ## Generate a typed clientset
 		--listers-package github.com/openshift/cluster-api/pkg/client/listers_generated \
 		--output-package github.com/openshift/cluster-api/pkg/client/informers_generated \
 		--go-header-file=./hack/boilerplate.go.txt
-	$(MAKE) gazelle
 
-.PHONY: clean
-clean: ## Remove all generated files
-	rm -f bazel-*
 
 .PHONY: docker-build
 docker-build: generate fmt vet manifests ## Build the docker image for controller-manager
@@ -136,4 +117,3 @@ docker-push-ci: docker-build-ci  ## Build the docker image for ci
 verify:
 	./hack/verify_boilerplate.py
 	./hack/verify_clientset.sh
-	./hack/verify-bazel.sh
