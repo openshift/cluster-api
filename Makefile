@@ -69,7 +69,7 @@ manifests: ## Generate manifests e.g. CRD, RBAC etc.
 
 .PHONY: fmt
 fmt: ## Run go fmt against code
-	go fmt ./pkg/... ./cmd/...
+	test -z $$(gofmt -s -l  ./pkg/ ./cmd/)
 
 .PHONY: goimports
 goimports: ## Go fmt your code
@@ -80,7 +80,7 @@ vet: ## Run go vet against code
 	go vet ./pkg/... ./cmd/...
 
 .PHONY: generate
-generate: clientset vendor ## Generate code
+generate: clientset ## Generate code
 	go generate ./pkg/... ./cmd/...
 
 .PHONY: clientset
