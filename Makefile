@@ -25,14 +25,21 @@ export KUBEBUILDER_CONTROLPLANE_STOP_TIMEOUT ?=60s
 export CONTROLLER_IMG ?= gcr.io/k8s-cluster-api/cluster-api-controller:0.1.0
 export EXAMPLE_PROVIDER_IMG ?= gcr.io/k8s-cluster-api/example-provider-controller:latest
 
+GO111MODULE = on
+export GO111MODULE
+GOFLAGS = -mod=vendor
+export GOFLAGS
+
 all: test manager clusterctl
 
 help:  ## Display this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-.PHONY: dep-ensure
-dep-ensure: ## Runs dep-ensure.
-	(which dep && dep ensure -v) || true
+.PHONY: vendor
+vendor: ## Runs vendor.
+	go mod tidy
+	go mod vendor
+	go mod verify
 
 .PHONY: test
 test: verify generate fmt vet manifests ## Run tests
@@ -73,20 +80,18 @@ vet: ## Run go vet against code
 	go vet ./pkg/... ./cmd/...
 
 .PHONY: generate
-generate: clientset dep-ensure ## Generate code
+generate: clientset vendor ## Generate code
 	go generate ./pkg/... ./cmd/...
 
 .PHONY: clientset
 clientset: ## Generate a typed clientset
-	rm -rf pkg/client
-	cd ./vendor/k8s.io/code-generator/cmd && go install ./client-gen ./lister-gen ./informer-gen
-	$$GOPATH/bin/client-gen --clientset-name clientset --input-base github.com/openshift/cluster-api/pkg/apis \
+	go run ./vendor/k8s.io/code-generator/cmd/client-gen --clientset-name clientset --input-base github.com/openshift/cluster-api/pkg/apis \
 		--input cluster/v1alpha1,machine/v1beta1 --output-package github.com/openshift/cluster-api/pkg/client/clientset_generated \
 		--go-header-file=./hack/boilerplate.go.txt
-	$$GOPATH/bin/lister-gen --input-dirs github.com/openshift/cluster-api/pkg/apis/cluster/v1alpha1,github.com/openshift/cluster-api/pkg/apis/machine/v1beta1 \
+	go run ./vendor/k8s.io/code-generator/cmd/lister-gen --input-dirs github.com/openshift/cluster-api/pkg/apis/cluster/v1alpha1,github.com/openshift/cluster-api/pkg/apis/machine/v1beta1 \
 		--output-package github.com/openshift/cluster-api/pkg/client/listers_generated \
 		--go-header-file=./hack/boilerplate.go.txt
-	$$GOPATH/bin/informer-gen --input-dirs github.com/openshift/cluster-api/pkg/apis/cluster/v1alpha1,github.com/openshift/cluster-api/pkg/apis/machine/v1beta1 \
+	go run ./vendor/k8s.io/code-generator/cmd/informer-gen --input-dirs github.com/openshift/cluster-api/pkg/apis/cluster/v1alpha1,github.com/openshift/cluster-api/pkg/apis/machine/v1beta1 \
 		--versioned-clientset-package github.com/openshift/cluster-api/pkg/client/clientset_generated/clientset \
 		--listers-package github.com/openshift/cluster-api/pkg/client/listers_generated \
 		--output-package github.com/openshift/cluster-api/pkg/client/informers_generated \
