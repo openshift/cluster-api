@@ -176,7 +176,7 @@ func (r *ReconcileMachineDeployment) Reconcile(request reconcile.Request) (recon
 
 	// Ignore deleted MachineDeployments, this can happen when foregroundDeletion
 	// is enabled
-	if d.DeletionTimestamp != nil {
+	if !d.DeletionTimestamp.IsZero() {
 		return reconcile.Result{}, nil
 	}
 
@@ -260,7 +260,7 @@ func (r *ReconcileMachineDeployment) reconcile(ctx context.Context, d *v1beta1.M
 		return reconcile.Result{}, err
 	}
 
-	if d.DeletionTimestamp != nil {
+	if !d.DeletionTimestamp.IsZero() {
 		return reconcile.Result{}, r.sync(d, msList, machineMap)
 	}
 

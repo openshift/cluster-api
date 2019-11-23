@@ -426,7 +426,7 @@ func (r *ReconcileMachineDeployment) cleanupDeployment(oldMSs []*machinev1beta1.
 
 	// Avoid deleting machine set with deletion timestamp set
 	aliveFilter := func(ms *machinev1beta1.MachineSet) bool {
-		return ms != nil && ms.ObjectMeta.DeletionTimestamp == nil
+		return ms != nil && ms.ObjectMeta.DeletionTimestamp.IsZero()
 	}
 
 	cleanableMSes := dutil.FilterMachineSets(oldMSs, aliveFilter)
@@ -446,7 +446,7 @@ func (r *ReconcileMachineDeployment) cleanupDeployment(oldMSs []*machinev1beta1.
 		}
 
 		// Avoid delete machine set with non-zero replica counts
-		if ms.Status.Replicas != 0 || *(ms.Spec.Replicas) != 0 || ms.Generation > ms.Status.ObservedGeneration || ms.DeletionTimestamp != nil {
+		if ms.Status.Replicas != 0 || *(ms.Spec.Replicas) != 0 || ms.Generation > ms.Status.ObservedGeneration || !ms.DeletionTimestamp.IsZero() {
 			continue
 		}
 

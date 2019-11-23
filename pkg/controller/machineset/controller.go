@@ -160,7 +160,7 @@ func (r *ReconcileMachineSet) Reconcile(request reconcile.Request) (reconcile.Re
 
 	// Ignore deleted MachineSets, this can happen when foregroundDeletion
 	// is enabled
-	if machineSet.DeletionTimestamp != nil {
+	if !machineSet.DeletionTimestamp.IsZero() {
 		return reconcile.Result{}, nil
 	}
 
@@ -422,7 +422,7 @@ func shouldExcludeMachine(machineSet *machinev1beta1.MachineSet, machine *machin
 		return true
 	}
 
-	if machine.ObjectMeta.DeletionTimestamp != nil {
+	if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
 		return true
 	}
 
