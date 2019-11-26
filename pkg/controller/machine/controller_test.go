@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"testing"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 	machinev1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 	corev1 "k8s.io/api/core/v1"
@@ -192,7 +194,7 @@ func TestReconcileRequest(t *testing.T) {
 				existCallCount:  1,
 				updateCallCount: 0,
 				deleteCallCount: 0,
-				result:          reconcile.Result{},
+				result:          reconcile.Result{Requeue: true},
 				error:           false,
 				phase:           phaseProvisioning,
 			},
@@ -205,7 +207,7 @@ func TestReconcileRequest(t *testing.T) {
 				existCallCount:  1,
 				updateCallCount: 1,
 				deleteCallCount: 0,
-				result:          reconcile.Result{},
+				result:          reconcile.Result{RequeueAfter: requeueAfter},
 				error:           false,
 				phase:           phaseProvisioned,
 			},
@@ -328,8 +330,10 @@ func TestSetPhase(t *testing.T) {
 		Client: fake.NewFakeClientWithScheme(scheme.Scheme, machine),
 		scheme: scheme.Scheme,
 	}
+	baseMachineToPatch := client.MergeFrom(machine.DeepCopy())
 
-	if err := reconciler.setPhase(machine, phaseRunning, ""); err != nil {
+	reconciler.setPhase(machine, phaseRunning, "")
+	if err := reconciler.patchMachine(context.TODO(), baseMachineToPatch, machine); err != nil {
 		t.Fatal(err)
 	}
 	// validate persisted object
@@ -358,9 +362,12 @@ func TestSetPhase(t *testing.T) {
 	}
 
 	// Set the same phase should not modify lastUpdated
-	if err := reconciler.setPhase(machine, phaseRunning, ""); err != nil {
+	baseMachineToPatch = client.MergeFrom(machine.DeepCopy())
+	reconciler.setPhase(machine, phaseRunning, "")
+	if err := reconciler.patchMachine(context.TODO(), baseMachineToPatch, machine); err != nil {
 		t.Fatal(err)
 	}
+
 	// validate persisted object
 	got = machinev1.Machine{}
 	err = reconciler.Client.Get(context.TODO(), namespacedName, &got)
@@ -377,9 +384,12 @@ func TestSetPhase(t *testing.T) {
 
 	// Set phaseFailed with an errorMessage should store the message
 	expecterErrorMessage := "test"
-	if err := reconciler.setPhase(machine, phaseFailed, expecterErrorMessage); err != nil {
+	baseMachineToPatch = client.MergeFrom(machine.DeepCopy())
+	reconciler.setPhase(machine, phaseFailed, expecterErrorMessage)
+	if err := reconciler.patchMachine(context.TODO(), baseMachineToPatch, machine); err != nil {
 		t.Fatal(err)
 	}
+
 	got = machinev1.Machine{}
 	err = reconciler.Client.Get(context.TODO(), namespacedName, &got)
 	if err != nil {
