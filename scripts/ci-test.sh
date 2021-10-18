@@ -18,10 +18,16 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-REPO_ROOT=$(dirname "${BASH_SOURCE}")/..
+REPO_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
+cd "${REPO_ROOT}" || exit 1
 
-cd $REPO_ROOT && \
-	source ./scripts/fetch_ext_bins.sh && \
-	fetch_tools && \
-	setup_envs && \
-	make test
+# shellcheck source=./hack/ensure-go.sh
+source "${REPO_ROOT}/hack/ensure-go.sh"
+
+echo "*** Testing Cluster API ***"
+make test-junit
+
+echo -e "\n*** Testing Cluster API Provider Docker ***\n"
+# Docker provider
+cd test/infrastructure/docker
+make test-junit
