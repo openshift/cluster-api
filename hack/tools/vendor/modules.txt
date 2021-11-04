@@ -1,0 +1,356 @@
+# github.com/blang/semver v3.5.1+incompatible
+## explicit
+github.com/blang/semver
+# github.com/dnephin/pflag v1.0.7
+github.com/dnephin/pflag
+# github.com/drone/envsubst/v2 v2.0.0-20210615175204-7bf45dbf5372
+## explicit
+github.com/drone/envsubst/v2
+github.com/drone/envsubst/v2/cmd/envsubst
+github.com/drone/envsubst/v2/parse
+github.com/drone/envsubst/v2/path
+# github.com/emirpasic/gods v1.12.0
+github.com/emirpasic/gods/containers
+github.com/emirpasic/gods/lists
+github.com/emirpasic/gods/lists/arraylist
+github.com/emirpasic/gods/trees
+github.com/emirpasic/gods/trees/binaryheap
+github.com/emirpasic/gods/utils
+# github.com/fatih/color v1.12.0
+github.com/fatih/color
+# github.com/fsnotify/fsnotify v1.4.9
+github.com/fsnotify/fsnotify
+# github.com/go-logr/logr v0.4.0
+github.com/go-logr/logr
+# github.com/go-logr/zapr v0.4.0
+github.com/go-logr/zapr
+# github.com/go-task/slim-sprig v0.0.0-20210107165309-348f09dbbbc0
+github.com/go-task/slim-sprig
+# github.com/gobuffalo/flect v0.2.3
+github.com/gobuffalo/flect
+# github.com/gogo/protobuf v1.3.2
+github.com/gogo/protobuf/proto
+github.com/gogo/protobuf/sortkeys
+# github.com/google/go-cmp v0.5.6
+github.com/google/go-cmp/cmp
+github.com/google/go-cmp/cmp/internal/diff
+github.com/google/go-cmp/cmp/internal/flags
+github.com/google/go-cmp/cmp/internal/function
+github.com/google/go-cmp/cmp/internal/value
+# github.com/google/gofuzz v1.1.0
+github.com/google/gofuzz
+# github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+github.com/google/shlex
+# github.com/hashicorp/errwrap v1.0.0
+github.com/hashicorp/errwrap
+# github.com/hashicorp/go-multierror v1.0.0
+## explicit
+github.com/hashicorp/go-multierror
+# github.com/inconshreveable/mousetrap v1.0.0
+github.com/inconshreveable/mousetrap
+# github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99
+github.com/jbenet/go-context/io
+# github.com/joelanford/go-apidiff v0.1.0
+## explicit
+github.com/joelanford/go-apidiff
+github.com/joelanford/go-apidiff/pkg/diff
+# github.com/jonboulle/clockwork v0.2.2
+github.com/jonboulle/clockwork
+# github.com/json-iterator/go v1.1.11
+github.com/json-iterator/go
+# github.com/kevinburke/ssh_config v0.0.0-20190725054713-01f96b0aa0cd
+github.com/kevinburke/ssh_config
+# github.com/mattn/go-colorable v0.1.8
+github.com/mattn/go-colorable
+# github.com/mattn/go-isatty v0.0.12
+github.com/mattn/go-isatty
+# github.com/mitchellh/go-homedir v1.1.0
+github.com/mitchellh/go-homedir
+# github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd
+github.com/modern-go/concurrent
+# github.com/modern-go/reflect2 v1.0.1
+github.com/modern-go/reflect2
+# github.com/nxadm/tail v1.4.8
+github.com/nxadm/tail
+github.com/nxadm/tail/ratelimiter
+github.com/nxadm/tail/util
+github.com/nxadm/tail/watch
+github.com/nxadm/tail/winfile
+# github.com/onsi/ginkgo v1.16.4
+## explicit
+github.com/onsi/ginkgo/config
+github.com/onsi/ginkgo/formatter
+github.com/onsi/ginkgo/ginkgo
+github.com/onsi/ginkgo/ginkgo/convert
+github.com/onsi/ginkgo/ginkgo/interrupthandler
+github.com/onsi/ginkgo/ginkgo/nodot
+github.com/onsi/ginkgo/ginkgo/outline
+github.com/onsi/ginkgo/ginkgo/testrunner
+github.com/onsi/ginkgo/ginkgo/testsuite
+github.com/onsi/ginkgo/ginkgo/watch
+github.com/onsi/ginkgo/internal/codelocation
+github.com/onsi/ginkgo/internal/containernode
+github.com/onsi/ginkgo/internal/failer
+github.com/onsi/ginkgo/internal/leafnodes
+github.com/onsi/ginkgo/internal/remote
+github.com/onsi/ginkgo/internal/spec
+github.com/onsi/ginkgo/internal/spec_iterator
+github.com/onsi/ginkgo/internal/writer
+github.com/onsi/ginkgo/reporters
+github.com/onsi/ginkgo/reporters/stenographer
+github.com/onsi/ginkgo/reporters/stenographer/support/go-colorable
+github.com/onsi/ginkgo/reporters/stenographer/support/go-isatty
+github.com/onsi/ginkgo/types
+# github.com/pkg/errors v0.9.1
+## explicit
+github.com/pkg/errors
+# github.com/sergi/go-diff v1.2.0
+## explicit
+github.com/sergi/go-diff/diffmatchpatch
+# github.com/spf13/afero v1.6.0
+github.com/spf13/afero
+github.com/spf13/afero/mem
+# github.com/spf13/cobra v1.2.1
+github.com/spf13/cobra
+# github.com/spf13/pflag v1.0.5
+github.com/spf13/pflag
+# github.com/src-d/gcfg v1.4.0
+github.com/src-d/gcfg
+github.com/src-d/gcfg/scanner
+github.com/src-d/gcfg/token
+github.com/src-d/gcfg/types
+# github.com/xanzy/ssh-agent v0.2.1
+github.com/xanzy/ssh-agent
+# go.uber.org/atomic v1.7.0
+go.uber.org/atomic
+# go.uber.org/multierr v1.6.0
+go.uber.org/multierr
+# go.uber.org/zap v1.19.0
+go.uber.org/zap
+go.uber.org/zap/buffer
+go.uber.org/zap/internal/bufferpool
+go.uber.org/zap/internal/color
+go.uber.org/zap/internal/exit
+go.uber.org/zap/zapcore
+# golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
+golang.org/x/crypto/blowfish
+golang.org/x/crypto/cast5
+golang.org/x/crypto/chacha20
+golang.org/x/crypto/curve25519
+golang.org/x/crypto/ed25519
+golang.org/x/crypto/ed25519/internal/edwards25519
+golang.org/x/crypto/internal/subtle
+golang.org/x/crypto/openpgp
+golang.org/x/crypto/openpgp/armor
+golang.org/x/crypto/openpgp/elgamal
+golang.org/x/crypto/openpgp/errors
+golang.org/x/crypto/openpgp/packet
+golang.org/x/crypto/openpgp/s2k
+golang.org/x/crypto/poly1305
+golang.org/x/crypto/ssh
+golang.org/x/crypto/ssh/agent
+golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
+golang.org/x/crypto/ssh/knownhosts
+golang.org/x/crypto/ssh/terminal
+# golang.org/x/exp v0.0.0-20210625193404-fa9d1d177d71
+## explicit
+golang.org/x/exp/apidiff
+# golang.org/x/mod v0.4.2
+golang.org/x/mod/module
+golang.org/x/mod/semver
+# golang.org/x/net v0.0.0-20210520170846-37e1c6afe023
+golang.org/x/net/context
+golang.org/x/net/http/httpguts
+golang.org/x/net/http2
+golang.org/x/net/http2/hpack
+golang.org/x/net/idna
+golang.org/x/net/internal/socks
+golang.org/x/net/proxy
+# golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+golang.org/x/sync/errgroup
+# golang.org/x/sys v0.0.0-20210616094352-59db8d763f22
+golang.org/x/sys/cpu
+golang.org/x/sys/execabs
+golang.org/x/sys/internal/unsafeheader
+golang.org/x/sys/plan9
+golang.org/x/sys/unix
+golang.org/x/sys/windows
+# golang.org/x/term v0.0.0-20210220032956-6a3ed077a48d
+golang.org/x/term
+# golang.org/x/text v0.3.6
+golang.org/x/text/secure/bidirule
+golang.org/x/text/transform
+golang.org/x/text/unicode/bidi
+golang.org/x/text/unicode/norm
+# golang.org/x/tools v0.1.5
+## explicit
+golang.org/x/tools/go/ast/astutil
+golang.org/x/tools/go/ast/inspector
+golang.org/x/tools/go/gcexportdata
+golang.org/x/tools/go/internal/gcimporter
+golang.org/x/tools/go/internal/packagesdriver
+golang.org/x/tools/go/packages
+golang.org/x/tools/go/vcs
+golang.org/x/tools/imports
+golang.org/x/tools/internal/event
+golang.org/x/tools/internal/event/core
+golang.org/x/tools/internal/event/keys
+golang.org/x/tools/internal/event/label
+golang.org/x/tools/internal/fastwalk
+golang.org/x/tools/internal/gocommand
+golang.org/x/tools/internal/gopathwalk
+golang.org/x/tools/internal/imports
+golang.org/x/tools/internal/packagesinternal
+golang.org/x/tools/internal/typeparams
+golang.org/x/tools/internal/typesinternal
+# golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
+golang.org/x/xerrors
+golang.org/x/xerrors/internal
+# gopkg.in/inf.v0 v0.9.1
+gopkg.in/inf.v0
+# gopkg.in/src-d/go-billy.v4 v4.3.2
+gopkg.in/src-d/go-billy.v4
+gopkg.in/src-d/go-billy.v4/helper/chroot
+gopkg.in/src-d/go-billy.v4/helper/polyfill
+gopkg.in/src-d/go-billy.v4/osfs
+gopkg.in/src-d/go-billy.v4/util
+# gopkg.in/src-d/go-git.v4 v4.13.1
+gopkg.in/src-d/go-git.v4
+gopkg.in/src-d/go-git.v4/config
+gopkg.in/src-d/go-git.v4/internal/revision
+gopkg.in/src-d/go-git.v4/internal/url
+gopkg.in/src-d/go-git.v4/plumbing
+gopkg.in/src-d/go-git.v4/plumbing/cache
+gopkg.in/src-d/go-git.v4/plumbing/filemode
+gopkg.in/src-d/go-git.v4/plumbing/format/config
+gopkg.in/src-d/go-git.v4/plumbing/format/diff
+gopkg.in/src-d/go-git.v4/plumbing/format/gitignore
+gopkg.in/src-d/go-git.v4/plumbing/format/idxfile
+gopkg.in/src-d/go-git.v4/plumbing/format/index
+gopkg.in/src-d/go-git.v4/plumbing/format/objfile
+gopkg.in/src-d/go-git.v4/plumbing/format/packfile
+gopkg.in/src-d/go-git.v4/plumbing/format/pktline
+gopkg.in/src-d/go-git.v4/plumbing/object
+gopkg.in/src-d/go-git.v4/plumbing/protocol/packp
+gopkg.in/src-d/go-git.v4/plumbing/protocol/packp/capability
+gopkg.in/src-d/go-git.v4/plumbing/protocol/packp/sideband
+gopkg.in/src-d/go-git.v4/plumbing/revlist
+gopkg.in/src-d/go-git.v4/plumbing/storer
+gopkg.in/src-d/go-git.v4/plumbing/transport
+gopkg.in/src-d/go-git.v4/plumbing/transport/client
+gopkg.in/src-d/go-git.v4/plumbing/transport/file
+gopkg.in/src-d/go-git.v4/plumbing/transport/git
+gopkg.in/src-d/go-git.v4/plumbing/transport/http
+gopkg.in/src-d/go-git.v4/plumbing/transport/internal/common
+gopkg.in/src-d/go-git.v4/plumbing/transport/server
+gopkg.in/src-d/go-git.v4/plumbing/transport/ssh
+gopkg.in/src-d/go-git.v4/storage
+gopkg.in/src-d/go-git.v4/storage/filesystem
+gopkg.in/src-d/go-git.v4/storage/filesystem/dotgit
+gopkg.in/src-d/go-git.v4/storage/memory
+gopkg.in/src-d/go-git.v4/utils/binary
+gopkg.in/src-d/go-git.v4/utils/diff
+gopkg.in/src-d/go-git.v4/utils/ioutil
+gopkg.in/src-d/go-git.v4/utils/merkletrie
+gopkg.in/src-d/go-git.v4/utils/merkletrie/filesystem
+gopkg.in/src-d/go-git.v4/utils/merkletrie/index
+gopkg.in/src-d/go-git.v4/utils/merkletrie/internal/frame
+gopkg.in/src-d/go-git.v4/utils/merkletrie/noder
+# gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7
+gopkg.in/tomb.v1
+# gopkg.in/warnings.v0 v0.1.2
+gopkg.in/warnings.v0
+# gopkg.in/yaml.v2 v2.4.0
+gopkg.in/yaml.v2
+# gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
+gopkg.in/yaml.v3
+# gotest.tools/gotestsum v1.6.4
+## explicit
+gotest.tools/gotestsum
+gotest.tools/gotestsum/cmd
+gotest.tools/gotestsum/cmd/tool
+gotest.tools/gotestsum/cmd/tool/slowest
+gotest.tools/gotestsum/internal/aggregate
+gotest.tools/gotestsum/internal/dotwriter
+gotest.tools/gotestsum/internal/filewatcher
+gotest.tools/gotestsum/internal/junitxml
+gotest.tools/gotestsum/log
+gotest.tools/gotestsum/testjson
+# k8s.io/api v0.22.2
+k8s.io/api/admissionregistration/v1
+k8s.io/api/rbac/v1
+# k8s.io/apiextensions-apiserver v0.22.2
+k8s.io/apiextensions-apiserver/pkg/apis/apiextensions
+k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1
+k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1
+# k8s.io/apimachinery v0.22.2
+k8s.io/apimachinery/pkg/api/equality
+k8s.io/apimachinery/pkg/api/resource
+k8s.io/apimachinery/pkg/apis/meta/v1
+k8s.io/apimachinery/pkg/conversion
+k8s.io/apimachinery/pkg/conversion/queryparams
+k8s.io/apimachinery/pkg/fields
+k8s.io/apimachinery/pkg/labels
+k8s.io/apimachinery/pkg/runtime
+k8s.io/apimachinery/pkg/runtime/schema
+k8s.io/apimachinery/pkg/selection
+k8s.io/apimachinery/pkg/types
+k8s.io/apimachinery/pkg/util/errors
+k8s.io/apimachinery/pkg/util/intstr
+k8s.io/apimachinery/pkg/util/json
+k8s.io/apimachinery/pkg/util/naming
+k8s.io/apimachinery/pkg/util/net
+k8s.io/apimachinery/pkg/util/runtime
+k8s.io/apimachinery/pkg/util/sets
+k8s.io/apimachinery/pkg/util/validation
+k8s.io/apimachinery/pkg/util/validation/field
+k8s.io/apimachinery/pkg/watch
+k8s.io/apimachinery/third_party/forked/golang/reflect
+# k8s.io/code-generator v0.22.2
+## explicit
+k8s.io/code-generator/cmd/conversion-gen
+k8s.io/code-generator/cmd/conversion-gen/args
+k8s.io/code-generator/cmd/conversion-gen/generators
+k8s.io/code-generator/pkg/util
+# k8s.io/gengo v0.0.0-20201214224949-b6c5ce23f027
+k8s.io/gengo/args
+k8s.io/gengo/generator
+k8s.io/gengo/namer
+k8s.io/gengo/parser
+k8s.io/gengo/types
+# k8s.io/klog/v2 v2.9.0
+## explicit
+k8s.io/klog/v2
+# k8s.io/utils v0.0.0-20210819203725-bdf08cb9a70a
+k8s.io/utils/pointer
+# sigs.k8s.io/controller-runtime/tools/setup-envtest v0.0.0-20210827150604-1730628f118b
+## explicit
+sigs.k8s.io/controller-runtime/tools/setup-envtest
+sigs.k8s.io/controller-runtime/tools/setup-envtest/env
+sigs.k8s.io/controller-runtime/tools/setup-envtest/remote
+sigs.k8s.io/controller-runtime/tools/setup-envtest/store
+sigs.k8s.io/controller-runtime/tools/setup-envtest/versions
+sigs.k8s.io/controller-runtime/tools/setup-envtest/workflows
+# sigs.k8s.io/controller-tools v0.7.0
+## explicit
+sigs.k8s.io/controller-tools/cmd/controller-gen
+sigs.k8s.io/controller-tools/pkg/crd
+sigs.k8s.io/controller-tools/pkg/crd/markers
+sigs.k8s.io/controller-tools/pkg/deepcopy
+sigs.k8s.io/controller-tools/pkg/genall
+sigs.k8s.io/controller-tools/pkg/genall/help
+sigs.k8s.io/controller-tools/pkg/genall/help/pretty
+sigs.k8s.io/controller-tools/pkg/loader
+sigs.k8s.io/controller-tools/pkg/markers
+sigs.k8s.io/controller-tools/pkg/rbac
+sigs.k8s.io/controller-tools/pkg/schemapatcher
+sigs.k8s.io/controller-tools/pkg/schemapatcher/internal/yaml
+sigs.k8s.io/controller-tools/pkg/version
+sigs.k8s.io/controller-tools/pkg/webhook
+# sigs.k8s.io/kubebuilder/docs/book/utils v0.0.0-20210702145813-742983631190
+## explicit
+sigs.k8s.io/kubebuilder/docs/book/utils/plugin
+# sigs.k8s.io/structured-merge-diff/v4 v4.1.2
+sigs.k8s.io/structured-merge-diff/v4/value
+# sigs.k8s.io/yaml v1.2.0
+sigs.k8s.io/yaml
