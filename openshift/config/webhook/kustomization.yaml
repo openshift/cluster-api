@@ -1,8 +1,0 @@
-namespace: ocp-cluster-api
-
-resources:
-- ../../../config/webhook/manifests.yaml
-- ../../../config/webhook/service.yaml
-
-patchesStrategicMerge:
-- webhook_service_patch.yaml

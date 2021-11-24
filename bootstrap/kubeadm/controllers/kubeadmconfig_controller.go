@@ -71,10 +71,8 @@ type InitLocker interface {
 
 // KubeadmConfigReconciler reconciles a KubeadmConfig object.
 type KubeadmConfigReconciler struct {
-	Client          client.Client
-	KubeadmInitLock InitLocker
-
-	// WatchFilterValue is the label value used to filter events prior to reconciliation.
+	Client           client.Client
+	KubeadmInitLock  InitLocker
 	WatchFilterValue string
 
 	remoteClientGetter remote.ClusterClientGetter

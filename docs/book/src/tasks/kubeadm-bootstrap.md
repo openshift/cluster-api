@@ -11,24 +11,23 @@ for Kubernetes bootstrap.
 * [The Kubebuilder Book](https://book.kubebuilder.io)
 
 ## How does CABPK work?
-
-Assuming you have deployed the CAPI and CAPD controllers, create a `Cluster` object and its corresponding `DockerCluster`
+CABPK is integrated into `cluster-api-manager`. Assuming you've set of CAPI and the Docker Manager, create a `Cluster` object and its corresponding `DockerCluster`
 infrastructure object.
 
 ```yaml
 kind: DockerCluster
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-cluster-docker
 ---
 kind: Cluster
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-cluster
 spec:
   infrastructureRef:
     kind: DockerCluster
-    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
     name: my-cluster-docker
 ```
 
@@ -37,7 +36,7 @@ the `KubeadmConfig` bootstrap object.
 
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-control-plane1-config
 spec:
@@ -51,12 +50,12 @@ spec:
         enable-hostpath-provisioner: "true"
 ---
 kind: DockerMachine
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-control-plane1-docker
 ---
 kind: Machine
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-control-plane1
   labels:
@@ -67,11 +66,11 @@ spec:
   bootstrap:
     configRef:
       kind: KubeadmConfig
-      apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+      apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
       name: my-control-plane1-config
   infrastructureRef:
     kind: DockerMachine
-    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
     name: my-control-plane1-docker
   version: "v1.19.1"
 ```
@@ -110,7 +109,7 @@ Valid combinations of configuration objects are:
 Bootstrap control plane node:
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-control-plane1-config
 spec:
@@ -127,7 +126,7 @@ spec:
 Additional control plane nodes:
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-control-plane2-config
 spec:
@@ -141,7 +140,7 @@ spec:
 worker nodes:
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
 metadata:
   name: my-worker1-config
 spec:

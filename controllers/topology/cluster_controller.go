@@ -48,9 +48,7 @@ type ClusterReconciler struct {
 	Client client.Client
 	// APIReader is used to list MachineSets directly via the API server to avoid
 	// race conditions caused by an outdated cache.
-	APIReader client.Reader
-
-	// WatchFilterValue is the label value used to filter events prior to reconciliation.
+	APIReader        client.Reader
 	WatchFilterValue string
 
 	// UnstructuredCachingClient provides a client that forces caching of unstructured objects,
