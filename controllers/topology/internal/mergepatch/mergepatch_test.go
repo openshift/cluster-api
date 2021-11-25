@@ -26,18 +26,17 @@ import (
 
 func TestNewHelper(t *testing.T) {
 	tests := []struct {
-		name               string
-		original           *unstructured.Unstructured // current
-		modified           *unstructured.Unstructured // desired
-		options            []HelperOption
-		wantHasChanges     bool
-		wantHasSpecChanges bool
-		wantPatch          []byte
+		name           string
+		original       *unstructured.Unstructured // current
+		modified       *unstructured.Unstructured // desired
+		options        []HelperOption
+		wantHasChanges bool
+		wantPatch      []byte
 	}{
 		// Field both in original and in modified --> align to modified
 
 		{
-			name: "Field (spec) both in original and in modified, no-op when equal",
+			name: "Field both in original and in modified, no-op when equal",
 			original: &unstructured.Unstructured{ // current
 				Object: map[string]interface{}{
 					"spec": map[string]interface{}{
@@ -52,9 +51,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     false,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{}"),
+			wantHasChanges: false,
+			wantPatch:      []byte("{}"),
 		},
 		{
 			name: "Field both in original and in modified, align to modified when different",
@@ -72,33 +70,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: true,
-			wantPatch:          []byte("{\"spec\":{\"foo\":\"bar\"}}"),
-		},
-		{
-			name: "Field (metadata.label) both in original and in modified, align to modified when different",
-			original: &unstructured.Unstructured{ // current
-				Object: map[string]interface{}{
-					"metadata": map[string]interface{}{
-						"labels": map[string]interface{}{
-							"foo": "bar-changed",
-						},
-					},
-				},
-			},
-			modified: &unstructured.Unstructured{ // desired
-				Object: map[string]interface{}{
-					"metadata": map[string]interface{}{
-						"labels": map[string]interface{}{
-							"foo": "bar",
-						},
-					},
-				},
-			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{\"metadata\":{\"labels\":{\"foo\":\"bar\"}}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"spec\":{\"foo\":\"bar\"}}"),
 		},
 		{
 			name: "Nested field both in original and in modified, no-op when equal",
@@ -124,9 +97,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     false,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{}"),
+			wantHasChanges: false,
+			wantPatch:      []byte("{}"),
 		},
 		{
 			name: "Nested field both in original and in modified, align to modified when different",
@@ -152,9 +124,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: true,
-			wantPatch:          []byte("{\"spec\":{\"template\":{\"spec\":{\"A\":\"A\"}}}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"spec\":{\"template\":{\"spec\":{\"A\":\"A\"}}}}"),
 		},
 		{
 			name: "Value of type map, enforces entries from modified, preserve entries only in original",
@@ -180,9 +151,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: true,
-			wantPatch:          []byte("{\"spec\":{\"map\":{\"A\":\"A\",\"C\":\"C\"}}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"spec\":{\"map\":{\"A\":\"A\",\"C\":\"C\"}}}"),
 		},
 		{
 			name: "Value of type Array or Slice, align to modified",
@@ -208,9 +178,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: true,
-			wantPatch:          []byte("{\"spec\":{\"slice\":[\"A\",\"B\",\"C\"]}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"spec\":{\"slice\":[\"A\",\"B\",\"C\"]}}"),
 		},
 
 		// Field only in modified (not existing in original) --> align to modified
@@ -227,9 +196,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: true,
-			wantPatch:          []byte("{\"spec\":{\"foo\":\"bar\"}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"spec\":{\"foo\":\"bar\"}}"),
 		},
 		{
 			name: "Nested field only in modified, align to modified",
@@ -247,9 +215,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: true,
-			wantPatch:          []byte("{\"spec\":{\"template\":{\"spec\":{\"A\":\"A\"}}}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"spec\":{\"template\":{\"spec\":{\"A\":\"A\"}}}}"),
 		},
 
 		// Field only in original (not existing in modified) --> preserve original
@@ -266,9 +233,8 @@ func TestNewHelper(t *testing.T) {
 			modified: &unstructured.Unstructured{ // desired
 				Object: map[string]interface{}{},
 			},
-			wantHasChanges:     false,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{}"),
+			wantHasChanges: false,
+			wantPatch:      []byte("{}"),
 		},
 		{
 			name: "Nested field only in original, align to modified",
@@ -286,9 +252,8 @@ func TestNewHelper(t *testing.T) {
 			modified: &unstructured.Unstructured{ // desired
 				Object: map[string]interface{}{},
 			},
-			wantHasChanges:     false,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{}"),
+			wantHasChanges: false,
+			wantPatch:      []byte("{}"),
 		},
 
 		// Diff for metadata fields computed by the system or in status are discarded
@@ -312,12 +277,11 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     false,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{}"),
+			wantHasChanges: false,
+			wantPatch:      []byte("{}"),
 		},
 		{
-			name: "Relevant Diff for metadata (labels and annotations) are preserved",
+			name: "Relevant Diff are preserved",
 			original: &unstructured.Unstructured{ // current
 				Object: map[string]interface{}{},
 			},
@@ -333,9 +297,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{\"metadata\":{\"annotations\":{\"foo\":\"bar\"},\"labels\":{\"foo\":\"bar\"}}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"metadata\":{\"annotations\":{\"foo\":\"bar\"},\"labels\":{\"foo\":\"bar\"}}}"),
 		},
 
 		// Ignore fields
@@ -355,10 +318,9 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			options:            []HelperOption{IgnorePaths{contract.Path{"spec", "controlPlaneEndpoint"}}},
-			wantHasChanges:     false,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{}"),
+			options:        []HelperOption{IgnorePaths{contract.Path{"spec", "controlPlaneEndpoint"}}},
+			wantHasChanges: false,
+			wantPatch:      []byte("{}"),
 		},
 
 		// More tests
@@ -381,9 +343,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     false,
-			wantHasSpecChanges: false,
-			wantPatch:          []byte("{}"),
+			wantHasChanges: false,
+			wantPatch:      []byte("{}"),
 		},
 		{
 			name: "Many changes",
@@ -404,9 +365,8 @@ func TestNewHelper(t *testing.T) {
 					},
 				},
 			},
-			wantHasChanges:     true,
-			wantHasSpecChanges: true,
-			wantPatch:          []byte("{\"spec\":{\"B\":\"B\"}}"),
+			wantHasChanges: true,
+			wantPatch:      []byte("{\"spec\":{\"B\":\"B\"}}"),
 		},
 	}
 	for _, tt := range tests {
@@ -417,7 +377,6 @@ func TestNewHelper(t *testing.T) {
 			g.Expect(err).ToNot(HaveOccurred())
 
 			g.Expect(patch.HasChanges()).To(Equal(tt.wantHasChanges))
-			g.Expect(patch.HasSpecChanges()).To(Equal(tt.wantHasSpecChanges))
 			g.Expect(patch.patch).To(Equal(tt.wantPatch))
 		})
 	}
