@@ -4,14 +4,14 @@ metadata:
   labels:
     cluster.x-k8s.io/provider: cluster-api
     control-plane: controller-manager
-  name: openshift-cluster-api
+  name: capi-system
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-    service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: clusterclasses.cluster.x-k8s.io
@@ -22,8 +22,8 @@ spec:
       clientConfig:
         caBundle: Cg==
         service:
-          name: openshift-cluster-api-webhook-service
-          namespace: openshift-cluster-api
+          name: capi-webhook-service
+          namespace: capi-system
           path: /convert
       conversionReviewVersions:
       - v1
@@ -517,12 +517,24 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: clusterresourcesetbindings.addons.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        caBundle: Cg==
+        service:
+          name: capi-webhook-service
+          namespace: capi-system
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: addons.cluster.x-k8s.io
   names:
     categories:
@@ -749,12 +761,24 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: clusterresourcesets.addons.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        caBundle: Cg==
+        service:
+          name: capi-webhook-service
+          namespace: capi-system
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: addons.cluster.x-k8s.io
   names:
     categories:
@@ -1135,8 +1159,8 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-    service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: clusters.cluster.x-k8s.io
@@ -1147,8 +1171,8 @@ spec:
       clientConfig:
         caBundle: Cg==
         service:
-          name: openshift-cluster-api-webhook-service
-          namespace: openshift-cluster-api
+          name: capi-webhook-service
+          namespace: capi-system
           path: /convert
       conversionReviewVersions:
       - v1
@@ -1922,8 +1946,8 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-    service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: machinedeployments.cluster.x-k8s.io
@@ -1934,8 +1958,8 @@ spec:
       clientConfig:
         caBundle: Cg==
         service:
-          name: openshift-cluster-api-webhook-service
-          namespace: openshift-cluster-api
+          name: capi-webhook-service
+          namespace: capi-system
           path: /convert
       conversionReviewVersions:
       - v1
@@ -2886,8 +2910,8 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-    service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: machinehealthchecks.cluster.x-k8s.io
@@ -2898,8 +2922,8 @@ spec:
       clientConfig:
         caBundle: Cg==
         service:
-          name: openshift-cluster-api-webhook-service
-          namespace: openshift-cluster-api
+          name: capi-webhook-service
+          namespace: capi-system
           path: /convert
       conversionReviewVersions:
       - v1
@@ -3505,12 +3529,24 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: machinepools.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        caBundle: Cg==
+        service:
+          name: capi-webhook-service
+          namespace: capi-system
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -4386,8 +4422,8 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-    service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: machines.cluster.x-k8s.io
@@ -4398,8 +4434,8 @@ spec:
       clientConfig:
         caBundle: Cg==
         service:
-          name: openshift-cluster-api-webhook-service
-          namespace: openshift-cluster-api
+          name: capi-webhook-service
+          namespace: capi-system
           path: /convert
       conversionReviewVersions:
       - v1
@@ -5184,8 +5220,8 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
     controller-gen.kubebuilder.io/version: v0.7.0
-    service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
   name: machinesets.cluster.x-k8s.io
@@ -5196,8 +5232,8 @@ spec:
       clientConfig:
         caBundle: Cg==
         service:
-          name: openshift-cluster-api-webhook-service
-          namespace: openshift-cluster-api
+          name: capi-webhook-service
+          namespace: capi-system
           path: /convert
       conversionReviewVersions:
       - v1
@@ -6015,16 +6051,16 @@ kind: ServiceAccount
 metadata:
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-manager
-  namespace: openshift-cluster-api
+  name: capi-manager
+  namespace: capi-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-leader-election-role
-  namespace: openshift-cluster-api
+  name: capi-leader-election-role
+  namespace: capi-system
 rules:
 - apiGroups:
   - ""
@@ -6054,7 +6090,7 @@ kind: ClusterRole
 metadata:
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-aggregated-manager-role
+  name: capi-aggregated-manager-role
 rules: []
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6063,7 +6099,7 @@ metadata:
   labels:
     cluster.x-k8s.io/aggregate-to-manager: "true"
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-manager-role
+  name: capi-manager-role
 rules:
 - apiGroups:
   - addons.cluster.x-k8s.io
@@ -6335,45 +6371,42 @@ kind: RoleBinding
 metadata:
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-leader-election-rolebinding
-  namespace: openshift-cluster-api
+  name: capi-leader-election-rolebinding
+  namespace: capi-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: openshift-cluster-api-leader-election-role
+  name: capi-leader-election-role
 subjects:
 - kind: ServiceAccount
-  name: openshift-cluster-api-manager
-  namespace: openshift-cluster-api
+  name: capi-manager
+  namespace: capi-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-manager-rolebinding
+  name: capi-manager-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: openshift-cluster-api-aggregated-manager-role
+  name: capi-aggregated-manager-role
 subjects:
 - kind: ServiceAccount
-  name: openshift-cluster-api-manager
-  namespace: openshift-cluster-api
+  name: capi-manager
+  namespace: capi-system
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  annotations:
-    service.beta.openshift.io/serving-cert-secret-name: ocp-capi-webhook-cert
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-webhook-service
-  namespace: openshift-cluster-api
+  name: capi-webhook-service
+  namespace: capi-system
 spec:
   ports:
-  - name: https
-    port: 443
+  - port: 443
     targetPort: webhook-server
   selector:
     cluster.x-k8s.io/provider: cluster-api
@@ -6384,8 +6417,8 @@ metadata:
   labels:
     cluster.x-k8s.io/provider: cluster-api
     control-plane: controller-manager
-  name: openshift-cluster-api-controller-manager
-  namespace: openshift-cluster-api
+  name: capi-controller-manager
+  namespace: capi-system
 spec:
   replicas: 1
   selector:
@@ -6402,10 +6435,10 @@ spec:
       - args:
         - --leader-elect
         - --metrics-bind-addr=localhost:8080
-        - --feature-gates=MachinePool=false,ClusterResourceSet=false,ClusterTopology=false
+        - --feature-gates=MachinePool=${EXP_MACHINE_POOL:=false},ClusterResourceSet=${EXP_CLUSTER_RESOURCE_SET:=false},ClusterTopology=${CLUSTER_TOPOLOGY:=false}
         command:
         - /manager
-        image: k8s.gcr.io/cluster-api/cluster-api-controller:v1.0.0
+        image: gcr.io/k8s-staging-cluster-api/cluster-api-controller:main
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
@@ -6427,7 +6460,7 @@ spec:
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
           readOnly: true
-      serviceAccountName: openshift-cluster-api-manager
+      serviceAccountName: capi-manager
       terminationGracePeriodSeconds: 10
       tolerations:
       - effect: NoSchedule
@@ -6435,30 +6468,53 @@ spec:
       volumes:
       - name: cert
         secret:
-          defaultMode: 420
-          items:
-          - key: tls.crt
-            path: tls.crt
-          - key: tls.key
-            path: tls.key
-          secretName: ocp-capi-webhook-cert
+          secretName: capi-webhook-service-cert
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: cluster-api
+  name: capi-serving-cert
+  namespace: capi-system
+spec:
+  dnsNames:
+  - capi-webhook-service.capi-system.svc
+  - capi-webhook-service.capi-system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: capi-selfsigned-issuer
+  secretName: capi-webhook-service-cert
+  subject:
+    organizations:
+    - k8s-sig-cluster-lifecycle
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: cluster-api
+  name: capi-selfsigned-issuer
+  namespace: capi-system
+spec:
+  selfSigned: {}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   annotations:
-    service.beta.openshift.io/inject-cabundle: "true"
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-mutating-webhook-configuration
+  name: capi-mutating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
   - v1
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-cluster-x-k8s-io-v1beta1-cluster
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6479,8 +6535,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-cluster-x-k8s-io-v1beta1-clusterclass
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6501,8 +6557,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-cluster-x-k8s-io-v1beta1-machine
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6523,8 +6579,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-cluster-x-k8s-io-v1beta1-machinedeployment
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6545,8 +6601,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-cluster-x-k8s-io-v1beta1-machinehealthcheck
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6567,8 +6623,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-cluster-x-k8s-io-v1beta1-machineset
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6589,8 +6645,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-cluster-x-k8s-io-v1beta1-machinepool
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6611,8 +6667,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /mutate-addons-cluster-x-k8s-io-v1beta1-clusterresourceset
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6633,18 +6689,18 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   annotations:
-    service.beta.openshift.io/inject-cabundle: "true"
+    cert-manager.io/inject-ca-from: capi-system/capi-serving-cert
   labels:
     cluster.x-k8s.io/provider: cluster-api
-  name: openshift-cluster-api-validating-webhook-configuration
+  name: capi-validating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
   - v1
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-cluster-x-k8s-io-v1beta1-cluster
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6665,8 +6721,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-cluster-x-k8s-io-v1beta1-clusterclass
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6687,8 +6743,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-cluster-x-k8s-io-v1beta1-machine
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6709,8 +6765,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-cluster-x-k8s-io-v1beta1-machinedeployment
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6731,8 +6787,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-cluster-x-k8s-io-v1beta1-machinehealthcheck
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6753,8 +6809,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-cluster-x-k8s-io-v1beta1-machineset
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6775,8 +6831,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-cluster-x-k8s-io-v1beta1-machinepool
   failurePolicy: Fail
   matchPolicy: Equivalent
@@ -6797,8 +6853,8 @@ webhooks:
   - v1beta1
   clientConfig:
     service:
-      name: openshift-cluster-api-webhook-service
-      namespace: openshift-cluster-api
+      name: capi-webhook-service
+      namespace: capi-system
       path: /validate-addons-cluster-x-k8s-io-v1beta1-clusterresourceset
   failurePolicy: Fail
   matchPolicy: Equivalent

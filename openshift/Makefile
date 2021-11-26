@@ -1,4 +1,3 @@
-RELEASE_DIR := manifests
 BIN_DIR := bin
 TOOLS_DIR := hack/tools
 TOOLS_BIN_DIR := $(TOOLS_DIR)/$(BIN_DIR)
@@ -13,4 +12,4 @@ $(KUSTOMIZE): # Download kustomize using hack script into tools folder.
 .PHONY: ocp-manifests
 ocp-manifests: $(RELEASE_DIR) $(KUSTOMIZE) ## Builds openshift specific manifests
 	# Build core-components.
-	$(KUSTOMIZE) build --load_restrictor=LoadRestrictionsNone config/ > $(RELEASE_DIR)/core-components.yaml
+	$(KUSTOMIZE) build ../config/default > core-components.yaml
