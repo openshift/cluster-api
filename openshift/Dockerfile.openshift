@@ -14,3 +14,5 @@ LABEL description="Cluster API Controller Manager"
 COPY --from=builder /build/cluster-api-controller-manager /bin/cluster-api-controller-manager
 
 ENTRYPOINT [ "/bin/cluster-api-controller-manager" ]
+
+LABEL io.openshift.release.operator true
