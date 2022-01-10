@@ -37,7 +37,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilversion "k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
@@ -354,12 +353,8 @@ func DeployUnevictablePod(ctx context.Context, input DeployUnevictablePodInput) 
 	workloadClient := input.WorkloadClusterProxy.GetClientSet()
 
 	if input.ControlPlane != nil {
-		var serverVersion *version.Info
-		Eventually(func() error {
-			var err error
-			serverVersion, err = workloadClient.ServerVersion()
-			return err
-		}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "failed to get server version")
+		serverVersion, err := workloadClient.ServerVersion()
+		Expect(err).ToNot(HaveOccurred())
 
 		// Use the control-plane label for Kubernetes version >= v1.20.0.
 		if utilversion.MustParseGeneric(serverVersion.String()).AtLeast(utilversion.MustParseGeneric("v1.20.0")) {

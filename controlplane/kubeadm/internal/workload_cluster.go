@@ -37,7 +37,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -55,15 +54,14 @@ import (
 )
 
 const (
-	kubeProxyKey                   = "kube-proxy"
-	kubeadmConfigKey               = "kubeadm-config"
-	kubeadmAPIServerCertCommonName = "kube-apiserver"
-	kubeletConfigKey               = "kubelet"
-	cgroupDriverKey                = "cgroupDriver"
-	labelNodeRoleOldControlPlane   = "node-role.kubernetes.io/master" // Deprecated: https://github.com/kubernetes/kubeadm/issues/2200
-	labelNodeRoleControlPlane      = "node-role.kubernetes.io/control-plane"
-	clusterStatusKey               = "ClusterStatus"
-	clusterConfigurationKey        = "ClusterConfiguration"
+	kubeProxyKey                 = "kube-proxy"
+	kubeadmConfigKey             = "kubeadm-config"
+	kubeletConfigKey             = "kubelet"
+	cgroupDriverKey              = "cgroupDriver"
+	labelNodeRoleOldControlPlane = "node-role.kubernetes.io/master" // Deprecated: https://github.com/kubernetes/kubeadm/issues/2200
+	labelNodeRoleControlPlane    = "node-role.kubernetes.io/control-plane"
+	clusterStatusKey             = "ClusterStatus"
+	clusterConfigurationKey      = "ClusterConfiguration"
 )
 
 var (
