@@ -2985,3 +2985,51 @@ func Test_createErrorWithoutObjectName(t *testing.T) {
 		})
 	}
 }
+
+func Test_createErrorWithoutObjectName(t *testing.T) {
+	originalError := &apierrors.StatusError{
+		ErrStatus: metav1.Status{
+			Status:  metav1.StatusFailure,
+			Code:    http.StatusUnprocessableEntity,
+			Reason:  metav1.StatusReasonInvalid,
+			Message: "DockerMachineTemplate.infrastructure.cluster.x-k8s.io \"docker-template-one\" is invalid: spec.template.spec.preLoadImages: Invalid value: \"array\": spec.template.spec.preLoadImages in body must be of type string: \"array\"",
+			Details: &metav1.StatusDetails{
+				Group: "infrastructure.cluster.x-k8s.io",
+				Kind:  "DockerMachineTemplate",
+				Name:  "docker-template-one",
+				Causes: []metav1.StatusCause{
+					{
+						Type:    "FieldValueInvalid",
+						Message: "Invalid value: \"array\": spec.template.spec.preLoadImages in body must be of type string: \"array\"",
+						Field:   "spec.template.spec.preLoadImages",
+					},
+				},
+			},
+		}}
+	wantError := &apierrors.StatusError{
+		ErrStatus: metav1.Status{
+			Status: metav1.StatusFailure,
+			Code:   http.StatusUnprocessableEntity,
+			Reason: metav1.StatusReasonInvalid,
+			// The only difference between the two objects should be in the Message section.
+			Message: "failed to create DockerMachineTemplate.infrastructure.cluster.x-k8s.io: FieldValueInvalid: spec.template.spec.preLoadImages: Invalid value: \"array\": spec.template.spec.preLoadImages in body must be of type string: \"array\"",
+			Details: &metav1.StatusDetails{
+				Group: "infrastructure.cluster.x-k8s.io",
+				Kind:  "DockerMachineTemplate",
+				Name:  "docker-template-one",
+				Causes: []metav1.StatusCause{
+					{
+						Type:    "FieldValueInvalid",
+						Message: "Invalid value: \"array\": spec.template.spec.preLoadImages in body must be of type string: \"array\"",
+						Field:   "spec.template.spec.preLoadImages",
+					},
+				},
+			},
+		},
+	}
+	t.Run("Transform a create error correctly", func(t *testing.T) {
+		g := NewWithT(t)
+		err := createErrorWithoutObjectName(originalError, nil)
+		g.Expect(err).To(Equal(wantError), cmp.Diff(err, wantError))
+	})
+}

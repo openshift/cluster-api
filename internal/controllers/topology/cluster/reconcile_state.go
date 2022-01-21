@@ -350,20 +350,6 @@ func (r *Reconciler) reconcileControlPlane(ctx context.Context, s *scope.Scope) 
 		return err
 	}
 
-	// If the controlPlane has infrastructureMachines and the InfrastructureMachineTemplate has changed on this reconcile
-	// delete the old template.
-	// This is a best effort deletion only and may leak templates if an error occurs during reconciliation.
-	if s.Blueprint.HasControlPlaneInfrastructureMachine() && s.Current.ControlPlane.InfrastructureMachineTemplate != nil {
-		if s.Current.ControlPlane.InfrastructureMachineTemplate.GetName() != s.Desired.ControlPlane.InfrastructureMachineTemplate.GetName() {
-			if err := r.Client.Delete(ctx, s.Current.ControlPlane.InfrastructureMachineTemplate); err != nil {
-				return errors.Wrapf(err, "failed to delete oldinfrastructure machine template %s of control plane %s",
-					tlog.KObj{Obj: s.Current.ControlPlane.InfrastructureMachineTemplate},
-					tlog.KObj{Obj: s.Current.ControlPlane.Object},
-				)
-			}
-		}
-	}
-
 	// If the ControlPlane has defined a current or desired MachineHealthCheck attempt to reconcile it.
 	if s.Desired.ControlPlane.MachineHealthCheck != nil || s.Current.ControlPlane.MachineHealthCheck != nil {
 		// Reconcile the current and desired state of the MachineHealthCheck.
@@ -506,12 +492,8 @@ func (r *Reconciler) createMachineDeployment(ctx context.Context, cluster *clust
 
 	log = log.WithObject(md.Object)
 	log.Infof(fmt.Sprintf("Creating %s", tlog.KObj{Obj: md.Object}))
-	helper, err := r.patchHelperFactory(ctx, nil, md.Object)
-	if err != nil {
-		return createErrorWithoutObjectName(ctx, err, md.Object)
-	}
-	if err := helper.Patch(ctx); err != nil {
-		return createErrorWithoutObjectName(ctx, err, md.Object)
+	if err := r.Client.Create(ctx, md.Object.DeepCopy()); err != nil {
+		return createErrorWithoutObjectName(err, md.Object)
 	}
 	r.recorder.Eventf(cluster, corev1.EventTypeNormal, createEventReason, "Created %q", tlog.KObj{Obj: md.Object})
 
@@ -658,8 +640,8 @@ func (r *Reconciler) reconcileReferencedObject(ctx context.Context, in reconcile
 		if err != nil {
 			return errors.Wrap(createErrorWithoutObjectName(ctx, err, in.desired), "failed to create patch helper")
 		}
-		if err := helper.Patch(ctx); err != nil {
-			return createErrorWithoutObjectName(ctx, err, in.desired)
+		if err := r.Client.Create(ctx, desiredWithManagedFieldAnnotation); err != nil {
+			return createErrorWithoutObjectName(err, desiredWithManagedFieldAnnotation)
 		}
 		r.recorder.Eventf(in.cluster, corev1.EventTypeNormal, createEventReason, "Created %q", tlog.KObj{Obj: in.desired})
 		return nil
@@ -735,8 +717,8 @@ func (r *Reconciler) reconcileReferencedTemplate(ctx context.Context, in reconci
 		if err != nil {
 			return errors.Wrap(createErrorWithoutObjectName(ctx, err, in.desired), "failed to create patch helper")
 		}
-		if err := helper.Patch(ctx); err != nil {
-			return createErrorWithoutObjectName(ctx, err, in.desired)
+		if err := r.Client.Create(ctx, desiredWithManagedFieldAnnotation); err != nil {
+			return createErrorWithoutObjectName(err, desiredWithManagedFieldAnnotation)
 		}
 		r.recorder.Eventf(in.cluster, corev1.EventTypeNormal, createEventReason, "Created %q", tlog.KObj{Obj: in.desired})
 		return nil
@@ -787,8 +769,8 @@ func (r *Reconciler) reconcileReferencedTemplate(ctx context.Context, in reconci
 	if err != nil {
 		return errors.Wrap(createErrorWithoutObjectName(ctx, err, in.desired), "failed to create patch helper")
 	}
-	if err := helper.Patch(ctx); err != nil {
-		return createErrorWithoutObjectName(ctx, err, in.desired)
+	if err := r.Client.Create(ctx, desiredWithManagedFieldAnnotation); err != nil {
+		return createErrorWithoutObjectName(err, desiredWithManagedFieldAnnotation)
 	}
 	r.recorder.Eventf(in.cluster, corev1.EventTypeNormal, createEventReason, "Created %q as a replacement for %q (template rotation)", tlog.KObj{Obj: in.desired}, in.ref.Name)
 
@@ -803,43 +785,25 @@ func (r *Reconciler) reconcileReferencedTemplate(ctx context.Context, in reconci
 // createErrorWithoutObjectName removes the name of the object from the error message. As each new Create call involves an
 // object with a unique generated name each error appears to be a different error. As the errors are being surfaced in a condition
 // on the Cluster, the name is removed here to prevent each creation error from triggering a new reconciliation.
-func createErrorWithoutObjectName(ctx context.Context, err error, obj client.Object) error {
-	log := ctrl.LoggerFrom(ctx)
-	if obj != nil {
-		log = log.WithValues(obj.GetObjectKind().GroupVersionKind().Kind, klog.KObj(obj))
-	}
-	log.Error(err, "Failed to create object")
-
+func createErrorWithoutObjectName(err error, obj client.Object) error {
 	var statusError *apierrors.StatusError
 	if errors.As(err, &statusError) {
-		var msg string
 		if statusError.Status().Details != nil {
 			var causes []string
 			for _, cause := range statusError.Status().Details.Causes {
 				causes = append(causes, fmt.Sprintf("%s: %s: %s", cause.Type, cause.Field, cause.Message))
 			}
+			var msg string
 			if len(causes) > 0 {
 				msg = fmt.Sprintf("failed to create %s.%s: %s", statusError.Status().Details.Kind, statusError.Status().Details.Group, strings.Join(causes, " "))
 			} else {
 				msg = fmt.Sprintf("failed to create %s.%s", statusError.Status().Details.Kind, statusError.Status().Details.Group)
 			}
+			// Replace the statusError message with the constructed message.
 			statusError.ErrStatus.Message = msg
 			return statusError
 		}
-
-		if statusError.Status().Message != "" {
-			if obj != nil {
-				msg = fmt.Sprintf("failed to create %s", obj.GetObjectKind().GroupVersionKind().GroupKind().String())
-			} else {
-				msg = "failed to create object"
-			}
-		}
-		statusError.ErrStatus.Message = msg
-		return statusError
 	}
 	// If this isn't a StatusError return a more generic error with the object details.
-	if obj != nil {
-		return errors.Errorf("failed to create %s", obj.GetObjectKind().GroupVersionKind().GroupKind().String())
-	}
-	return errors.New("failed to create object")
+	return errors.Wrapf(err, "failed to create %s", tlog.KObj{Obj: obj})
 }
