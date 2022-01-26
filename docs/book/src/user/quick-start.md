@@ -980,7 +980,18 @@ For more information about prerequisites, credentials management, or permissions
 
 For the purpose of this tutorial, we'll name our cluster capi-quickstart.
 
-{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Docker, vcluster, others..."}}
+{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Azure|AWS|DigitalOcean|Equinix Metal|GCP|Metal3|OpenStack|vSphere,Docker"}}
+{{#tab Azure|AWS|DigitalOcean|Equinix Metal|GCP|Metal3|OpenStack|vSphere}}
+
+```bash
+clusterctl generate cluster capi-quickstart \
+  --kubernetes-version v1.23.3 \
+  --control-plane-machine-count=3 \
+  --worker-machine-count=3 \
+  > capi-quickstart.yaml
+```
+
+{{#/tab }}
 {{#tab Docker}}
 
 <aside class="note warning">
@@ -993,7 +1004,7 @@ The Docker provider is not designed for production use and is intended for devel
 
 ```bash
 clusterctl generate cluster capi-quickstart --flavor development \
-  --kubernetes-version v1.25.0 \
+  --kubernetes-version v1.23.3 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1003,24 +1014,8 @@ clusterctl generate cluster capi-quickstart --flavor development \
 {{#tab vcluster}}
 
 ```bash
-export CLUSTER_NAME=kind
-export CLUSTER_NAMESPACE=vcluster
-export KUBERNETES_VERSION=1.25.0
-export HELM_VALUES="service:\n  type: NodePort"
-
-kubectl create namespace ${CLUSTER_NAMESPACE}
-clusterctl generate cluster ${CLUSTER_NAME} \
-    --infrastructure vcluster \
-    --kubernetes-version ${KUBERNETES_VERSION} \
-    --target-namespace ${CLUSTER_NAMESPACE} | kubectl apply -f -
-```
-
-{{#/tab }}
-{{#tab others...}}
-
-```bash
-clusterctl generate cluster capi-quickstart \
-  --kubernetes-version v1.25.0 \
+clusterctl generate cluster capi-quickstart --flavor development-topology \
+  --kubernetes-version v1.23.3 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1079,8 +1074,8 @@ kubectl get kubeadmcontrolplane
 You should see an output is similar to this:
 
 ```bash
-NAME                    CLUSTER           INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE    VERSION
-capi-quickstart-g2trk   capi-quickstart   true                                 3                  3         3             4m7s   v1.25.0
+NAME                            INITIALIZED   API SERVER AVAILABLE   VERSION   REPLICAS   READY   UPDATED   UNAVAILABLE
+capi-quickstart-control-plane   true                                 v1.23.3   3                  3         3
 ```
 
 <aside class="note warning">
