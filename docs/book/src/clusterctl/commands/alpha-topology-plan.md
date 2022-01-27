@@ -104,13 +104,13 @@ spec:
             certSANs: [ localhost, 127.0.0.1 ]
         initConfiguration:
           nodeRegistration:
-            criSocket: unix:///var/run/containerd/containerd.sock
+            criSocket: /var/run/containerd/containerd.sock
             kubeletExtraArgs:
               cgroup-driver: cgroupfs
               eviction-hard: 'nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%'
         joinConfiguration:
           nodeRegistration:
-            criSocket: unix:///var/run/containerd/containerd.sock
+            criSocket: /var/run/containerd/containerd.sock
             kubeletExtraArgs:
               cgroup-driver: cgroupfs
               eviction-hard: 'nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%'
@@ -421,17 +421,6 @@ which is not allowed.
 
 All templates in the inputs should be fully valid and have all the default values set. `topology plan` will not run any defaulting 
 or validation on these objects. Defaulting and validation is only run on Cluster and ClusterClass objects.
-
-</aside>
-
-<aside class="note warning">
-
-<h1>API Versions and Contract compatibility</h1>
-
-All the objects in the input of the same `Group.Kind` should have the same `apiVersion`. 
-Example: Two `InfraMachineTemplate`s with `apiVersion`s `infrastructure.cluster.x-k8s.io/v1beta1` and `infrastructure.cluster.x-k8s.io/v1alpha4` are not allowed.
-
-The API version of resource in the input should be compatible with the current version of Cluster API contract.
 
 </aside>
 
