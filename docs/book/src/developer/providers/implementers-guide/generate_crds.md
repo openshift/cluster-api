@@ -87,7 +87,10 @@ make manifests
 
 The cluster API CRDs should be further customized:
 
-- [Apply the contract version label to support conversions](../contracts.md#api-version-labels) (required to deploy _any_ custom resource of your provider)
+- [Apply the contract version label to support conversions](../v1alpha2-to-v1alpha3.md#apply-the-contract-version-label-clusterx-k8sioversion-version1_version2_version3-to-your-crds)
+- [Upgrade to CRD v1](../v1alpha2-to-v1alpha3.md#upgrade-to-crd-v1)
+- [Set “matchPolicy=Equivalent” kubebuilder marker for webhooks](../v1alpha2-to-v1alpha3.md#add-matchpolicyequivalent-kubebuilder-marker-in-webhooks)
+- [Refactor the kustomize config folder to support multi-tenancy](../v1alpha2-to-v1alpha3.md#refactor-kustomize-config-folder-to-support-multi-tenancy-when-using-webhooks)
 - [Ensure you are compliant with the clusterctl provider contract](../../../clusterctl/provider-contract.md#components-yaml)
 
 ### Commit your changes
