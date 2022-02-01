@@ -97,7 +97,7 @@ The Kubeadm Bootstrap Provider generates kubeadm configuration using the API ver
 #### Kubeadm Control Plane Provider (`kubeadm-control-plane-controller`)
 
 |                            | CAPI v1alpha3 (v0.3) Management | CAPI v1alpha3 (v0.3) Workload | CAPI v1alpha4 (v0.4) Management | CAPI v1alpha4 (v0.4) Workload | CAPI v1beta1 (v1.x) Management | CAPI v1beta1 (v1.x) Workload |
-| -------------------------- | ------------------------------- | ----------------------------- | ------------------------------- | ----------------------------- | ------------------------------- | ----------------------------- |
+| -------------------------- | ------------------------------- |-------------------------------|---------------------------------|-------------------------------| ------------------------------- | ----------------------------- |
 | Kubernetes v1.16 + etcd/v3 | ✓                               | ✓                             |                                 |                               |                                 |                               |
 | Kubernetes v1.17 + etcd/v3 | ✓                               | ✓                             |                                 |                               |                                 |                               |
 | Kubernetes v1.18 + etcd/v3 | ✓                               | ✓                             |                                 | ✓                             |                                 | ✓                             |
