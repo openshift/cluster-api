@@ -110,7 +110,7 @@ func TestMachineToInfrastructureMapFunc(t *testing.T) {
 }
 
 func TestClusterToInfrastructureMapFunc(t *testing.T) {
-	testcases := []struct {
+	var testcases = []struct {
 		name           string
 		input          schema.GroupVersionKind
 		request        *clusterv1.Cluster
@@ -224,7 +224,7 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 			referenceObject.SetAPIVersion(tc.request.Spec.InfrastructureRef.APIVersion)
 			referenceObject.SetKind(tc.request.Spec.InfrastructureRef.Kind)
 
-			fn := ClusterToInfrastructureMapFunc(context.Background(), tc.input, clientBuilder.Build(), referenceObject)
+			fn := ClusterToInfrastructureMapFuncWithExternallyManagedCheck(context.Background(), tc.input, clientBuilder.Build(), referenceObject)
 			out := fn(tc.request)
 			g.Expect(out).To(Equal(tc.output))
 		})

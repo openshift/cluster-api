@@ -47,7 +47,6 @@ import (
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/annotations"
-	"sigs.k8s.io/cluster-api/util/contract"
 )
 
 const (
@@ -235,6 +234,36 @@ func ClusterToInfrastructureMapFunc(ctx context.Context, gvk schema.GroupVersion
 				},
 			},
 		}
+	}
+}
+
+// ClusterToInfrastructureMapFuncWithExternallyManagedCheck is like ClusterToInfrastructureMapFunc but will exclude externally managed infrastructures from the mapping.
+// We will update  ClusterToInfrastructureMapFunc to include this check in an upcoming release but defer that for now as adjusting the signature is a breaking change.
+func ClusterToInfrastructureMapFuncWithExternallyManagedCheck(ctx context.Context, gvk schema.GroupVersionKind, c client.Client, providerCluster client.Object) handler.MapFunc {
+	baseMapper := ClusterToInfrastructureMapFunc(gvk)
+	log := ctrl.LoggerFrom(ctx)
+	return func(o client.Object) []reconcile.Request {
+		var result []reconcile.Request
+		for _, request := range baseMapper(o) {
+			providerCluster := providerCluster.DeepCopyObject().(client.Object)
+			key := types.NamespacedName{Namespace: request.Namespace, Name: request.Name}
+
+			if err := c.Get(ctx, key, providerCluster); err != nil {
+				log.V(4).Error(err, fmt.Sprintf("Failed to get %T", providerCluster))
+				fmt.Printf("failed to get %s: %v\n", key, err)
+				continue
+			}
+
+			if annotations.IsExternallyManaged(providerCluster) {
+				log.V(4).Info(fmt.Sprintf("%T is externally managed, skipping mapping", providerCluster))
+				fmt.Printf("%T is externally managed\n", providerCluster)
+				continue
+			}
+
+			result = append(result, request)
+		}
+
+		return result
 	}
 }
 
