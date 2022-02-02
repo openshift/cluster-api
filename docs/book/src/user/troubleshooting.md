@@ -152,16 +152,17 @@ sysctl fs.inotify.max_user_instances=8192
 exit
 ```
 
+Note: This error was observed in Docker 4.3. An alternative solution is to stick with an older version of Docker Desktop while this issue is being resolved. [An issue is currently open on the Docker Desktop repository.](https://github.com/docker/for-mac/issues/6071)
+
 ## Failed clusterctl init - 'failed to get cert-manager object'
 
 When using older versions of Cluster API 0.4 and 1.0 releases - 0.4.6, 1.0.3 and older respectively - Cert Manager may not be downloadable due to a change in the repository location. This will cause `clusterctl init` to fail with the error:
 
 ```bash
-clusterctl init --infrastructure docker
-```
-```bash
+$ cluster-api % clusterctl init --infrastructure docker
+
 Fetching providers
-Installing cert-manager Version="v1.10.0"
+Installing cert-manager Version="v1.5.3"
 Error: action failed after 10 attempts: failed to get cert-manager object /, Kind=, /: Object 'Kind' is missing in 'unstructured object has no kind'
 ```
 
@@ -173,65 +174,7 @@ cert-manager:
   url: "https://github.com/cert-manager/cert-manager/releases/latest/cert-manager.yaml"
 ```
 
-Alternatively a Cert Manager yaml file can be placed in the [clusterctl overrides layer](../clusterctl/configuration.md#overrides-layer) which is by default in `$HOME/.cluster-api/overrides`. A Cert Manager yaml file can be placed at `$(HOME)/.cluster-api/overrides/cert-manager/v1.10.0/cert-manager.yaml`
+Alternatively a Cert Manager yaml file can be placed in the [clusterctl overrides layer](../clusterctl/configuration.md#overrides-layer) which is by default in `$HOME/.cluster-api/overrides`. A Cert Manager yaml file can be placed at `$(HOME)/.cluster-api/overrides/cert-manager/v1.5.3/cert-manager.yaml`
 
 More information on the clusterctl config file can be found at [its page in the book](../clusterctl/configuration.md#clusterctl-configuration-file)
 
-## Failed clusterctl upgrade apply - 'failed to update cert-manager component'
-
-Upgrading Cert Manager may fail due to a breaking change introduced in Cert Manager release v1.6.
-An upgrade using `clusterctl` is affected when:
-
-* using `clusterctl` in version `v1.1.4` or a more recent version.
-* Cert Manager lower than version `v1.0.0` did run in the management cluster (which was shipped in Cluster API until including `v0.3.14`).
-
-This will cause `clusterctl upgrade apply` to fail with the error:
-
-```bash
-clusterctl upgrade apply
-```
-
-```bash
-Checking cert-manager version...
-Deleting cert-manager Version="v1.5.3"
-Installing cert-manager Version="v1.7.2"
-Error: action failed after 10 attempts: failed to update cert-manager component apiextensions.k8s.io/v1, Kind=CustomResourceDefinition, /certificaterequests.cert-manager.io: CustomResourceDefinition.apiextensions.k8s.io "certificaterequests.cert-manager.io" is invalid: status.storedVersions[0]: Invalid value: "v1alpha2": must appear in spec.versions
-```
-
-The Cert Manager maintainers provide documentation to [migrate the deprecated API Resources](https://cert-manager.io/docs/installation/upgrading/remove-deprecated-apis/#upgrading-existing-cert-manager-resources) to the new storage versions to mitigate the issue.
-
-More information about the change in Cert Manager can be found at [their upgrade notes from v1.5 to v1.6](https://cert-manager.io/docs/installation/upgrading/upgrading-1.5-1.6).
-
-## Clusterctl failing to start providers due to outdated image overrides
-
-clusterctl allows users to configure [image overrides](../clusterctl/configuration.md#image-overrides) via the clusterctl config file.
-However, when the image override is pinning a provider image to a specific version, it could happen that this
-conflicts with clusterctl behavior of picking the latest version of a provider.
-
-E.g., if you are pinning KCP images to version v1.0.2 but then clusterctl init fetches yamls for version v1.1.0 or greater KCP will 
-fail to start with the following error: 
-
-```bash
-invalid argument "ClusterTopology=false,KubeadmBootstrapFormatIgnition=false" for "--feature-gates" flag: unrecognized feature gate: KubeadmBootstrapFormatIgnition
-```
-
-In order to solve this problem you should specify the version of the provider you are installing by appending a
-version tag to the provider name:
-
-```bash
-clusterctl init -b kubeadm:v1.0.2 -c kubeadm:v1.0.2 --core cluster-api:v1.0.2 -i docker:v1.0.2
-```
-
-Even if slightly verbose, pinning the version provides a better control over what is installed, as usually
-required in an enterprise environment, especially if you rely on an internal repository with a separated
-software supply chain or a custom versioning schema.
-
-## Managed Cluster and co-authored slices
-
-As documented in [#6320](https://github.com/kubernetes-sigs/cluster-api/issues/6320) managed topologies
-assumes a slice to be either authored from templates or by the users/the infrastructure controllers.
-
-In cases the slice is instead co-authored (templates provide some info, the infrastructure controller
-fills in other info) this can lead to infinite reconcile.
-
-A solution to this problem is being investigated, but in the meantime you should avoid co-authored slices.
