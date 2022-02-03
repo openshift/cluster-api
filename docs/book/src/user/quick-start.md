@@ -202,7 +202,7 @@ Additional documentation about experimental features can be found in [Experiment
 Depending on the infrastructure provider you are planning to use, some additional prerequisites should be satisfied
 before getting started with Cluster API. See below for the expected settings for common providers.
 
-{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,Hetzner,IBM Cloud,Kubevirt,Metal3,Nutanix,OCI,OpenStack,Outscale,VCD,vcluster,Virtink,vSphere"}}
+{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,Equinix Metal,GCP,Hetzner,Metal3,OpenStack,vSphere"}}
 {{#tab AWS}}
 
 Download the latest binary of `clusterawsadm` from the [AWS provider releases].
@@ -418,25 +418,6 @@ clusterctl init --infrastructure gcp
 {{#tab Hetzner}}
 
 Please visit the [Hetzner project][Hetzner provider].
-
-{{#/tab }}
-{{#tab IBM Cloud}}
-
-In order to initialize the IBM Cloud Provider you have to expose the environment
-variable `IBMCLOUD_API_KEY`. This variable is used to authorize the infrastructure
-provider manager against the IBM Cloud API. To create one from the UI, refer [here](https://cloud.ibm.com/docs/account?topic=account-userapikey&interface=ui#create_user_key).
-
-```bash
-export IBMCLOUD_API_KEY=<you_api_key>
-
-# Finally, initialize the management cluster
-clusterctl init --infrastructure ibmcloud
-```
-
-{{#/tab }}
-{{#tab Kubevirt}}
-
-Please visit the [Kubevirt project][Kubevirt provider].
 
 {{#/tab }}
 {{#tab Metal3}}
@@ -1203,7 +1184,6 @@ See the [clusterctl] documentation for more detail about clusterctl supported ac
 [Docker]: https://www.docker.com/
 [GCP provider]: https://github.com/kubernetes-sigs/cluster-api-provider-gcp
 [Hetzner provider]: https://github.com/syself/cluster-api-provider-hetzner
-[IBM Cloud provider]: https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud
 [infrastructure provider]: ../reference/glossary.md#infrastructure-provider
 [kind]: https://kind.sigs.k8s.io/
 [KubeadmControlPlane]: ../developer/architecture/controllers/control-plane.md
