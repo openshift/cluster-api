@@ -202,7 +202,7 @@ Additional documentation about experimental features can be found in [Experiment
 Depending on the infrastructure provider you are planning to use, some additional prerequisites should be satisfied
 before getting started with Cluster API. See below for the expected settings for common providers.
 
-{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,Equinix Metal,GCP,Hetzner,Metal3,OCI,OpenStack,vSphere"}}
+{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,Equinix Metal,GCP,Hetzner,Metal3,OpenStack,vSphere"}}
 {{#tab AWS}}
 
 Download the latest binary of `clusterawsadm` from the [AWS provider releases] and make sure to place it in your path.
