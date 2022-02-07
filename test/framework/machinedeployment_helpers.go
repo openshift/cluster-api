@@ -238,9 +238,7 @@ func UpgradeMachineDeploymentsAndWait(ctx context.Context, input UpgradeMachineD
 		if input.UpgradeMachineTemplate != nil {
 			deployment.Spec.Template.Spec.InfrastructureRef.Name = *input.UpgradeMachineTemplate
 		}
-		Eventually(func() error {
-			return patchHelper.Patch(ctx, deployment)
-		}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "Failed to patch Kubernetes version on MachineDeployment %s", klog.KObj(deployment))
+		Expect(patchHelper.Patch(ctx, deployment)).To(Succeed())
 
 		log.Logf("Waiting for Kubernetes versions of machines in MachineDeployment %s to be upgraded from %s to %s",
 			klog.KObj(deployment), *oldVersion, input.UpgradeVersion)
