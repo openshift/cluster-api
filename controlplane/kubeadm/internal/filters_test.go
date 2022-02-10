@@ -148,6 +148,20 @@ func TestGetAdjustedKcpConfig(t *testing.T) {
 }
 
 func TestCleanupConfigFields(t *testing.T) {
+	t.Run("Format gets set to cloud-config if not set", func(t *testing.T) {
+		g := NewWithT(t)
+		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
+			Format: "",
+		}
+		machineConfig := &bootstrapv1.KubeadmConfig{
+			Spec: bootstrapv1.KubeadmConfigSpec{
+				Format: "",
+			},
+		}
+		cleanupConfigFields(kcpConfig, machineConfig)
+		g.Expect(kcpConfig.Format).To(Equal(bootstrapv1.CloudConfig))
+		g.Expect(machineConfig.Spec.Format).To(Equal(bootstrapv1.CloudConfig))
+	})
 	t.Run("ClusterConfiguration gets removed from KcpConfig and MachineConfig", func(t *testing.T) {
 		g := NewWithT(t)
 		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
