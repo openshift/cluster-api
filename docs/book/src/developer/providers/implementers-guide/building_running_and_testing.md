@@ -22,7 +22,7 @@ Before you apply Cluster API's yaml, you should [install `cert-manager`][cm-inst
 [cert-manager]: https://github.com/cert-manager/cert-manager
 [cm-install]: https://cert-manager.io/docs/installation/
 
-```bash
+```
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/<version>/cert-manager.yaml
 ```
 
