@@ -107,9 +107,15 @@ Download the latest release; on linux, type:
 ```bash
 curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.2.x"}} -o clusterctl
 ```
-Install clusterctl:
-```bash
-sudo install -o root -g root -m 0755 clusterctl /usr/local/bin/clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.1.x"}} -o clusterctl
+```
+Make the clusterctl binary executable.
+```
+chmod +x ./clusterctl
+```
+Move the binary in to your PATH.
+```
+sudo mv ./clusterctl /usr/local/bin/clusterctl
 ```
 Test to ensure the version you installed is up-to-date:
 ```bash
@@ -121,13 +127,13 @@ clusterctl version
 
 #### Install clusterctl binary with curl on macOS
 Download the latest release; on macOS, type:
-```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.2.x"}} -o clusterctl
+```
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.1.x"}} -o clusterctl
 ```
 
 Or if your Mac has an M1 CPU ("Apple Silicon"):
-```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.2.x"}} -o clusterctl
+```
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.1.x"}} -o clusterctl
 ```
 
 Make the clusterctl binary executable.
