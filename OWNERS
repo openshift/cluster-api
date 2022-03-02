@@ -1,23 +1,11 @@
-# See the OWNERS docs at https://go.k8s.io/owners for information on OWNERS files.
-# See the OWNERS_ALIASES file at https://github.com/kubernetes-sigs/cluster-api/blob/main/OWNERS_ALIASES for a list of members for each alias.
-
+# See the OWNERS docs: https://git.k8s.io/community/contributors/guide/owners.md
+component: "Cloud Compute"
+subcomponent: "Other Providers"
 approvers:
-  - sig-cluster-lifecycle-leads
-  - cluster-api-admins
-  - cluster-api-maintainers
-
-reviewers:
-  - cluster-api-maintainers
-  - cluster-api-reviewers
-
-emeritus_approvers:
-  - chuckha
-  - detiber
-  - kris-nova
-  - ncdc
-  - roberthbailey
-  - davidewatson
-
-emeritus_maintainers:
-  - detiber
-  - ncdc
+  - damdo
+  - alexander-demichev
+  - JoelSpeed
+  - elmiko
+  - Fedosin
+  - enxebre
+  - lobziik
