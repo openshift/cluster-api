@@ -76,18 +76,18 @@ make manifests
 ```
 
 [status]:  https://kubernetes.io/docs/tasks/access-kubernetes-api/custom-resources/custom-resource-definitions/#status-subresource
-[rbac]: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.16/#customresourcesubresources-v1beta1-apiextensions-k8s-io
+[rbac]: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#customresourcesubresources-v1beta1-apiextensions-k8s-io
 [kbstatus]: https://book.kubebuilder.io/reference/generating-crd.html?highlight=status#status
 
 ### Apply further customizations
 
 The cluster API CRDs should be further customized:
 
-- [Apply the contract version label to support conversions](https://cluster-api.sigs.k8s.io/developer/providers/v1alpha2-to-v1alpha3.html#apply-the-contract-version-label-clusterx-k8sioversion-version1_version2_version3-to-your-crds)
-- [Upgrade to CRD v1](https://cluster-api.sigs.k8s.io/developer/providers/v1alpha2-to-v1alpha3.html#upgrade-to-crd-v1)
-- [Set “matchPolicy=Equivalent” kubebuilder marker for webhooks](https://cluster-api.sigs.k8s.io/developer/providers/v1alpha2-to-v1alpha3.html#add-matchpolicyequivalent-kubebuilder-marker-in-webhooks)
-- [Refactor the kustomize config folder to support multi-tenancy](https://cluster-api.sigs.k8s.io/developer/providers/v1alpha2-to-v1alpha3.html#refactor-kustomize-config-folder-to-support-multi-tenancy-when-using-webhooks)
-- [Ensure you are compliant with the clusterctl provider contract](https://cluster-api.sigs.k8s.io/clusterctl/provider-contract.html#components-yaml)
+- [Apply the contract version label to support conversions](../v1alpha2-to-v1alpha3.md#apply-the-contract-version-label-clusterx-k8sioversion-version1_version2_version3-to-your-crds)
+- [Upgrade to CRD v1](../v1alpha2-to-v1alpha3.md#upgrade-to-crd-v1)
+- [Set “matchPolicy=Equivalent” kubebuilder marker for webhooks](../v1alpha2-to-v1alpha3.md#add-matchpolicyequivalent-kubebuilder-marker-in-webhooks)
+- [Refactor the kustomize config folder to support multi-tenancy](../v1alpha2-to-v1alpha3.md#refactor-kustomize-config-folder-to-support-multi-tenancy-when-using-webhooks)
+- [Ensure you are compliant with the clusterctl provider contract](../../../clusterctl/provider-contract.md#components-yaml)
 
 ### Commit your changes
 

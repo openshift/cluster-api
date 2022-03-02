@@ -17,22 +17,25 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/blang/semver"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes/scheme"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 func TestMachineToInfrastructureMapFunc(t *testing.T) {
@@ -107,13 +110,12 @@ func TestMachineToInfrastructureMapFunc(t *testing.T) {
 }
 
 func TestClusterToInfrastructureMapFunc(t *testing.T) {
-	g := NewWithT(t)
-
 	var testcases = []struct {
-		name    string
-		input   schema.GroupVersionKind
-		request client.Object
-		output  []reconcile.Request
+		name           string
+		input          schema.GroupVersionKind
+		request        *clusterv1.Cluster
+		infrastructure client.Object
+		output         []reconcile.Request
 	}{
 		{
 			name: "should reconcile infra-1",
@@ -135,6 +137,14 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 					},
 				},
 			},
+			infrastructure: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "foo.cluster.x-k8s.io/v1beta1",
+				"kind":       "TestCluster",
+				"metadata": map[string]interface{}{
+					"namespace": metav1.NamespaceDefault,
+					"name":      "infra-1",
+				},
+			}},
 			output: []reconcile.Request{
 				{
 					NamespacedName: client.ObjectKey{
@@ -166,11 +176,55 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 			},
 			output: nil,
 		},
+		{
+			name: "Externally managed provider cluster is excluded",
+			input: schema.GroupVersionKind{
+				Group:   "foo.cluster.x-k8s.io",
+				Version: "v1alpha4",
+				Kind:    "TestCluster",
+			},
+			request: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: metav1.NamespaceDefault,
+					Name:      "test-1",
+				},
+				Spec: clusterv1.ClusterSpec{
+					InfrastructureRef: &corev1.ObjectReference{
+						APIVersion: "foo.cluster.x-k8s.io/v1beta1",
+						Kind:       "TestCluster",
+						Name:       "infra-1",
+					},
+				},
+			},
+			infrastructure: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "foo.cluster.x-k8s.io/v1beta1",
+				"kind":       "TestCluster",
+				"metadata": map[string]interface{}{
+					"namespace": metav1.NamespaceDefault,
+					"name":      "infra-1",
+					"annotations": map[string]interface{}{
+						clusterv1.ManagedByAnnotation: "",
+					},
+				},
+			}},
+		},
 	}
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			fn := ClusterToInfrastructureMapFunc(tc.input)
+			g := NewWithT(t)
+			clientBuilder := fake.NewClientBuilder()
+			if tc.infrastructure != nil {
+				clientBuilder.WithObjects(tc.infrastructure)
+			}
+
+			// Unstructured simplifies testing but should not be used in real usage, because it will
+			// likely result in a duplicate cache in an unstructured projection.
+			referenceObject := &unstructured.Unstructured{}
+			referenceObject.SetAPIVersion(tc.request.Spec.InfrastructureRef.APIVersion)
+			referenceObject.SetKind(tc.request.Spec.InfrastructureRef.Kind)
+
+			fn := ClusterToInfrastructureMapFuncWithExternallyManagedCheck(context.Background(), tc.input, clientBuilder.Build(), referenceObject)
 			out := fn(tc.request)
 			g.Expect(out).To(Equal(tc.output))
 		})
@@ -673,8 +727,19 @@ func TestClusterToObjectsMapper(t *testing.T) {
 
 	for _, tc := range table {
 		tc.objects = append(tc.objects, cluster)
-		client := fake.NewClientBuilder().WithObjects(tc.objects...).Build()
-		f, err := ClusterToObjectsMapper(client, tc.input, scheme.Scheme)
+
+		scheme := runtime.NewScheme()
+		_ = clusterv1.AddToScheme(scheme)
+
+		restMapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{clusterv1.GroupVersion})
+
+		// Add tc.input gvk to the restMapper.
+		gvk, err := apiutil.GVKForObject(tc.input, scheme)
+		g.Expect(err).ToNot(HaveOccurred())
+		restMapper.Add(gvk, meta.RESTScopeNamespace)
+
+		client := fake.NewClientBuilder().WithObjects(tc.objects...).WithRESTMapper(restMapper).Build()
+		f, err := ClusterToObjectsMapper(client, tc.input, scheme)
 		g.Expect(err != nil, err).To(Equal(tc.expectError))
 		g.Expect(f(cluster)).To(ConsistOf(tc.output))
 	}

@@ -27,11 +27,12 @@ As an example, Cluster API Provider Azure (CAPZ) has support for MachinePool thr
 
 ## Enabling Experimental Features for e2e Tests
 
-One way is to set experimental variables on the clusterctl config file. For CAPI, these configs are under ./test/e2e/config/... such as `docker-ci.yaml`:
+One way is to set experimental variables on the clusterctl config file. For CAPI, these configs are under ./test/e2e/config/... such as `docker.yaml`:
 ```yaml
 variables:
   EXP_CLUSTER_RESOURCE_SET: "true"
   EXP_MACHINE_POOL: "true"
+  CLUSTER_TOPOLOGY: "true"
 ```
 Another way is to set them as environmental variables before running e2e tests.
 
@@ -47,7 +48,8 @@ On development environments started with `Tilt`, features can be enabled by sett
   "provider_repos": [],
   "kustomize_substitutions": {
     "EXP_CLUSTER_RESOURCE_SET": "true",
-    "EXP_MACHINE_POOL": "true"
+    "EXP_MACHINE_POOL": "true",
+    "CLUSTER_TOPOLOGY": "true"
   }
 }
 ```
@@ -76,7 +78,8 @@ Similarly, to **validate** if a particular feature is enabled, see cluster-api-p
 
 * [MachinePools](./machine-pools.md)
 * [ClusterResourceSet](./cluster-resource-set.md)
-* [ClusterClass](./cluster-classes.md)
+* [ClusterClass](./cluster-class/index.md)
+* [Ignition Bootstrap configuration](./ignition.md)
 
 **Warning**: Experimental features are unreliable, i.e., some may one day be promoted to the main repository, or they may be modified arbitrarily or even disappear altogether.
 In short, they are not subject to any compatibility or deprecation promise.

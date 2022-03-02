@@ -81,7 +81,7 @@ The generated binary can be found at ./hack/tools/bin/envsubst
 You'll need to deploy [cert-manager] components on your [management cluster][mcluster], using `kubectl`
 
 ```bash
-kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v1.5.3/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.5.3/cert-manager.yaml
 ```
 
 Ensure the cert-manager webhook service is ready before creating the Cluster API components.
@@ -92,7 +92,7 @@ This can be done by running:
 kubectl wait --for=condition=Available --timeout=300s apiservice v1beta1.webhook.cert-manager.io
 ```
 
-[cert-manager]: https://github.com/jetstack/cert-manager
+[cert-manager]: https://github.com/cert-manager/cert-manager
 
 ## Development
 
@@ -222,14 +222,16 @@ To test another iteration, you'll need to follow the steps to build, push, updat
 
 [qs]: https://cluster-api.sigs.k8s.io/user/quick-start.html#usage
 
-## Videos explaining CAPI architecture and code walkthrough
+## Videos explaining CAPI architecture and code walkthroughs
 
 CAPI components and architecture
 
 * [Cluster API Deep Dive - Dec 2020 v1alpha3](https://youtu.be/npFO5Fixqcc)
 * [Cluster API Deep Dive - Sept 2020 v1alpha3](https://youtu.be/9SfuQQeeK6Q)
 * [Declarative Kubernetes Clusters with Cluster API - Oct 2020 v1alpha3](https://youtu.be/i6OWn2zRsZg)
+* [TGI Kubernetes 178: ClusterAPI - ClusterClass & Managed Topologies - Dec 2020 v1beta1](https://www.youtube.com/watch?v=U9CDND0nzRI&list=PL7bmigfV0EqQzxcNpmcdTJ9eFRPBe-iZa&index=5)
 
 Code walkthrough
 
 * [Cluster API CAPD Deep Dive - March 2021 v1alpha4](https://youtu.be/67kEp471MPk)
+* [Cluster API API conversion code walkthrough - January 2022](https://www.youtube.com/watch?v=Mk14N4SelNk)

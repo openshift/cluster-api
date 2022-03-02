@@ -14,5 +14,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package controllers implements experimental addon controllers.
+// Package controllers implements the exp/addons controllers.
 package controllers

@@ -11,23 +11,24 @@ for Kubernetes bootstrap.
 * [The Kubebuilder Book](https://book.kubebuilder.io)
 
 ## How does CABPK work?
-CABPK is integrated into `cluster-api-manager`. Assuming you've set of CAPI and the Docker Manager, create a `Cluster` object and its corresponding `DockerCluster`
+
+Assuming you have deployed the CAPI and CAPD controllers, create a `Cluster` object and its corresponding `DockerCluster`
 infrastructure object.
 
 ```yaml
 kind: DockerCluster
-apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 metadata:
   name: my-cluster-docker
 ---
 kind: Cluster
-apiVersion: cluster.x-k8s.io/v1alpha3
+apiVersion: cluster.x-k8s.io/v1beta1
 metadata:
   name: my-cluster
 spec:
   infrastructureRef:
     kind: DockerCluster
-    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
     name: my-cluster-docker
 ```
 
@@ -36,7 +37,7 @@ the `KubeadmConfig` bootstrap object.
 
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
 metadata:
   name: my-control-plane1-config
 spec:
@@ -50,12 +51,12 @@ spec:
         enable-hostpath-provisioner: "true"
 ---
 kind: DockerMachine
-apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 metadata:
   name: my-control-plane1-docker
 ---
 kind: Machine
-apiVersion: cluster.x-k8s.io/v1alpha3
+apiVersion: cluster.x-k8s.io/v1beta1
 metadata:
   name: my-control-plane1
   labels:
@@ -66,11 +67,11 @@ spec:
   bootstrap:
     configRef:
       kind: KubeadmConfig
-      apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+      apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
       name: my-control-plane1-config
   infrastructureRef:
     kind: DockerMachine
-    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
     name: my-control-plane1-docker
   version: "v1.19.1"
 ```
@@ -84,6 +85,9 @@ The cloud-init script will be saved into a secret `KubeadmConfig.Status.DataSecr
 ### KubeadmConfig objects
 The `KubeadmConfig` object allows full control of Kubeadm init/join operations by exposing raw `InitConfiguration`,
 `ClusterConfiguration` and `JoinConfiguration` objects.
+
+`InitConfiguration` and `JoinConfiguration` exposes `Patches` field which can be used to specify the patches from a directory,
+this support is available from K8s 1.22 version onwards.
 
 CABPK will fill in some values if they are left empty with sensible defaults:
 
@@ -109,7 +113,7 @@ Valid combinations of configuration objects are:
 Bootstrap control plane node:
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
 metadata:
   name: my-control-plane1-config
 spec:
@@ -126,7 +130,7 @@ spec:
 Additional control plane nodes:
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
 metadata:
   name: my-control-plane2-config
 spec:
@@ -140,7 +144,7 @@ spec:
 worker nodes:
 ```yaml
 kind: KubeadmConfig
-apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
 metadata:
   name: my-worker1-config
 spec:
@@ -166,7 +170,7 @@ The user can choose two approaches for certificate management:
 should be provided as a `Secrets` objects in the management cluster.
 2. let KCP to generate the necessary `Secrets` objects with a self-signed certificate authority for kubeadm
 
-See [here](ttps://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) for more info about certificate management with kubeadm.
+See [here](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) for more info about certificate management with kubeadm.
 
 ### Additional Features
 The `KubeadmConfig` object supports customizing the content of the config-data. The following examples illustrate how to specify these options. They should be adapted to fit your environment and use case.

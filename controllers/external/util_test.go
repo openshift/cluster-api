@@ -20,16 +20,16 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 var (
@@ -252,7 +252,7 @@ func TestCloneTemplateResourceFoundNoOwner(t *testing.T) {
 
 	expectedKind := "Yellow"
 	expectedAPIVersion := templateAPIVersion
-	expectedLabels := (map[string]string{clusterv1.ClusterLabelName: testClusterName})
+	expectedLabels := map[string]string{clusterv1.ClusterLabelName: testClusterName}
 
 	expectedSpec, ok, err := unstructured.NestedMap(template.UnstructuredContent(), "spec", "template", "spec")
 	g.Expect(err).NotTo(HaveOccurred())

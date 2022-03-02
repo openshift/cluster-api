@@ -17,12 +17,18 @@ limitations under the License.
 package test
 
 import (
+	"errors"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	fakebootstrap "sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test/providers/bootstrap"
@@ -31,14 +37,13 @@ import (
 	fakeinfrastructure "sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test/providers/infrastructure"
 	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 type FakeProxy struct {
 	cs        client.Client
 	namespace string
 	objs      []client.Object
+	available *bool
 }
 
 var (
@@ -79,9 +84,18 @@ func (f *FakeProxy) NewClient() (client.Client, error) {
 	return f.cs, nil
 }
 
+func (f *FakeProxy) CheckClusterAvailable() error {
+	// default to considering the cluster as available unless explicitly set to be
+	// unavailable.
+	if f.available == nil || *f.available {
+		return nil
+	}
+	return errors.New("cluster is not available")
+}
+
 // ListResources returns all the resources known by the FakeProxy.
 func (f *FakeProxy) ListResources(labels map[string]string, namespaces ...string) ([]unstructured.Unstructured, error) {
-	var ret []unstructured.Unstructured //nolint
+	var ret []unstructured.Unstructured //nolint:prealloc
 	for _, o := range f.objs {
 		u := unstructured.Unstructured{}
 		err := FakeScheme.Convert(o, &u, nil)
@@ -182,6 +196,11 @@ func (f *FakeProxy) WithProviderInventory(name string, providerType clusterctlv1
 func (f *FakeProxy) WithFakeCAPISetup() *FakeProxy {
 	f.objs = append(f.objs, FakeCAPISetupObjects()...)
 
+	return f
+}
+
+func (f *FakeProxy) WithClusterAvailable(available bool) *FakeProxy {
+	f.available = pointer.Bool(available)
 	return f
 }
 

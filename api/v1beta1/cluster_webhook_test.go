@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilfeature "k8s.io/component-base/featuregate/testing"
+
 	"sigs.k8s.io/cluster-api/feature"
 	utildefaulting "sigs.k8s.io/cluster-api/util/defaulting"
 )
@@ -338,32 +339,6 @@ func TestClusterTopologyValidation(t *testing.T) {
 								},
 							},
 						},
-					},
-				},
-			},
-		},
-		{
-			name:      "should return error on create when both Topology and control plane ref are defined",
-			expectErr: true,
-			in: &Cluster{
-				Spec: ClusterSpec{
-					ControlPlaneRef: &corev1.ObjectReference{},
-					Topology: &Topology{
-						Class:   "foo",
-						Version: "v1.19.1",
-					},
-				},
-			},
-		},
-		{
-			name:      "should return error on create when both Topology and infrastructure ref are defined",
-			expectErr: true,
-			in: &Cluster{
-				Spec: ClusterSpec{
-					InfrastructureRef: &corev1.ObjectReference{},
-					Topology: &Topology{
-						Class:   "foo",
-						Version: "v1.19.1",
 					},
 				},
 			},

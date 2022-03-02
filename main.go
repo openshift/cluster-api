@@ -25,6 +25,7 @@ import (
 	"os"
 	"time"
 
+	// +kubebuilder:scaffold:imports
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -34,13 +35,16 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/klogr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+
 	clusterv1alpha3 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	clusterv1alpha4 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/controllers"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	"sigs.k8s.io/cluster-api/controllers/topology"
 	addonsv1alpha3 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha3"
 	addonsv1alpha4 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha4"
 	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
@@ -51,10 +55,7 @@ import (
 	expcontrollers "sigs.k8s.io/cluster-api/exp/controllers"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/version"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	// +kubebuilder:scaffold:imports
+	"sigs.k8s.io/cluster-api/webhooks"
 )
 
 var (
@@ -71,6 +72,7 @@ var (
 	watchFilterValue              string
 	profilerAddress               string
 	clusterTopologyConcurrency    int
+	clusterClassConcurrency       int
 	clusterConcurrency            int
 	machineConcurrency            int
 	machineSetConcurrency         int
@@ -133,6 +135,9 @@ func InitFlags(fs *pflag.FlagSet) {
 
 	fs.IntVar(&clusterTopologyConcurrency, "clustertopology-concurrency", 10,
 		"Number of clusters to process simultaneously")
+
+	fs.IntVar(&clusterClassConcurrency, "clusterclass-concurrency", 10,
+		"Number of cluster classes to process simultaneously")
 
 	fs.IntVar(&clusterConcurrency, "cluster-concurrency", 10,
 		"Number of clusters to process simultaneously")
@@ -251,10 +256,11 @@ func setupIndexes(ctx context.Context, mgr ctrl.Manager) {
 func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	// Set up a ClusterCacheTracker and ClusterCacheReconciler to provide to controllers
 	// requiring a connection to a remote cluster
+	log := ctrl.Log.WithName("remote").WithName("ClusterCacheTracker")
 	tracker, err := remote.NewClusterCacheTracker(
 		mgr,
 		remote.ClusterCacheTrackerOptions{
-			Log:     ctrl.Log.WithName("remote").WithName("ClusterCacheTracker"),
+			Log:     &log,
 			Indexes: remote.DefaultIndexes,
 		},
 	)
@@ -288,7 +294,17 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 			os.Exit(1)
 		}
 
-		if err := (&topology.ClusterReconciler{
+		if err := (&controllers.ClusterClassReconciler{
+			Client:                    mgr.GetClient(),
+			APIReader:                 mgr.GetAPIReader(),
+			UnstructuredCachingClient: unstructuredCachingClient,
+			WatchFilterValue:          watchFilterValue,
+		}).SetupWithManager(ctx, mgr, concurrency(clusterClassConcurrency)); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "ClusterClass")
+			os.Exit(1)
+		}
+
+		if err := (&controllers.ClusterTopologyReconciler{
 			Client:                    mgr.GetClient(),
 			APIReader:                 mgr.GetAPIReader(),
 			UnstructuredCachingClient: unstructuredCachingClient,
@@ -298,7 +314,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 			os.Exit(1)
 		}
 
-		if err := (&topology.MachineDeploymentReconciler{
+		if err := (&controllers.MachineDeploymentTopologyReconciler{
 			Client:           mgr.GetClient(),
 			APIReader:        mgr.GetAPIReader(),
 			WatchFilterValue: watchFilterValue,
@@ -307,7 +323,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 			os.Exit(1)
 		}
 
-		if err := (&topology.MachineSetReconciler{
+		if err := (&controllers.MachineSetTopologyReconciler{
 			Client:           mgr.GetClient(),
 			APIReader:        mgr.GetAPIReader(),
 			WatchFilterValue: watchFilterValue,
@@ -318,6 +334,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	}
 	if err := (&controllers.ClusterReconciler{
 		Client:           mgr.GetClient(),
+		APIReader:        mgr.GetAPIReader(),
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(clusterConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cluster")
@@ -325,6 +342,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	}
 	if err := (&controllers.MachineReconciler{
 		Client:           mgr.GetClient(),
+		APIReader:        mgr.GetAPIReader(),
 		Tracker:          tracker,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(machineConcurrency)); err != nil {
@@ -333,6 +351,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	}
 	if err := (&controllers.MachineSetReconciler{
 		Client:           mgr.GetClient(),
+		APIReader:        mgr.GetAPIReader(),
 		Tracker:          tracker,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(machineSetConcurrency)); err != nil {
@@ -341,6 +360,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	}
 	if err := (&controllers.MachineDeploymentReconciler{
 		Client:           mgr.GetClient(),
+		APIReader:        mgr.GetAPIReader(),
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(machineDeploymentConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MachineDeployment")
@@ -388,14 +408,14 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 func setupWebhooks(mgr ctrl.Manager) {
 	// NOTE: ClusterClass and managed topologies are behind ClusterTopology feature gate flag; the webhook
 	// is going to prevent creating or updating new objects in case the feature flag is disabled.
-	if err := (&clusterv1.ClusterClass{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.ClusterClass{Client: mgr.GetClient()}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "ClusterClass")
 		os.Exit(1)
 	}
 
 	// NOTE: ClusterClass and managed topologies are behind ClusterTopology feature gate flag; the webhook
 	// is going to prevent usage of Cluster.Topology in case the feature flag is disabled.
-	if err := (&clusterv1.Cluster{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.Cluster{Client: mgr.GetClient()}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "Cluster")
 		os.Exit(1)
 	}

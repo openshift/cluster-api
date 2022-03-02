@@ -20,19 +20,21 @@ import (
 	"context"
 	"testing"
 
+	"github.com/davecgh/go-spew/spew"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/conditions"
 )
 
 func mapper(i client.Object) []reconcile.Request {
@@ -81,7 +83,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			go func() {
 				g.Expect(mgr.Start(mgrContext)).To(Succeed())
 			}()
-			<-env.Manager.Elected()
+			<-mgr.Elected()
 
 			k8sClient = mgr.GetClient()
 
@@ -115,11 +117,14 @@ func TestClusterCacheTracker(t *testing.T) {
 
 		teardown := func(t *testing.T, g *WithT, ns *corev1.Namespace) {
 			t.Helper()
+			defer close(c.ch)
 
 			t.Log("Deleting any Secrets")
 			g.Expect(cleanupTestSecrets(ctx, k8sClient)).To(Succeed())
 			t.Log("Deleting any Clusters")
 			g.Expect(cleanupTestClusters(ctx, k8sClient)).To(Succeed())
+			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
+			g.Consistently(c.ch).ShouldNot(Receive())
 			t.Log("Deleting Namespace")
 			g.Expect(env.Delete(ctx, ns)).To(Succeed())
 			t.Log("Stopping the manager")
@@ -144,9 +149,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
 
 			t.Log("Ensuring no additional watch notifications arrive")
-			g.Consistently(func() int {
-				return len(c.ch)
-			}).Should(Equal(0))
+			g.Consistently(c.ch).ShouldNot(Receive())
 
 			t.Log("Updating the cluster")
 			clusterA.Annotations = map[string]string{
@@ -158,9 +161,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
 
 			t.Log("Ensuring no additional watch notifications arrive")
-			g.Consistently(func() int {
-				return len(c.ch)
-			}).Should(Equal(0))
+			g.Consistently(c.ch).ShouldNot(Receive())
 
 			t.Log("Creating the same watch a second time")
 			g.Expect(cct.Watch(ctx, WatchInput{
@@ -172,9 +173,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			})).To(Succeed())
 
 			t.Log("Ensuring no additional watch notifications arrive")
-			g.Consistently(func() int {
-				return len(c.ch)
-			}).Should(Equal(0))
+			g.Consistently(c.ch).ShouldNot(Receive())
 
 			t.Log("Updating the cluster")
 			clusterA.Annotations["update1"] = "2"
@@ -184,9 +183,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
 
 			t.Log("Ensuring no additional watch notifications arrive")
-			g.Consistently(func() int {
-				return len(c.ch)
-			}).Should(Equal(0))
+			g.Consistently(c.ch).ShouldNot(Receive())
 		})
 	})
 }
@@ -196,7 +193,11 @@ type testController struct {
 }
 
 func (c *testController) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	c.ch <- req.Name
+	spew.Dump(req)
+	select {
+	case <-ctx.Done():
+	case c.ch <- req.Name:
+	}
 	return ctrl.Result{}, nil
 }
 

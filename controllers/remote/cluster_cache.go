@@ -32,8 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,6 +40,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/conditions"
 )
 
 const (
@@ -68,7 +69,7 @@ type ClusterCacheTracker struct {
 type ClusterCacheTrackerOptions struct {
 	// Log is the logger used throughout the lifecycle of caches.
 	// Defaults to a no-op logger if it's not set.
-	Log logr.Logger
+	Log *logr.Logger
 
 	// ClientUncachedObjects instructs the Client to never cache the following objects,
 	// it'll instead query the API server directly.
@@ -79,7 +80,8 @@ type ClusterCacheTrackerOptions struct {
 
 func setDefaultOptions(opts *ClusterCacheTrackerOptions) {
 	if opts.Log == nil {
-		opts.Log = log.NullLogger{}
+		l := logr.New(log.NullLogSink{})
+		opts.Log = &l
 	}
 
 	if len(opts.ClientUncachedObjects) == 0 {
@@ -95,7 +97,7 @@ func NewClusterCacheTracker(manager ctrl.Manager, options ClusterCacheTrackerOpt
 	setDefaultOptions(&options)
 
 	return &ClusterCacheTracker{
-		log:                   options.Log,
+		log:                   *options.Log,
 		clientUncachedObjects: options.ClientUncachedObjects,
 		client:                manager.GetClient(),
 		scheme:                manager.GetScheme(),

@@ -18,7 +18,7 @@ package v1beta1
 
 import clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 
-// Conditions and condition Reasons for the DockerMachine object
+// Conditions and condition Reasons for the DockerMachine object.
 
 const (
 	// ContainerProvisionedCondition documents the status of the provisioning of the container
@@ -42,6 +42,10 @@ const (
 	// an error while provisioning the container that provides the DockerMachine infrastructure; those kind of
 	// errors are usually transient and failed provisioning are automatically re-tried by the controller.
 	ContainerProvisioningFailedReason = "ContainerProvisioningFailed"
+
+	// ContainerDeletedReason (Severity=Error) documents a DockerMachine controller detecting
+	// the underlying container has been deleted unexpectedly.
+	ContainerDeletedReason = "ContainerDeleted"
 )
 
 const (
@@ -64,7 +68,7 @@ const (
 	BootstrapFailedReason = "BootstrapFailed"
 )
 
-// Conditions and condition Reasons for the DockerCluster object
+// Conditions and condition Reasons for the DockerCluster object.
 
 const (
 	// LoadBalancerAvailableCondition documents the availability of the container that implements the cluster load balancer.

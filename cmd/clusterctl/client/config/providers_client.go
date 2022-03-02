@@ -23,11 +23,13 @@ import (
 
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
+
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 )
 
-// Core providers.
+// core providers.
 const (
+	// ClusterAPIProviderName is the name for the core provider.
 	ClusterAPIProviderName = "cluster-api"
 )
 
@@ -35,9 +37,11 @@ const (
 const (
 	AWSProviderName       = "aws"
 	AzureProviderName     = "azure"
+	BYOHProviderName      = "byoh"
 	DockerProviderName    = "docker"
 	DOProviderName        = "digitalocean"
 	GCPProviderName       = "gcp"
+	HetznerProviderName   = "hetzner"
 	IBMCloudProviderName  = "ibmcloud"
 	Metal3ProviderName    = "metal3"
 	NestedProviderName    = "nested"
@@ -65,6 +69,7 @@ const (
 
 // Other.
 const (
+	// ProvidersConfigKey is a constant for finding provider configurations with the ProvidersClient.
 	ProvidersConfigKey = "providers"
 )
 
@@ -168,6 +173,16 @@ func (p *providersClient) defaults() []Provider {
 		&provider{
 			name:         MAASProviderName,
 			url:          "https://github.com/spectrocloud/cluster-api-provider-maas/releases/latest/infrastructure-components.yaml",
+			providerType: clusterctlv1.InfrastructureProviderType,
+		},
+		&provider{
+			name:         BYOHProviderName,
+			url:          "https://github.com/vmware-tanzu/cluster-api-provider-bringyourownhost/releases/latest/infrastructure-components.yaml",
+			providerType: clusterctlv1.InfrastructureProviderType,
+		},
+		&provider{
+			name:         HetznerProviderName,
+			url:          "https://github.com/syself/cluster-api-provider-hetzner/releases/latest/infrastructure-components.yaml",
 			providerType: clusterctlv1.InfrastructureProviderType,
 		},
 		&provider{

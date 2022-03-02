@@ -24,8 +24,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/pointer"
+
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	"sigs.k8s.io/cluster-api/feature"
 	utildefaulting "sigs.k8s.io/cluster-api/util/defaulting"
 )
 
@@ -56,7 +59,7 @@ func TestKubeadmControlPlaneDefault(t *testing.T) {
 		Name:       "foo",
 		Namespace:  "foo",
 	}
-	t.Run("for KubeadmControlPLane", utildefaulting.DefaultValidateTest(updateDefaultingValidationKCP))
+	t.Run("for KubeadmControlPlane", utildefaulting.DefaultValidateTest(updateDefaultingValidationKCP))
 	kcp.Default()
 
 	g.Expect(kcp.Spec.MachineTemplate.InfrastructureRef.Namespace).To(Equal(kcp.Namespace))
@@ -126,10 +129,18 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 	invalidVersion2 := valid.DeepCopy()
 	invalidVersion2.Spec.Version = "1.16.6"
 
+	invalidIgnitionConfiguration := valid.DeepCopy()
+	invalidIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{}
+
+	validIgnitionConfiguration := valid.DeepCopy()
+	validIgnitionConfiguration.Spec.KubeadmConfigSpec.Format = bootstrapv1.Ignition
+	validIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{}
+
 	tests := []struct {
-		name      string
-		expectErr bool
-		kcp       *KubeadmControlPlane
+		name                  string
+		enableIgnitionFeature bool
+		expectErr             bool
+		kcp                   *KubeadmControlPlane
 	}{
 		{
 			name:      "should succeed when given a valid config",
@@ -181,10 +192,28 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 			expectErr: true,
 			kcp:       invalidMaxSurge,
 		},
+		{
+			name:                  "should return error when Ignition configuration is invalid",
+			enableIgnitionFeature: true,
+			expectErr:             true,
+			kcp:                   invalidIgnitionConfiguration,
+		},
+		{
+			name:                  "should succeed when Ignition configuration is valid",
+			enableIgnitionFeature: true,
+			expectErr:             false,
+			kcp:                   validIgnitionConfiguration,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.enableIgnitionFeature {
+				// NOTE: KubeadmBootstrapFormatIgnition feature flag is disabled by default.
+				// Enabling the feature flag temporarily for this test.
+				defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.KubeadmBootstrapFormatIgnition, true)()
+			}
+
 			g := NewWithT(t)
 
 			if tt.expectErr {
@@ -210,6 +239,7 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 					Namespace:  "foo",
 					Name:       "infraTemplate",
 				},
+				NodeDrainTimeout: &metav1.Duration{Duration: time.Second},
 			},
 			Replicas: pointer.Int32Ptr(1),
 			RolloutStrategy: &RolloutStrategy{
@@ -299,6 +329,11 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	validUpdateKubeadmConfigJoin := before.DeepCopy()
 	validUpdateKubeadmConfigJoin.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration = bootstrapv1.NodeRegistrationOptions{}
 
+	beforeKubeadmConfigFormatSet := before.DeepCopy()
+	beforeKubeadmConfigFormatSet.Spec.KubeadmConfigSpec.Format = bootstrapv1.CloudConfig
+	invalidUpdateKubeadmConfigFormat := beforeKubeadmConfigFormatSet.DeepCopy()
+	invalidUpdateKubeadmConfigFormat.Spec.KubeadmConfigSpec.Format = bootstrapv1.Ignition
+
 	validUpdate := before.DeepCopy()
 	validUpdate.Labels = map[string]string{"blue": "green"}
 	validUpdate.Spec.KubeadmConfigSpec.PreKubeadmCommands = []string{"ab", "abc"}
@@ -329,9 +364,11 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	}
 	validUpdate.Spec.MachineTemplate.InfrastructureRef.APIVersion = "test/v1alpha2"
 	validUpdate.Spec.MachineTemplate.InfrastructureRef.Name = "orange"
+	validUpdate.Spec.MachineTemplate.NodeDrainTimeout = &metav1.Duration{Duration: 10 * time.Second}
 	validUpdate.Spec.Replicas = pointer.Int32Ptr(5)
 	now := metav1.NewTime(time.Now())
 	validUpdate.Spec.RolloutAfter = &now
+	validUpdate.Spec.KubeadmConfigSpec.Format = bootstrapv1.CloudConfig
 
 	scaleToZero := before.DeepCopy()
 	scaleToZero.Spec.Replicas = pointer.Int32Ptr(0)
@@ -447,6 +484,13 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			ImageTag:        "v1.6.6_foobar.2",
 		},
 	}
+	validUnsupportedCoreDNSVersion := dns.DeepCopy()
+	validUnsupportedCoreDNSVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
+		ImageMeta: bootstrapv1.ImageMeta{
+			ImageRepository: "gcr.io/capi-test",
+			ImageTag:        "v99.99.99",
+		},
+	}
 
 	unsetCoreDNSToVersion := dns.DeepCopy()
 	unsetCoreDNSToVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
@@ -538,11 +582,24 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	disableNTPServers := before.DeepCopy()
 	disableNTPServers.Spec.KubeadmConfigSpec.NTP.Enabled = pointer.BoolPtr(false)
 
+	invalidIgnitionConfiguration := before.DeepCopy()
+	invalidIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{}
+
+	validIgnitionConfigurationBefore := before.DeepCopy()
+	validIgnitionConfigurationBefore.Spec.KubeadmConfigSpec.Format = bootstrapv1.Ignition
+	validIgnitionConfigurationBefore.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{
+		ContainerLinuxConfig: &bootstrapv1.ContainerLinuxConfig{},
+	}
+
+	validIgnitionConfigurationAfter := validIgnitionConfigurationBefore.DeepCopy()
+	validIgnitionConfigurationAfter.Spec.KubeadmConfigSpec.Ignition.ContainerLinuxConfig.AdditionalConfig = "foo: bar"
+
 	tests := []struct {
-		name      string
-		expectErr bool
-		before    *KubeadmControlPlane
-		kcp       *KubeadmControlPlane
+		name                  string
+		enableIgnitionFeature bool
+		expectErr             bool
+		before                *KubeadmControlPlane
+		kcp                   *KubeadmControlPlane
 	}{
 		{
 			name:      "should succeed when given a valid config",
@@ -579,6 +636,12 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			expectErr: false,
 			before:    before,
 			kcp:       validUpdateKubeadmConfigJoin,
+		},
+		{
+			name:      "should return error when trying to mutate the kubeadmconfigspec format from cloud-config to ignition",
+			expectErr: true,
+			before:    beforeKubeadmConfigFormatSet,
+			kcp:       invalidUpdateKubeadmConfigFormat,
 		},
 		{
 			name:      "should return error when trying to scale to zero",
@@ -689,6 +752,16 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			kcp:       dnsBuildTag,
 		},
 		{
+			name:   "should succeed when using the same CoreDNS version",
+			before: dns,
+			kcp:    dns.DeepCopy(),
+		},
+		{
+			name:   "should succeed when using the same CoreDNS version - not supported",
+			before: validUnsupportedCoreDNSVersion,
+			kcp:    validUnsupportedCoreDNSVersion,
+		},
+		{
 			name:      "should fail when using an invalid DNS build",
 			expectErr: true,
 			before:    before,
@@ -700,6 +773,7 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			before:    dns,
 			kcp:       dnsInvalidCoreDNSToVersion,
 		},
+
 		{
 			name:      "should fail when making a change to the cluster config's certificatesDir",
 			expectErr: true,
@@ -826,10 +900,30 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			before:    before,
 			kcp:       disableNTPServers,
 		},
+		{
+			name:                  "should return error when Ignition configuration is invalid",
+			enableIgnitionFeature: true,
+			expectErr:             true,
+			before:                invalidIgnitionConfiguration,
+			kcp:                   invalidIgnitionConfiguration,
+		},
+		{
+			name:                  "should succeed when Ignition configuration is modified",
+			enableIgnitionFeature: true,
+			expectErr:             false,
+			before:                validIgnitionConfigurationBefore,
+			kcp:                   validIgnitionConfigurationAfter,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.enableIgnitionFeature {
+				// NOTE: KubeadmBootstrapFormatIgnition feature flag is disabled by default.
+				// Enabling the feature flag temporarily for this test.
+				defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.KubeadmBootstrapFormatIgnition, true)()
+			}
+
 			g := NewWithT(t)
 
 			err := tt.kcp.ValidateUpdate(tt.before.DeepCopy())
@@ -1044,6 +1138,23 @@ func TestPaths(t *testing.T) {
 			path:     []string{"a"},
 			diff:     map[string]interface{}{},
 			expected: [][]string{},
+		},
+		{
+			name: "long recursive check with two keys",
+			diff: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"kubeadmConfigSpec": map[string]interface{}{
+						"clusterConfiguration": map[string]interface{}{
+							"version": "v2.0.1",
+							"abc":     "d",
+						},
+					},
+				},
+			},
+			expected: [][]string{
+				{"spec", "kubeadmConfigSpec", "clusterConfiguration", "version"},
+				{"spec", "kubeadmConfigSpec", "clusterConfiguration", "abc"},
+			},
 		},
 	}
 	for _, tt := range tests {

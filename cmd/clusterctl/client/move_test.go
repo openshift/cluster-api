@@ -17,11 +17,11 @@ limitations under the License.
 package client
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 
 	. "github.com/onsi/gomega"
+
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
@@ -97,7 +97,7 @@ func Test_clusterctlClient_Move(t *testing.T) {
 }
 
 func Test_clusterctlClient_Backup(t *testing.T) {
-	dir, err := ioutil.TempDir("/tmp", "cluster-api")
+	dir, err := os.MkdirTemp("/tmp", "cluster-api")
 	if err != nil {
 		t.Error(err)
 	}
@@ -160,7 +160,7 @@ func Test_clusterctlClient_Backup(t *testing.T) {
 }
 
 func Test_clusterctlClient_Restore(t *testing.T) {
-	dir, err := ioutil.TempDir("/tmp", "cluster-api")
+	dir, err := os.MkdirTemp("/tmp", "cluster-api")
 	if err != nil {
 		t.Error(err)
 	}
