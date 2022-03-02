@@ -1,6 +1,6 @@
 module sigs.k8s.io/cluster-api
 
-go 1.22.0
+go 1.22
 
 require (
 	github.com/MakeNowJust/heredoc v1.0.0
@@ -31,25 +31,23 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.19.0
 	github.com/valyala/fastjson v1.6.4
-	go.etcd.io/etcd/api/v3 v3.5.15
-	go.etcd.io/etcd/client/v3 v3.5.15
-	golang.org/x/oauth2 v0.21.0
-	golang.org/x/text v0.16.0
-	gomodules.xyz/jsonpatch/v2 v2.4.0
-	google.golang.org/grpc v1.62.2
-	k8s.io/api v0.30.3
-	k8s.io/apiextensions-apiserver v0.30.3
-	k8s.io/apimachinery v0.30.3
-	k8s.io/apiserver v0.30.3
-	k8s.io/client-go v0.30.3
-	k8s.io/cluster-bootstrap v0.30.3
-	k8s.io/component-base v0.30.3
-	k8s.io/klog/v2 v2.120.1
-	k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340
-	k8s.io/kubectl v0.30.3
-	k8s.io/utils v0.0.0-20231127182322-b307cd553661
-	sigs.k8s.io/controller-runtime v0.18.5
-	sigs.k8s.io/yaml v1.4.0
+	go.etcd.io/etcd/api/v3 v3.5.9
+	go.etcd.io/etcd/client/v3 v3.5.9
+	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/oauth2 v0.10.0
+	google.golang.org/grpc v1.55.0
+	k8s.io/api v0.27.2
+	k8s.io/apiextensions-apiserver v0.27.2
+	k8s.io/apimachinery v0.27.2
+	k8s.io/apiserver v0.27.2
+	k8s.io/client-go v0.27.2
+	k8s.io/cluster-bootstrap v0.27.2
+	k8s.io/component-base v0.27.2
+	k8s.io/klog/v2 v2.90.1
+	k8s.io/kubectl v0.27.2
+	k8s.io/utils v0.0.0-20230209194617-a36077c30491
+	sigs.k8s.io/controller-runtime v0.15.1
+	sigs.k8s.io/yaml v1.3.0
 )
 
 require (
@@ -155,17 +153,17 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	go4.org v0.0.0-20201209231011-d4a079459e60 // indirect
-	golang.org/x/crypto v0.25.0 // indirect
-	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/net v0.27.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
-	golang.org/x/sys v0.22.0 // indirect
-	golang.org/x/term v0.22.0 // indirect
-	golang.org/x/time v0.5.0 // indirect
-	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240311132316-a219d84964c2 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240314234333-6e1732d8331c // indirect
-	google.golang.org/protobuf v1.34.1 // indirect
+	golang.org/x/crypto v0.14.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/term v0.13.0 // indirect
+	golang.org/x/text v0.13.0
+	golang.org/x/time v0.3.0 // indirect
+	golang.org/x/tools v0.14.0 // indirect
+	google.golang.org/appengine v1.6.7 // indirect
+	google.golang.org/genproto v0.0.0-20231106174013-bbf56f31fb17 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20231106174013-bbf56f31fb17 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20231120223509-83a465c0220f // indirect
+	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
