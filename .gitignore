@@ -61,7 +61,7 @@ cmd/clusterctl/config/manifest
 
 # The golang vendor directory that contains local copies of external
 # dependencies that satisfy Go imports in this project.
-vendor
+# vendor
 
 # User-supplied Tiltfile extensions, settings, and builds
 tilt.d
@@ -82,10 +82,3 @@ _releasenotes
 
 # Helm
 .helm
-
-# Used during parts of the build process. Files _should_ get cleaned up automatically.
-# This is also a good location for any temporary manfiests used during development
-tmp
-
-# asdf (not a typo! ;) used to manage multiple versions of tools
-.tool-versions
