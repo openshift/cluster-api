@@ -19,7 +19,7 @@ ROOT = ../../..
 
 .DEFAULT_GOAL:=help
 
-GO_VERSION ?= 1.16.8
+GO_VERSION ?= 1.17.3
 GO_CONTAINER_IMAGE ?= docker.io/library/golang:$(GO_VERSION)
 
 # Use GOPROXY environment variable if set
@@ -60,8 +60,8 @@ $(KUSTOMIZE): # Build kustomize from tools folder.
 REGISTRY ?= gcr.io/$(shell gcloud config get-value project)
 IMAGE_NAME ?= capd-manager
 CONTROLLER_IMG ?= $(REGISTRY)/$(IMAGE_NAME)
-ARCH ?= amd64
-ALL_ARCH = amd64 arm arm64
+ARCH ?= $(shell go env GOARCH)
+ALL_ARCH = amd64 arm arm64 ppc64le s390x
 
 STAGING_REGISTRY ?= gcr.io/k8s-staging-cluster-api
 STAGING_BUCKET ?= artifacts.k8s-staging-cluster-api.appspot.com
@@ -103,7 +103,7 @@ test-junit: $(GOTESTSUM) ## Run tests with verbose setting and generate a junit 
 
 .PHONY: manager
 manager: ## Build manager binary
-	go build -o $(BIN_DIR)/manager sigs.k8s.io/cluster-api/test/infrastructure/docker
+	go build -trimpath -o $(BIN_DIR)/manager sigs.k8s.io/cluster-api/test/infrastructure/docker
 
 $(CONTROLLER_GEN):
 	$(MAKE) -C $(ROOT) controller-gen
@@ -147,8 +147,8 @@ generate-manifests: $(CONTROLLER_GEN) ## Generate manifests e.g. CRD, RBAC etc.
 	$(CONTROLLER_GEN) \
 		paths=./api/... \
 		paths=./$(EXP_DIR)/api/... \
-		paths=./$(EXP_DIR)/controllers/... \
-		paths=./controllers/... \
+		paths=./$(EXP_DIR)/internal/controllers/... \
+		paths=./internal/controllers/... \
 		crd:crdVersions=v1 \
 		rbac:roleName=manager-role \
 		output:crd:dir=./config/crd/bases \

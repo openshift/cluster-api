@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -23,7 +24,6 @@ import (
 )
 
 var _ = Describe("When testing K8S conformance [Conformance]", func() {
-
 	K8SConformanceSpec(ctx, func() K8SConformanceSpecInput {
 		return K8SConformanceSpecInput{
 			E2EConfig:             e2eConfig,
@@ -33,5 +33,4 @@ var _ = Describe("When testing K8S conformance [Conformance]", func() {
 			SkipCleanup:           skipCleanup,
 		}
 	})
-
 })

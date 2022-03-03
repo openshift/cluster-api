@@ -22,7 +22,6 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
@@ -30,8 +29,9 @@ import (
 	"text/template"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/yaml"
+
+	"sigs.k8s.io/cluster-api/test/framework"
 )
 
 var (
@@ -91,7 +91,7 @@ func GenerateCIArtifactsInjectedTemplateForDebian(input GenerateCIArtifactsInjec
 
 	kustomizedTemplate := path.Join(templateDir, "cluster-template-conformance-ci-artifacts.yaml")
 
-	if err := ioutil.WriteFile(path.Join(overlayDir, "kustomization.yaml"), []byte(kustomizationYAMLBytes), 0o600); err != nil {
+	if err := os.WriteFile(path.Join(overlayDir, "kustomization.yaml"), []byte(kustomizationYAMLBytes), 0o600); err != nil {
 		return "", err
 	}
 

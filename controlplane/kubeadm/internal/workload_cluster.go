@@ -36,7 +36,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	kubeadmtypes "sigs.k8s.io/cluster-api/bootstrap/kubeadm/types"
@@ -45,18 +49,17 @@ import (
 	"sigs.k8s.io/cluster-api/util/certs"
 	containerutil "sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/patch"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 )
 
 const (
-	kubeProxyKey              = "kube-proxy"
-	kubeadmConfigKey          = "kubeadm-config"
-	kubeletConfigKey          = "kubelet"
-	cgroupDriverKey           = "cgroupDriver"
-	labelNodeRoleControlPlane = "node-role.kubernetes.io/master"
-	clusterStatusKey          = "ClusterStatus"
-	clusterConfigurationKey   = "ClusterConfiguration"
+	kubeProxyKey                 = "kube-proxy"
+	kubeadmConfigKey             = "kubeadm-config"
+	kubeletConfigKey             = "kubelet"
+	cgroupDriverKey              = "cgroupDriver"
+	labelNodeRoleOldControlPlane = "node-role.kubernetes.io/master" // Deprecated: https://github.com/kubernetes/kubeadm/issues/2200
+	labelNodeRoleControlPlane    = "node-role.kubernetes.io/control-plane"
+	clusterStatusKey             = "ClusterStatus"
+	clusterConfigurationKey      = "ClusterConfiguration"
 )
 
 var (
@@ -120,14 +123,31 @@ type Workload struct {
 var _ WorkloadCluster = &Workload{}
 
 func (w *Workload) getControlPlaneNodes(ctx context.Context) (*corev1.NodeList, error) {
-	nodes := &corev1.NodeList{}
-	labels := map[string]string{
-		labelNodeRoleControlPlane: "",
+	controlPlaneNodes := &corev1.NodeList{}
+	controlPlaneNodeNames := sets.NewString()
+
+	for _, label := range []string{labelNodeRoleOldControlPlane, labelNodeRoleControlPlane} {
+		nodes := &corev1.NodeList{}
+		if err := w.Client.List(ctx, nodes, ctrlclient.MatchingLabels(map[string]string{
+			label: "",
+		})); err != nil {
+			return nil, err
+		}
+
+		for i := range nodes.Items {
+			node := nodes.Items[i]
+
+			// Continue if we already added that node.
+			if controlPlaneNodeNames.Has(node.Name) {
+				continue
+			}
+
+			controlPlaneNodeNames.Insert(node.Name)
+			controlPlaneNodes.Items = append(controlPlaneNodes.Items, node)
+		}
 	}
-	if err := w.Client.List(ctx, nodes, ctrlclient.MatchingLabels(labels)); err != nil {
-		return nil, err
-	}
-	return nodes, nil
+
+	return controlPlaneNodes, nil
 }
 
 func (w *Workload) getConfigMap(ctx context.Context, configMap ctrlclient.ObjectKey) (*corev1.ConfigMap, error) {

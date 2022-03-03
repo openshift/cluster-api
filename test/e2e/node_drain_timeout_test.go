@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -23,7 +24,6 @@ import (
 )
 
 var _ = Describe("When testing node drain timeout", func() {
-
 	NodeDrainTimeoutSpec(ctx, func() NodeDrainTimeoutSpecInput {
 		return NodeDrainTimeoutSpecInput{
 			E2EConfig:             e2eConfig,

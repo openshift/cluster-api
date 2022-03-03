@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
@@ -947,4 +947,41 @@ func Test_addCommonLabels(t *testing.T) {
 			g.Expect(got).To(Equal(tt.want))
 		})
 	}
+}
+
+func TestAlterComponents(t *testing.T) {
+	c := &components{
+		targetNamespace: "test-ns",
+		objs: []unstructured.Unstructured{
+			{
+				Object: map[string]interface{}{
+					"kind": "ClusterRole",
+				},
+			},
+		},
+	}
+	want := []unstructured.Unstructured{
+		{
+			Object: map[string]interface{}{
+				"kind": "ClusterRole",
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{
+						clusterctlv1.ClusterctlLabelName: "",
+						clusterv1.ProviderLabelName:      "infrastructure-provider",
+					},
+				},
+			},
+		},
+	}
+
+	alterFn := func(objs []unstructured.Unstructured) ([]unstructured.Unstructured, error) {
+		// reusing addCommonLabels to do an example modification.
+		return addCommonLabels(objs, config.NewProvider("provider", "", clusterctlv1.InfrastructureProviderType)), nil
+	}
+
+	g := NewWithT(t)
+	if err := AlterComponents(c, alterFn); err != nil {
+		t.Errorf("AlterComponents() error = %v", err)
+	}
+	g.Expect(c.objs).To(Equal(want))
 }

@@ -22,16 +22,16 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/test/framework/internal/log"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/patch"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // CreateMachineDeploymentInput is the input for CreateMachineDeployment.
@@ -153,6 +153,7 @@ type UpgradeMachineDeploymentsAndWaitInput struct {
 	ClusterProxy                ClusterProxy
 	Cluster                     *clusterv1.Cluster
 	UpgradeVersion              string
+	UpgradeMachineTemplate      *string
 	MachineDeployments          []*clusterv1.MachineDeployment
 	WaitForMachinesToBeUpgraded []interface{}
 }
@@ -174,6 +175,9 @@ func UpgradeMachineDeploymentsAndWait(ctx context.Context, input UpgradeMachineD
 
 		oldVersion := deployment.Spec.Template.Spec.Version
 		deployment.Spec.Template.Spec.Version = &input.UpgradeVersion
+		if input.UpgradeMachineTemplate != nil {
+			deployment.Spec.Template.Spec.InfrastructureRef.Name = *input.UpgradeMachineTemplate
+		}
 		Expect(patchHelper.Patch(ctx, deployment)).To(Succeed())
 
 		log.Logf("Waiting for Kubernetes versions of machines in MachineDeployment %s/%s to be upgraded from %s to %s",

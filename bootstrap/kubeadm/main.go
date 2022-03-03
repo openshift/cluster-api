@@ -26,6 +26,7 @@ import (
 	"os"
 	"time"
 
+	// +kubebuilder:scaffold:imports
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,19 +35,19 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/klogr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	kubeadmbootstrapv1alpha3 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
-	kubeadmbootstrapv1alpha4 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
-	kubeadmbootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1alpha3 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
+	bootstrapv1alpha4 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	kubeadmbootstrapcontrollers "sigs.k8s.io/cluster-api/bootstrap/kubeadm/controllers"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/version"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	// +kubebuilder:scaffold:imports
 )
 
 var (
@@ -60,9 +61,9 @@ func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
 	_ = expv1.AddToScheme(scheme)
-	_ = kubeadmbootstrapv1alpha3.AddToScheme(scheme)
-	_ = kubeadmbootstrapv1alpha4.AddToScheme(scheme)
-	_ = kubeadmbootstrapv1.AddToScheme(scheme)
+	_ = bootstrapv1alpha3.AddToScheme(scheme)
+	_ = bootstrapv1alpha4.AddToScheme(scheme)
+	_ = bootstrapv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -80,6 +81,7 @@ var (
 	webhookPort                 int
 	webhookCertDir              string
 	healthAddr                  string
+	tokenTTL                    time.Duration
 )
 
 // InitFlags initializes this manager's flags.
@@ -111,7 +113,7 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&syncPeriod, "sync-period", 10*time.Minute,
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 
-	fs.DurationVar(&kubeadmbootstrapcontrollers.DefaultTokenTTL, "bootstrap-token-ttl", 15*time.Minute,
+	fs.DurationVar(&tokenTTL, "bootstrap-token-ttl", kubeadmbootstrapcontrollers.DefaultTokenTTL,
 		"The amount of time the bootstrap token will be valid")
 
 	fs.StringVar(&watchFilterValue, "watch-filter", "",
@@ -203,6 +205,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	if err := (&kubeadmbootstrapcontrollers.KubeadmConfigReconciler{
 		Client:           mgr.GetClient(),
 		WatchFilterValue: watchFilterValue,
+		TokenTTL:         tokenTTL,
 	}).SetupWithManager(ctx, mgr, concurrency(kubeadmConfigConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KubeadmConfig")
 		os.Exit(1)
@@ -210,20 +213,12 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 }
 
 func setupWebhooks(mgr ctrl.Manager) {
-	if err := (&kubeadmbootstrapv1.KubeadmConfig{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&bootstrapv1.KubeadmConfig{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "KubeadmConfig")
 		os.Exit(1)
 	}
-	if err := (&kubeadmbootstrapv1.KubeadmConfigList{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "KubeadmConfigList")
-		os.Exit(1)
-	}
-	if err := (&kubeadmbootstrapv1.KubeadmConfigTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&bootstrapv1.KubeadmConfigTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "KubeadmConfigTemplate")
-		os.Exit(1)
-	}
-	if err := (&kubeadmbootstrapv1.KubeadmConfigTemplateList{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "KubeadmConfigTemplateList")
 		os.Exit(1)
 	}
 }

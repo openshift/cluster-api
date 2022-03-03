@@ -18,8 +18,9 @@ package upstreamv1beta2
 
 import (
 	apimachineryconversion "k8s.io/apimachinery/pkg/conversion"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
+
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 )
 
 func (src *ClusterConfiguration) ConvertTo(dstRaw conversion.Hub) error {
@@ -80,4 +81,14 @@ func Convert_upstreamv1beta2_DNS_To_v1beta1_DNS(in *DNS, out *bootstrapv1.DNS, s
 func Convert_upstreamv1beta2_ClusterConfiguration_To_v1beta1_ClusterConfiguration(in *ClusterConfiguration, out *bootstrapv1.ClusterConfiguration, s apimachineryconversion.Scope) error {
 	// ClusterConfiguration.UseHyperKubeImage was removed in kubeadm v1alpha4 API
 	return autoConvert_upstreamv1beta2_ClusterConfiguration_To_v1beta1_ClusterConfiguration(in, out, s)
+}
+
+func Convert_v1beta1_InitConfiguration_To_upstreamv1beta2_InitConfiguration(in *bootstrapv1.InitConfiguration, out *InitConfiguration, s apimachineryconversion.Scope) error {
+	// InitConfiguration.Patches does not exist in kubeadm v1beta2 API
+	return autoConvert_v1beta1_InitConfiguration_To_upstreamv1beta2_InitConfiguration(in, out, s)
+}
+
+func Convert_v1beta1_JoinConfiguration_To_upstreamv1beta2_JoinConfiguration(in *bootstrapv1.JoinConfiguration, out *JoinConfiguration, s apimachineryconversion.Scope) error {
+	// JoinConfiguration.Patches does not exist in kubeadm v1beta2 API
+	return autoConvert_v1beta1_JoinConfiguration_To_upstreamv1beta2_JoinConfiguration(in, out, s)
 }

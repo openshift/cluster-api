@@ -63,7 +63,7 @@ The following guidelines should be followed when developing E2E tests:
 - Use the [Cluster API test framework].
 - Define test spec reflecting real user workflow, e.g. [Cluster API quick start].
 - Unless you are testing provider specific features, ensure your test can run with
-  different infrastructure providers (see [Writing Portable Tests](#writing-portable-e2e-tests)).
+  different infrastructure providers (see [Writing Portable Tests](./e2e.md#writing-portable-e2e-tests)).
 
 See [e2e development] for more information on developing e2e tests for CAPI and external providers.
 
@@ -90,20 +90,20 @@ GINKGO_FOCUS="\[PR-Blocking\]" ./scripts/ci-e2e.sh
 ### Test execution via make test-e2e
 
 `make test-e2e` will run e2e tests by using whatever provider images already exist on disk.
-After running `make docker-build-e2e` at least once, `make test-e2e` can be used for a faster test run, if there are no 
+After running `make docker-build-e2e` at least once, `make test-e2e` can be used for a faster test run, if there are no
 provider code changes. If the provider code is changed, run `make docker-build-e2e` to update the images.
 
 ### Test execution via IDE
 
 It's also possible to run the tests via an IDE which makes it easier to debug the test code by stepping through the code.
 
-First, we have to make sure all prerequisites are fulfilled, i.e. all required images have been built (this also includes 
+First, we have to make sure all prerequisites are fulfilled, i.e. all required images have been built (this also includes
 kind images). This can be done by executing the `./scripts/ci-e2e.sh` script.
 
 ```bash
 # Notes:
 # * You can cancel the script as soon as it starts the actual test execution via `make -C test/e2e/ run`.
-# * If you want to run other tests (e.g. upgrade tests), make sure all required env variables are set (see the Prow Job config). 
+# * If you want to run other tests (e.g. upgrade tests), make sure all required env variables are set (see the Prow Job config).
 GINKGO_FOCUS="\[PR-Blocking\]" ./scripts/ci-e2e.sh
 
 # Make sure the cluster-templates have been generated.
@@ -114,7 +114,7 @@ Now, the tests can be run in an IDE. The following describes how this can be don
 roughly the same way in all other IDEs. We assume the `cluster-api` repository has been checked
 out into `/home/user/code/src/sigs.k8s.io/cluster-api`.
 
-#### Intellij 
+#### Intellij
 
 Create a new run configuration and fill in:
 * Test framework: `gotest`
@@ -139,7 +139,7 @@ Add the launch.json file in the .vscode folder in your repo:
             "mode": "test",
             "program": "${workspaceRoot}/test/e2e/e2e_suite_test.go",
             "env": {
-                "ARTIFACTS":"${workspaceRoot}/_artifacts",
+                "ARTIFACTS":"${workspaceRoot}/_artifacts"
             },
             "args": [
                 "-e2e.config=${workspaceRoot}/test/e2e/config/docker.yaml",
@@ -160,8 +160,21 @@ Execute the run configuration with `Debug`.
 
 <h1>Tips</h1>
 
-If you want to debug CAPI controller during e2e tests, just scale down the controller in the local kind cluster
-and run it via the IDE.
+The e2e tests create a new management cluster with kind on each run. To avoid this and speed up the test execution the tests can 
+also be run against a management cluster created by [tilt](./tilt.md):
+```bash
+# Create a kind cluster
+./hack/kind-install-for-capd.sh
+# Set up the management cluster via tilt
+tilt up 
+```
+Now you can start the e2e test via IDE as described above but with the additional `-e2e.use-existing-cluster=true` flag.
+
+**Note**: This can also be used to debug controllers during e2e tests as described in [Developing Cluster API with Tilt](./tilt.md#wiring-up-debuggers).
+
+The e2e tests also create a local clusterctl repository. After it has been created on a first test execution this step can also be 
+skipped by setting `-e2e.cluster-config=<ARTIFACTS>/repository/clusterctl-config.yaml`. This also works with a clusterctl repository created 
+via [Create the local repository](http://localhost:3000/clusterctl/developers.html#create-the-local-repository).
 
 </aside>
 
@@ -192,6 +205,15 @@ The following env variables can be set to customize the test execution:
 - `GINKGO_NOCOLOR` to turn off the ginkgo colored output (default to false)
 
 Furthermore, it's possible to overwrite all env variables specified in `variables` in `test/e2e/config/docker.yaml`.
+
+### Known Issues
+
+#### Building images on SELinux
+
+Cluster API repositories use [Moby Buildkit](https://github.com/moby/buildkit) to speed up image builds.
+[BuildKit does not currently work on SELinux](https://github.com/moby/buildkit/issues/2295).
+
+Use `sudo setenforce 0` to make SELinux permissive when running e2e tests.
 
 ## Quick reference
 

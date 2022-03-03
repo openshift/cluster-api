@@ -6,7 +6,7 @@ In this tutorial we'll cover the basics of how to use Cluster API to create one 
 
 <h1>Warning</h1>
 
-If using a [provider] that does not yet support v1alpha4, please follow [the release 0.3 quickstart instructions](https://release-0-3.cluster-api.sigs.k8s.io/user/quick-start.html) instead.
+If using a [provider] that does not support v1beta1 or v1alpha4 yet, please follow the [release 0.3](https://release-0-3.cluster-api.sigs.k8s.io/user/quick-start.html) or [release 0.4](https://release-0-4.cluster-api.sigs.k8s.io/user/quick-start.html) quickstart instructions instead.
 
 </aside>
 
@@ -26,7 +26,7 @@ is recommended to keep it separated from any application workload.
 It is a common practice to create a temporary, local bootstrap cluster which is then used to provision
 a target [management cluster] on the selected [infrastructure provider].
 
-Choose one of the options below:
+**Choose one of the options below:**
 
 1. **Existing Management Cluster**
 
@@ -35,6 +35,7 @@ Choose one of the options below:
    ```bash
    export KUBECONFIG=<...>
    ```
+**OR**
 
 2. **Kind**
 
@@ -100,7 +101,7 @@ The clusterctl CLI tool handles the lifecycle of a Cluster API management cluste
 #### Install clusterctl binary with curl on linux
 Download the latest release; on linux, type:
 ```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"0.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.1.x"}} -o clusterctl
 ```
 Make the clusterctl binary executable.
 ```
@@ -121,12 +122,12 @@ clusterctl version
 #### Install clusterctl binary with curl on macOS
 Download the latest release; on macOS, type:
 ```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"0.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.1.x"}} -o clusterctl
 ```
 
 Or if your Mac has an M1 CPU ("Apple Silicon"):
 ```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"0.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.1.x"}} -o clusterctl
 ```
 
 Make the clusterctl binary executable.
@@ -169,12 +170,22 @@ The command accepts as input a list of providers to install; when executed for t
 automatically adds to the list the `cluster-api` core provider, and if unspecified, it also adds the `kubeadm` bootstrap
 and `kubeadm` control-plane providers.
 
+#### Enabling Feature Gates
+
+Feature gates can be enabled by exporting environment variables before executing `clusterctl init`.
+For example, the `ClusterTopology` feature, which is required to enable support for managed topologies and ClusterClass,
+can be enabled via:
+```bash
+export CLUSTER_TOPOLOGY=true
+```
+Additional documentation about experimental features can be found in [Experimental Features].
+
 #### Initialization for common providers
 
 Depending on the infrastructure provider you are planning to use, some additional prerequisites should be satisfied
 before getting started with Cluster API. See below for the expected settings for common providers.
 
-{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,GCP,vSphere,OpenStack,Metal3,Packet"}}
+{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,Equinix Metal,GCP,Hetzner,Metal3,OpenStack,vSphere"}}
 {{#tab AWS}}
 
 Download the latest binary of `clusterawsadm` from the [AWS provider releases] and make sure to place it in your path.
@@ -265,6 +276,20 @@ clusterctl init --infrastructure docker
 ```
 
 {{#/tab }}
+{{#tab Equinix Metal}}
+
+In order to initialize the Equinix Metal Provider (formerly Packet) you have to expose the environment
+variable `PACKET_API_KEY`. This variable is used to authorize the infrastructure
+provider manager against the Equinix Metal API. You can retrieve your token directly
+from the [Equinix Metal Console](https://console.equinix.com/).
+
+```bash
+export PACKET_API_KEY="34ts3g4s5g45gd45dhdh"
+
+clusterctl init --infrastructure packet
+```
+
+{{#/tab }}
 {{#tab GCP}}
 
 ```bash
@@ -275,6 +300,24 @@ export GCP_B64ENCODED_CREDENTIALS=$( cat /path/to/gcp-credentials.json | base64 
 
 # Finally, initialize the management cluster
 clusterctl init --infrastructure gcp
+```
+
+{{#/tab }}
+{{#tab Hetzner}}
+
+Please visit the [Hetzner project][Hetzner provider].
+
+{{#/tab }}
+{{#tab Metal3}}
+
+Please visit the [Metal3 project][Metal3 provider].
+
+{{#/tab }}
+{{#tab OpenStack}}
+
+```bash
+# Initialize the management cluster
+clusterctl init --infrastructure openstack
 ```
 
 {{#/tab }}
@@ -296,34 +339,6 @@ For more information about prerequisites, credentials management, or permissions
 project][vSphere getting started guide].
 
 {{#/tab }}
-{{#tab OpenStack}}
-
-```bash
-# Initialize the management cluster
-clusterctl init --infrastructure openstack
-```
-
-{{#/tab }}
-{{#tab Metal3}}
-
-Please visit the [Metal3 project][Metal3 provider].
-
-{{#/tab }}
-{{#tab Packet}}
-
-In order to initialize the Packet Provider you have to expose the environment
-variable `PACKET_API_KEY`. This variable is used to authorize the infrastructure
-provider manager against the Packet API. You can retrieve your token directly
-from the [Packet Portal](https://app.packet.net/).
-
-```bash
-export PACKET_API_KEY="34ts3g4s5g45gd45dhdh"
-
-clusterctl init --infrastructure packet
-```
-
-{{#/tab }}
-
 {{#/tabs }}
 
 The output of `clusterctl init` is similar to this:
@@ -332,10 +347,10 @@ The output of `clusterctl init` is similar to this:
 Fetching providers
 Installing cert-manager Version="v1.5.3"
 Waiting for cert-manager to be available...
-Installing Provider="cluster-api" Version="v0.4.0" TargetNamespace="capi-system"
-Installing Provider="bootstrap-kubeadm" Version="v0.4.0" TargetNamespace="capi-kubeadm-bootstrap-system"
-Installing Provider="control-plane-kubeadm" Version="v0.4.0" TargetNamespace="capi-kubeadm-control-plane-system"
-Installing Provider="infrastructure-docker" Version="v0.4.0" TargetNamespace="capd-system"
+Installing Provider="cluster-api" Version="v1.0.0" TargetNamespace="capi-system"
+Installing Provider="bootstrap-kubeadm" Version="v1.0.0" TargetNamespace="capi-kubeadm-bootstrap-system"
+Installing Provider="control-plane-kubeadm" Version="v1.0.0" TargetNamespace="capi-kubeadm-control-plane-system"
+Installing Provider="infrastructure-docker" Version="v1.0.0" TargetNamespace="capd-system"
 
 Your management cluster has been initialized successfully!
 
@@ -392,7 +407,7 @@ before configuring a cluster with Cluster API. Instructions are provided for com
 Otherwise, you can look at the `clusterctl generate cluster` [command][clusterctl generate cluster] documentation for details about how to
 discover the list of variables required by a cluster templates.
 
-{{#tabs name:"tab-configuration-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,GCP,vSphere,OpenStack,Metal3,Packet"}}
+{{#tabs name:"tab-configuration-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,Equinix Metal,GCP,Metal3,OpenStack,vSphere"}}
 {{#tab AWS}}
 
 ```bash
@@ -423,6 +438,9 @@ export AZURE_LOCATION="centralus"
 # Select VM types.
 export AZURE_CONTROL_PLANE_MACHINE_TYPE="Standard_D2s_v3"
 export AZURE_NODE_MACHINE_TYPE="Standard_D2s_v3"
+
+# [Optional] Select resource group. The default value is ${CLUSTER_NAME}.
+export AZURE_RESOURCE_GROUP="<ResourceGroupName>"
 ```
 
 {{#/tab }}
@@ -467,6 +485,28 @@ export SERVICE_DOMAIN="k8s.test"
 ```
 
 {{#/tab }}
+{{#tab Equinix Metal}}
+
+There are a couple of required environment variables that you have to expose in
+order to get a well tuned and function workload, they are all listed here:
+
+```bash
+# The project where your cluster will be placed to.
+# You have to get one from the Equinix Metal Console if you don't have one already.
+export PROJECT_ID="5yd4thd-5h35-5hwk-1111-125gjej40930"
+# The facility where you want your cluster to be provisioned
+export FACILITY="ewr1"
+# The operatin system used to provision the device
+export NODE_OS="ubuntu_18_04"
+# The ssh key name you loaded in the Equinix Metal Console
+export SSH_KEY="my-ssh"
+export POD_CIDR="192.168.0.0/16"
+export SERVICE_CIDR="172.26.0.0/16"
+export CONTROLPLANE_NODE_TYPE="t1.small"
+export WORKER_NODE_TYPE="t1.small"
+```
+
+{{#/tab }}
 {{#tab GCP}}
 
 
@@ -485,34 +525,33 @@ export CLUSTER_NAME="<CLUSTER_NAME>"
 See the [GCP provider] for more information.
 
 {{#/tab }}
-{{#tab vSphere}}
+{{#tab Metal3}}
 
-It is required to use an official CAPV machine images for your vSphere VM templates. See [uploading CAPV machine images][capv-upload-images] for instructions on how to do this.
+**Note**: If you are running CAPM3 release prior to v0.5.0, make sure to export the following
+environment variables. However, you don't need them to be exported if you use
+CAPM3 release v0.5.0 or higher.
 
 ```bash
-# The vCenter server IP or FQDN
-export VSPHERE_SERVER="10.0.0.1"
-# The vSphere datacenter to deploy the management cluster on
-export VSPHERE_DATACENTER="SDDC-Datacenter"
-# The vSphere datastore to deploy the management cluster on
-export VSPHERE_DATASTORE="vsanDatastore"
-# The VM network to deploy the management cluster on
-export VSPHERE_NETWORK="VM Network"
-# The vSphere resource pool for your VMs
-export VSPHERE_RESOURCE_POOL="*/Resources"
-# The VM folder for your VMs. Set to "" to use the root vSphere folder
-export VSPHERE_FOLDER="vm"
-# The VM template to use for your VMs
-export VSPHERE_TEMPLATE="ubuntu-1804-kube-v1.17.3"
-# The VM template to use for the HAProxy load balancer of the management cluster
-export VSPHERE_HAPROXY_TEMPLATE="capv-haproxy-v0.6.0-rc.2"
-# The public ssh authorized key on all machines
-export VSPHERE_SSH_AUTHORIZED_KEY="ssh-rsa AAAAB3N..."
-
-clusterctl init --infrastructure vsphere
+# The URL of the kernel to deploy.
+export DEPLOY_KERNEL_URL="http://172.22.0.1:6180/images/ironic-python-agent.kernel"
+# The URL of the ramdisk to deploy.
+export DEPLOY_RAMDISK_URL="http://172.22.0.1:6180/images/ironic-python-agent.initramfs"
+# The URL of the Ironic endpoint.
+export IRONIC_URL="http://172.22.0.1:6385/v1/"
+# The URL of the Ironic inspector endpoint.
+export IRONIC_INSPECTOR_URL="http://172.22.0.1:5050/v1/"
+# Do not use a dedicated CA certificate for Ironic API. Any value provided in this variable disables additional CA certificate validation.
+# To provide a CA certificate, leave this variable unset. If unset, then IRONIC_CA_CERT_B64 must be set.
+export IRONIC_NO_CA_CERT=true
+# Disables basic authentication for Ironic API. Any value provided in this variable disables authentication.
+# To enable authentication, leave this variable unset. If unset, then IRONIC_USERNAME and IRONIC_PASSWORD must be set.
+export IRONIC_NO_BASIC_AUTH=true
+# Disables basic authentication for Ironic inspector API. Any value provided in this variable disables authentication.
+# To enable authentication, leave this variable unset. If unset, then IRONIC_INSPECTOR_USERNAME and IRONIC_INSPECTOR_PASSWORD must be set.
+export IRONIC_INSPECTOR_NO_BASIC_AUTH=true
 ```
 
-For more information about prerequisites, credentials management, or permissions for vSphere, see the [vSphere getting started guide].
+Please visit the [Metal3 getting started guide] for more details.
 
 {{#/tab }}
 {{#tab OpenStack}}
@@ -549,60 +588,43 @@ export OPENSTACK_NODE_MACHINE_FLAVOR=<flavor>
 export OPENSTACK_IMAGE_NAME=<image name>
 # The SSH key pair name
 export OPENSTACK_SSH_KEY_NAME=<ssh key pair name>
+# The external network
+export OPENSTACK_EXTERNAL_NETWORK_ID=<external network ID>
 ```
 
 A full configuration reference can be found in [configuration.md](https://github.com/kubernetes-sigs/cluster-api-provider-openstack/blob/master/docs/book/src/clusteropenstack/configuration.md).
 
 {{#/tab }}
-{{#tab Metal3}}
+{{#tab vSphere}}
 
-**Note**: If you are running CAPM3 release prior to v0.5.0, make sure to export the following
-environment variables. However, you don't need them to be exported if you use
-CAPM3 release v0.5.0 or higher.
+It is required to use an official CAPV machine images for your vSphere VM templates. See [uploading CAPV machine images][capv-upload-images] for instructions on how to do this.
 
 ```bash
-# The URL of the kernel to deploy.
-export DEPLOY_KERNEL_URL="http://172.22.0.1:6180/images/ironic-python-agent.kernel"
-# The URL of the ramdisk to deploy.
-export DEPLOY_RAMDISK_URL="http://172.22.0.1:6180/images/ironic-python-agent.initramfs"
-# The URL of the Ironic endpoint.
-export IRONIC_URL="http://172.22.0.1:6385/v1/"
-# The URL of the Ironic inspector endpoint.
-export IRONIC_INSPECTOR_URL="http://172.22.0.1:5050/v1/"
-# Do not use a dedicated CA certificate for Ironic API. Any value provided in this variable disables additional CA certificate validation.
-# To provide a CA certificate, leave this variable unset. If unset, then IRONIC_CA_CERT_B64 must be set.
-export IRONIC_NO_CA_CERT=true
-# Disables basic authentication for Ironic API. Any value provided in this variable disables authentication.
-# To enable authentication, leave this variable unset. If unset, then IRONIC_USERNAME and IRONIC_PASSWORD must be set.
-export IRONIC_NO_BASIC_AUTH=true
-# Disables basic authentication for Ironic inspector API. Any value provided in this variable disables authentication.
-# To enable authentication, leave this variable unset. If unset, then IRONIC_INSPECTOR_USERNAME and IRONIC_INSPECTOR_PASSWORD must be set.
-export IRONIC_INSPECTOR_NO_BASIC_AUTH=true
+# The vCenter server IP or FQDN
+export VSPHERE_SERVER="10.0.0.1"
+# The vSphere datacenter to deploy the management cluster on
+export VSPHERE_DATACENTER="SDDC-Datacenter"
+# The vSphere datastore to deploy the management cluster on
+export VSPHERE_DATASTORE="vsanDatastore"
+# The VM network to deploy the management cluster on
+export VSPHERE_NETWORK="VM Network"
+# The vSphere resource pool for your VMs
+export VSPHERE_RESOURCE_POOL="*/Resources"
+# The VM folder for your VMs. Set to "" to use the root vSphere folder
+export VSPHERE_FOLDER="vm"
+# The VM template to use for your VMs
+export VSPHERE_TEMPLATE="ubuntu-1804-kube-v1.17.3"
+# The public ssh authorized key on all machines
+export VSPHERE_SSH_AUTHORIZED_KEY="ssh-rsa AAAAB3N..."
+# The certificate thumbprint for the vCenter server
+export VSPHERE_TLS_THUMBPRINT="97:48:03:8D:78:A9..."
+# The storage policy to be used (optional). Set to "" if not required
+export VSPHERE_STORAGE_POLICY="policy-one"
+# The IP address used for the control plane endpoint
+export CONTROL_PLANE_ENDPOINT_IP="1.2.3.4"
 ```
 
-Please visit the [Metal3 getting started guide] for more details.
-
-{{#/tab }}
-{{#tab Packet}}
-
-There are a couple of required environment variables that you have to expose in
-order to get a well tuned and function workload, they are all listed here:
-
-```bash
-# The project where your cluster will be placed to.
-# You have to get out from Packet Portal if you do not have one already.
-export PROJECT_ID="5yd4thd-5h35-5hwk-1111-125gjej40930"
-# The facility where you want your cluster to be provisioned
-export FACILITY="ewr1"
-# The operatin system used to provision the device
-export NODE_OS="ubuntu_18_04"
-# The ssh key name you loaded in Packet Portal
-export SSH_KEY="my-ssh"
-export POD_CIDR="192.168.0.0/16"
-export SERVICE_CIDR="172.26.0.0/16"
-export CONTROLPLANE_NODE_TYPE="t1.small"
-export WORKER_NODE_TYPE="t1.small"
-```
+For more information about prerequisites, credentials management, or permissions for vSphere, see the [vSphere getting started guide].
 
 {{#/tab }}
 {{#/tabs }}
@@ -611,12 +633,12 @@ export WORKER_NODE_TYPE="t1.small"
 
 For the purpose of this tutorial, we'll name our cluster capi-quickstart.
 
-{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Azure|AWS|DigitalOcean|GCP|vSphere|OpenStack|Metal3|Packet,Docker"}}
-{{#tab Azure|AWS|DigitalOcean|GCP|vSphere|OpenStack|Metal3|Packet}}
+{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Azure|AWS|DigitalOcean|Equinix Metal|GCP|Metal3|OpenStack|vSphere,Docker"}}
+{{#tab Azure|AWS|DigitalOcean|Equinix Metal|GCP|Metal3|OpenStack|vSphere}}
 
 ```bash
 clusterctl generate cluster capi-quickstart \
-  --kubernetes-version v1.22.0 \
+  --kubernetes-version v1.23.3 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -635,7 +657,17 @@ The Docker provider is not designed for production use and is intended for devel
 
 ```bash
 clusterctl generate cluster capi-quickstart --flavor development \
-  --kubernetes-version v1.22.0 \
+  --kubernetes-version v1.23.3 \
+  --control-plane-machine-count=3 \
+  --worker-machine-count=3 \
+  > capi-quickstart.yaml
+```
+
+To create a Cluster with ClusterClass:
+
+```bash
+clusterctl generate cluster capi-quickstart --flavor development-topology \
+  --kubernetes-version v1.23.3 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -663,11 +695,11 @@ The output is similar to this:
 
 ```bash
 cluster.cluster.x-k8s.io/capi-quickstart created
-awscluster.infrastructure.cluster.x-k8s.io/capi-quickstart created
+dockercluster.infrastructure.cluster.x-k8s.io/capi-quickstart created
 kubeadmcontrolplane.controlplane.cluster.x-k8s.io/capi-quickstart-control-plane created
-awsmachinetemplate.infrastructure.cluster.x-k8s.io/capi-quickstart-control-plane created
+dockermachinetemplate.infrastructure.cluster.x-k8s.io/capi-quickstart-control-plane created
 machinedeployment.cluster.x-k8s.io/capi-quickstart-md-0 created
-awsmachinetemplate.infrastructure.cluster.x-k8s.io/capi-quickstart-md-0 created
+dockermachinetemplate.infrastructure.cluster.x-k8s.io/capi-quickstart-md-0 created
 kubeadmconfigtemplate.bootstrap.cluster.x-k8s.io/capi-quickstart-md-0 created
 ```
 
@@ -695,7 +727,7 @@ You should see an output is similar to this:
 
 ```bash
 NAME                            INITIALIZED   API SERVER AVAILABLE   VERSION   REPLICAS   READY   UPDATED   UNAVAILABLE
-capi-quickstart-control-plane   true                                 v1.21.2   3                  3         3
+capi-quickstart-control-plane   true                                 v1.23.3   3                  3         3
 ```
 
 <aside class="note warning">
@@ -726,12 +758,12 @@ See [Additional Notes for the Docker Provider](../clusterctl/developers.md#addit
 
 Calico is used here as an example.
 
-{{#tabs name:"tab-deploy-cni" tabs:"AWS|DigitalOcean|Docker|GCP|vSphere|OpenStack|Metal3|Packet,Azure"}}
-{{#tab AWS|DigitalOcean|Docker|GCP|vSphere|OpenStack|Metal3|Packet}}
+{{#tabs name:"tab-deploy-cni" tabs:"AWS|DigitalOcean|Docker|Equinix Metal|GCP|Metal3|OpenStack|vSphere,Azure"}}
+{{#tab AWS|DigitalOcean|Docker|Equinix Metal|GCP|Metal3|OpenStack|vSphere}}
 
 ```bash
 kubectl --kubeconfig=./capi-quickstart.kubeconfig \
-  apply -f https://docs.projectcalico.org/v3.20/manifests/calico.yaml
+  apply -f https://docs.projectcalico.org/v3.21/manifests/calico.yaml
 ```
 
 After a short while, our nodes should be running and in `Ready` state,
@@ -782,6 +814,7 @@ kind delete cluster
 See the [clusterctl] documentation for more detail about clusterctl supported actions.
 
 <!-- links -->
+[Experimental Features]: ../tasks/experimental-features/experimental-features.md
 [AWS provider prerequisites]: https://cluster-api-aws.sigs.k8s.io/topics/using-clusterawsadm-to-fulfill-prerequisites.html
 [AWS provider releases]: https://github.com/kubernetes-sigs/cluster-api-provider-aws/releases
 [Azure Provider Prerequisites]: https://capz.sigs.k8s.io/topics/getting-started.html#prerequisites
@@ -794,6 +827,7 @@ See the [clusterctl] documentation for more detail about clusterctl supported ac
 [clusterctl]: ../clusterctl/overview.md
 [Docker]: https://www.docker.com/
 [GCP provider]: https://github.com/kubernetes-sigs/cluster-api-provider-gcp
+[Hetzner provider]: https://github.com/syself/cluster-api-provider-hetzner
 [infrastructure provider]: ../reference/glossary.md#infrastructure-provider
 [kind]: https://kind.sigs.k8s.io/
 [KubeadmControlPlane]: ../developer/architecture/controllers/control-plane.md
@@ -801,7 +835,7 @@ See the [clusterctl] documentation for more detail about clusterctl supported ac
 [management cluster]: ../reference/glossary.md#management-cluster
 [Metal3 getting started guide]: https://github.com/metal3-io/cluster-api-provider-metal3/blob/master/docs/getting-started.md
 [Metal3 provider]: https://github.com/metal3-io/cluster-api-provider-metal3/
-[Packet getting started guide]: https://github.com/kubernetes-sigs/cluster-api-provider-packet#using
+[Equinix Metal getting started guide]: https://github.com/kubernetes-sigs/cluster-api-provider-packet#using
 [provider]:../reference/providers.md
 [provider components]: ../reference/glossary.md#provider-components
 [vSphere getting started guide]: https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/master/docs/getting_started.md

@@ -65,9 +65,11 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.TalosControlPlaneProviderName,
 				config.AWSProviderName,
 				config.AzureProviderName,
+				config.BYOHProviderName,
 				config.DOProviderName,
 				config.DockerProviderName,
 				config.GCPProviderName,
+				config.HetznerProviderName,
 				config.IBMCloudProviderName,
 				config.MAASProviderName,
 				config.Metal3ProviderName,
@@ -97,9 +99,11 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.TalosControlPlaneProviderName,
 				config.AWSProviderName,
 				config.AzureProviderName,
+				config.BYOHProviderName,
 				config.DOProviderName,
 				config.DockerProviderName,
 				config.GCPProviderName,
+				config.HetznerProviderName,
 				config.IBMCloudProviderName,
 				config.MAASProviderName,
 				config.Metal3ProviderName,
@@ -618,6 +622,41 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 	}
 }
 
+func Test_clusterctlClient_GetClusterTemplate_withClusterClass(t *testing.T) {
+	g := NewWithT(t)
+
+	rawTemplate := mangedTopologyTemplateYAML("ns4", "${CLUSTER_NAME}", "dev")
+	rawClusterClassTemplate := clusterClassYAML("ns4", "dev")
+	config1 := newFakeConfig().WithProvider(infraProviderConfig)
+
+	repository1 := newFakeRepository(infraProviderConfig, config1).
+		WithPaths("root", "components").
+		WithDefaultVersion("v3.0.0").
+		WithFile("v3.0.0", "cluster-template-dev.yaml", rawTemplate).
+		WithFile("v3.0.0", "clusterclass-dev.yaml", rawClusterClassTemplate)
+
+	cluster1 := newFakeCluster(cluster.Kubeconfig{Path: "kubeconfig", Context: "mgmt-context"}, config1).
+		WithProviderInventory(infraProviderConfig.Name(), infraProviderConfig.Type(), "v3.0.0", "ns4").
+		WithObjs(test.FakeCAPISetupObjects()...)
+
+	client := newFakeClient(config1).
+		WithCluster(cluster1).
+		WithRepository(repository1)
+
+	// Assert output
+	got, err := client.GetClusterTemplate(GetClusterTemplateOptions{
+		Kubeconfig:      Kubeconfig{Path: "kubeconfig", Context: "mgmt-context"},
+		ClusterName:     "test",
+		TargetNamespace: "ns1",
+		ProviderRepositorySource: &ProviderRepositorySourceOptions{
+			Flavor: "dev",
+		},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got.Variables()).To(Equal([]string{"CLUSTER_NAME"}))
+	g.Expect(got.TargetNamespace()).To(Equal("ns1"))
+	g.Expect(got.Objs()).To(ContainElement(MatchClusterClass("dev", "ns1")))
+}
 func Test_clusterctlClient_GetClusterTemplate_onEmptyCluster(t *testing.T) {
 	g := NewWithT(t)
 

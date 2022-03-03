@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -20,20 +21,16 @@ package e2e
 
 import (
 	. "github.com/onsi/ginkgo"
-
-	"sigs.k8s.io/cluster-api/test/framework"
 )
 
 var _ = Describe("When testing KCP adoption", func() {
-
 	KCPAdoptionSpec(ctx, func() KCPAdoptionSpecInput {
 		return KCPAdoptionSpecInput{
 			E2EConfig:             e2eConfig,
 			ClusterctlConfigPath:  clusterctlConfigPath,
-			BootstrapClusterProxy: bootstrapClusterProxy.(framework.ClusterProxy),
+			BootstrapClusterProxy: bootstrapClusterProxy,
 			ArtifactFolder:        artifactFolder,
 			SkipCleanup:           skipCleanup,
 		}
 	})
-
 })

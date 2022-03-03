@@ -18,7 +18,6 @@ package cluster
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,12 +30,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test/providers/infrastructure"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type moveTestsFields struct {
@@ -421,6 +421,122 @@ var moveTests = []struct {
 		},
 	},
 	{
+		name: "Cluster with ClusterClass",
+		fields: moveTestsFields{
+			objs: func() []client.Object {
+				objs := test.NewFakeClusterClass("ns1", "class1").Objs()
+				objs = append(objs, test.NewFakeCluster("ns1", "foo").WithTopologyClass("class1").Objs()...)
+				return deduplicateObjects(objs)
+			}(),
+		},
+		wantMoveGroups: [][]string{
+			{ // group 1
+				"cluster.x-k8s.io/v1beta1, Kind=ClusterClass, ns1/class1",
+			},
+			{ // group 2
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureClusterTemplate, ns1/class1",
+				"controlplane.cluster.x-k8s.io/v1beta1, Kind=GenericControlPlaneTemplate, ns1/class1",
+				"cluster.x-k8s.io/v1beta1, Kind=Cluster, ns1/foo",
+			},
+			{ // group 3
+				"/v1, Kind=Secret, ns1/foo-ca",
+				"/v1, Kind=Secret, ns1/foo-kubeconfig",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureCluster, ns1/foo",
+			},
+		},
+		wantErr: false,
+	},
+	{
+		name: "Two Clusters with two ClusterClasses",
+		fields: moveTestsFields{
+			objs: func() []client.Object {
+				objs := test.NewFakeClusterClass("ns1", "class1").Objs()
+				objs = append(objs, test.NewFakeClusterClass("ns1", "class2").Objs()...)
+				objs = append(objs, test.NewFakeCluster("ns1", "foo1").WithTopologyClass("class1").Objs()...)
+				objs = append(objs, test.NewFakeCluster("ns1", "foo2").WithTopologyClass("class2").Objs()...)
+				return deduplicateObjects(objs)
+			}(),
+		},
+		wantMoveGroups: [][]string{
+			{ // group 1
+				"cluster.x-k8s.io/v1beta1, Kind=ClusterClass, ns1/class1",
+				"cluster.x-k8s.io/v1beta1, Kind=ClusterClass, ns1/class2",
+			},
+			{ // group 2
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureClusterTemplate, ns1/class1",
+				"controlplane.cluster.x-k8s.io/v1beta1, Kind=GenericControlPlaneTemplate, ns1/class1",
+				"cluster.x-k8s.io/v1beta1, Kind=Cluster, ns1/foo1",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureClusterTemplate, ns1/class2",
+				"controlplane.cluster.x-k8s.io/v1beta1, Kind=GenericControlPlaneTemplate, ns1/class2",
+				"cluster.x-k8s.io/v1beta1, Kind=Cluster, ns1/foo2",
+			},
+			{ // group 3
+				"/v1, Kind=Secret, ns1/foo1-ca",
+				"/v1, Kind=Secret, ns1/foo1-kubeconfig",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureCluster, ns1/foo1",
+				"/v1, Kind=Secret, ns1/foo2-ca",
+				"/v1, Kind=Secret, ns1/foo2-kubeconfig",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureCluster, ns1/foo2",
+			},
+		},
+		wantErr: false,
+	},
+	{
+		name: "Two Clusters sharing one ClusterClass",
+		fields: moveTestsFields{
+			objs: func() []client.Object {
+				objs := test.NewFakeClusterClass("ns1", "class1").Objs()
+				objs = append(objs, test.NewFakeCluster("ns1", "foo1").WithTopologyClass("class1").Objs()...)
+				objs = append(objs, test.NewFakeCluster("ns1", "foo2").WithTopologyClass("class1").Objs()...)
+				return deduplicateObjects(objs)
+			}(),
+		},
+		wantMoveGroups: [][]string{
+			{ // group 1
+				"cluster.x-k8s.io/v1beta1, Kind=ClusterClass, ns1/class1",
+			},
+			{ // group 2
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureClusterTemplate, ns1/class1",
+				"controlplane.cluster.x-k8s.io/v1beta1, Kind=GenericControlPlaneTemplate, ns1/class1",
+				"cluster.x-k8s.io/v1beta1, Kind=Cluster, ns1/foo1",
+				"cluster.x-k8s.io/v1beta1, Kind=Cluster, ns1/foo2",
+			},
+			{ // group 3
+				"/v1, Kind=Secret, ns1/foo1-ca",
+				"/v1, Kind=Secret, ns1/foo1-kubeconfig",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureCluster, ns1/foo1",
+				"/v1, Kind=Secret, ns1/foo2-ca",
+				"/v1, Kind=Secret, ns1/foo2-kubeconfig",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureCluster, ns1/foo2",
+			},
+		},
+		wantErr: false,
+	},
+	{
+		name: "Cluster with unused ClusterClass",
+		fields: moveTestsFields{
+			objs: func() []client.Object {
+				objs := test.NewFakeClusterClass("ns1", "class1").Objs()
+				objs = append(objs, test.NewFakeCluster("ns1", "foo1").Objs()...)
+				return deduplicateObjects(objs)
+			}(),
+		},
+		wantMoveGroups: [][]string{
+			{ // group 1
+				"cluster.x-k8s.io/v1beta1, Kind=ClusterClass, ns1/class1",
+				"cluster.x-k8s.io/v1beta1, Kind=Cluster, ns1/foo1",
+			},
+			{ // group 2
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureClusterTemplate, ns1/class1",
+				"controlplane.cluster.x-k8s.io/v1beta1, Kind=GenericControlPlaneTemplate, ns1/class1",
+				"/v1, Kind=Secret, ns1/foo1-ca",
+				"/v1, Kind=Secret, ns1/foo1-kubeconfig",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericInfrastructureCluster, ns1/foo1",
+			},
+		},
+		wantErr: false,
+	},
+	{
 		// NOTE: External objects are CRD types installed by clusterctl, but not directly related with the CAPI hierarchy of objects. e.g. IPAM claims.
 		name: "Namespaced External Objects with force move label",
 		fields: moveTestsFields{
@@ -549,7 +665,7 @@ func Test_objectMover_backupTargetObject(t *testing.T) {
 				fromProxy: graph.proxy,
 			}
 
-			dir, err := ioutil.TempDir("/tmp", "cluster-api")
+			dir, err := os.MkdirTemp("/tmp", "cluster-api")
 			if err != nil {
 				t.Error(err)
 			}
@@ -572,7 +688,7 @@ func Test_objectMover_backupTargetObject(t *testing.T) {
 				}
 
 				path := filepath.Join(dir, expectedFilename)
-				fileContents, err := os.ReadFile(path)
+				fileContents, err := os.ReadFile(path) //nolint:gosec
 				if err != nil {
 					g.Expect(err).NotTo(HaveOccurred())
 					return
@@ -618,7 +734,7 @@ func Test_objectMover_restoreTargetObject(t *testing.T) {
 			g := NewWithT(t)
 
 			// temporary directory
-			dir, err := ioutil.TempDir("/tmp", "cluster-api")
+			dir, err := os.MkdirTemp("/tmp", "cluster-api")
 			if err != nil {
 				g.Expect(err).NotTo(HaveOccurred())
 			}
@@ -643,10 +759,10 @@ func Test_objectMover_restoreTargetObject(t *testing.T) {
 
 			// Write go string slice to directory
 			for _, file := range tt.files {
-				tempFile, err := ioutil.TempFile(dir, "obj")
+				tempFile, err := os.CreateTemp(dir, "obj")
 				g.Expect(err).NotTo(HaveOccurred())
 
-				_, err = tempFile.Write([]byte(file))
+				_, err = tempFile.WriteString(file)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(tempFile.Close()).To(Succeed())
 			}
@@ -744,7 +860,7 @@ func Test_objectMover_backup(t *testing.T) {
 				fromProxy: graph.proxy,
 			}
 
-			dir, err := ioutil.TempDir("/tmp", "cluster-api")
+			dir, err := os.MkdirTemp("/tmp", "cluster-api")
 			if err != nil {
 				t.Error(err)
 			}
@@ -778,7 +894,7 @@ func Test_objectMover_backup(t *testing.T) {
 				g.Expect(err).NotTo(HaveOccurred())
 
 				// objects are stored in the temporary directory with the expected filename
-				files, err := ioutil.ReadDir(dir)
+				files, err := os.ReadDir(dir)
 				g.Expect(err).NotTo(HaveOccurred())
 
 				expectedFilename := node.getFilename()
@@ -805,7 +921,7 @@ func Test_objectMover_filesToObjs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			dir, err := ioutil.TempDir("/tmp", "cluster-api")
+			dir, err := os.MkdirTemp("/tmp", "cluster-api")
 			if err != nil {
 				t.Error(err)
 			}
@@ -865,7 +981,7 @@ func Test_objectMover_restore(t *testing.T) {
 			g := NewWithT(t)
 
 			// temporary directory
-			dir, err := ioutil.TempDir("/tmp", "cluster-api")
+			dir, err := os.MkdirTemp("/tmp", "cluster-api")
 			if err != nil {
 				g.Expect(err).NotTo(HaveOccurred())
 			}
@@ -887,10 +1003,10 @@ func Test_objectMover_restore(t *testing.T) {
 
 			// Write go string slice to directory
 			for _, file := range tt.files {
-				tempFile, err := ioutil.TempFile(dir, "obj")
+				tempFile, err := os.CreateTemp(dir, "obj")
 				g.Expect(err).NotTo(HaveOccurred())
 
-				_, err = tempFile.Write([]byte(file))
+				_, err = tempFile.WriteString(file)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(tempFile.Close()).To(Succeed())
 			}

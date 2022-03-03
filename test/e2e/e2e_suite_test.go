@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -28,17 +29,18 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	ctrl "sigs.k8s.io/controller-runtime"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/bootstrap"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
+	"sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 )
 
-// Test suite flags
+// Test suite flags.
 var (
 	// configPath is the path to the e2e config file.
 	configPath string
@@ -49,11 +51,19 @@ var (
 	// artifactFolder is the folder to store e2e test artifacts.
 	artifactFolder string
 
+	// clusterctlConfig is the file which tests will use as a clusterctl config.
+	// If it is not set, a local clusterctl repository (including a clusterctl config) will be created automatically.
+	clusterctlConfig string
+
+	// alsoLogToFile enables additional logging to the 'ginkgo-log.txt' file in the artifact folder.
+	// These logs also contain timestamps.
+	alsoLogToFile bool
+
 	// skipCleanup prevents cleanup of test resources e.g. for debug purposes.
 	skipCleanup bool
 )
 
-// Test suite global vars
+// Test suite global vars.
 var (
 	ctx = ctrl.SetupSignalHandler()
 
@@ -75,7 +85,9 @@ var (
 func init() {
 	flag.StringVar(&configPath, "e2e.config", "", "path to the e2e config file")
 	flag.StringVar(&artifactFolder, "e2e.artifacts-folder", "", "folder where e2e test artifact should be stored")
+	flag.BoolVar(&alsoLogToFile, "e2e.also-log-to-file", true, "if true, ginkgo logs are additionally written to the `ginkgo-log.txt` file in the artifacts folder (including timestamps)")
 	flag.BoolVar(&skipCleanup, "e2e.skip-resource-cleanup", false, "if true, the resource cleanup after tests will be skipped")
+	flag.StringVar(&clusterctlConfig, "e2e.clusterctl-config", "", "file which tests will use as a clusterctl config. If it is not set, a local clusterctl repository (including a clusterctl config) will be created automatically.")
 	flag.BoolVar(&useExistingCluster, "e2e.use-existing-cluster", false, "if true, the test uses the current cluster instead of creating a new one (default discovery rules apply)")
 }
 
@@ -87,6 +99,12 @@ func TestE2E(t *testing.T) {
 
 	RegisterFailHandler(Fail)
 
+	if alsoLogToFile {
+		w, err := ginkgoextensions.EnableFileLogging(filepath.Join(artifactFolder, "ginkgo-log.txt"))
+		Expect(err).ToNot(HaveOccurred())
+		defer w.Close()
+	}
+
 	junitReporter := framework.CreateJUnitReporterForProw(artifactFolder)
 	RunSpecsWithDefaultAndCustomReporters(t, "capi-e2e", []Reporter{junitReporter})
 }
@@ -97,7 +115,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Before all ParallelNodes.
 
 	Expect(configPath).To(BeAnExistingFile(), "Invalid test suite argument. e2e.config should be an existing file.")
-	Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder)
+	Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder) //nolint:gosec
 
 	By("Initializing a runtime.Scheme with all the GVK relevant for this test")
 	scheme := initScheme()
@@ -105,8 +123,13 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Byf("Loading the e2e test configuration from %q", configPath)
 	e2eConfig = loadE2EConfig(configPath)
 
-	Byf("Creating a clusterctl local repository into %q", artifactFolder)
-	clusterctlConfigPath = createClusterctlLocalRepository(e2eConfig, filepath.Join(artifactFolder, "repository"))
+	if clusterctlConfig == "" {
+		Byf("Creating a clusterctl local repository into %q", artifactFolder)
+		clusterctlConfigPath = createClusterctlLocalRepository(e2eConfig, filepath.Join(artifactFolder, "repository"))
+	} else {
+		Byf("Using existing clusterctl config %q", clusterctlConfig)
+		clusterctlConfigPath = clusterctlConfig
+	}
 
 	By("Setting up the bootstrap cluster")
 	bootstrapClusterProvider, bootstrapClusterProxy = setupBootstrapCluster(e2eConfig, scheme, useExistingCluster)
@@ -195,6 +218,7 @@ func setupBootstrapCluster(config *clusterctl.E2EConfig, scheme *runtime.Scheme,
 			RequiresDockerSock: config.HasDockerProvider(),
 			Images:             config.Images,
 			IPFamily:           config.GetVariable(IPFamily),
+			LogFolder:          filepath.Join(artifactFolder, "kind"),
 		})
 		Expect(clusterProvider).ToNot(BeNil(), "Failed to create a bootstrap cluster")
 

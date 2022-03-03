@@ -20,9 +20,11 @@ import (
 	"context"
 	"flag"
 	"math/rand"
+	"net/http"
 	"os"
 	"time"
 
+	// +kubebuilder:scaffold:imports
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -31,10 +33,14 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/klogr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
+	"sigs.k8s.io/cluster-api/test/infrastructure/container"
 	infrav1alpha3 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha3"
 	infrav1alpha4 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha4"
 	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
@@ -43,9 +49,6 @@ import (
 	infraexpv1alpha4 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1alpha4"
 	infraexpv1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta1"
 	expcontrollers "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/controllers"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	// +kubebuilder:scaffold:imports
 )
 
 var (
@@ -55,6 +58,7 @@ var (
 	// flags.
 	metricsBindAddr      string
 	enableLeaderElection bool
+	profilerAddress      string
 	syncPeriod           time.Duration
 	concurrency          int
 	healthAddr           string
@@ -84,6 +88,8 @@ func initFlags(fs *pflag.FlagSet) {
 		"The number of docker machines to process simultaneously")
 	fs.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	fs.StringVar(&profilerAddress, "profiler-address", "",
+		"Bind address to expose the pprof profiler (e.g. localhost:6060)")
 	fs.DurationVar(&syncPeriod, "sync-period", 10*time.Minute,
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
@@ -98,6 +104,9 @@ func initFlags(fs *pflag.FlagSet) {
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
+	if _, err := os.ReadDir("/tmp/"); err != nil {
+		os.Exit(1)
+	}
 
 	initFlags(pflag.CommandLine)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
@@ -105,6 +114,13 @@ func main() {
 	pflag.Parse()
 
 	ctrl.SetLogger(klogr.New())
+
+	if profilerAddress != "" {
+		klog.Infof("Profiler listening for requests at %s", profilerAddress)
+		go func() {
+			klog.Info(http.ListenAndServe(profilerAddress, nil))
+		}()
+	}
 
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.UserAgent = remote.DefaultClusterAPIUserAgent("cluster-api-docker-controller-manager")
@@ -152,28 +168,36 @@ func setupChecks(mgr ctrl.Manager) {
 }
 
 func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
+	// Set our runtime client into the context for later use
+	runtimeClient, err := container.NewDockerClient()
+	if err != nil {
+		setupLog.Error(err, "unable to establish container runtime connection", "controller", "reconciler")
+		os.Exit(1)
+	}
+
 	if err := (&controllers.DockerMachineReconciler{
-		Client: mgr.GetClient(),
+		Client:           mgr.GetClient(),
+		ContainerRuntime: runtimeClient,
 	}).SetupWithManager(ctx, mgr, controller.Options{
 		MaxConcurrentReconciles: concurrency,
 	}); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "reconciler")
+		setupLog.Error(err, "unable to create controller", "controller", "DockerMachine")
 		os.Exit(1)
 	}
 
 	if err := (&controllers.DockerClusterReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("DockerCluster"),
-	}).SetupWithManager(mgr, controller.Options{}); err != nil {
+		Client:           mgr.GetClient(),
+		ContainerRuntime: runtimeClient,
+	}).SetupWithManager(ctx, mgr, controller.Options{}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DockerCluster")
 		os.Exit(1)
 	}
 
 	if feature.Gates.Enabled(feature.MachinePool) {
 		if err := (&expcontrollers.DockerMachinePoolReconciler{
-			Client: mgr.GetClient(),
-			Log:    ctrl.Log.WithName("controllers").WithName("DockerMachinePool"),
-		}).SetupWithManager(mgr, controller.Options{
+			Client:           mgr.GetClient(),
+			ContainerRuntime: runtimeClient,
+		}).SetupWithManager(ctx, mgr, controller.Options{
 			MaxConcurrentReconciles: concurrency,
 		}); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "DockerMachinePool")

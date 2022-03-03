@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -20,10 +21,10 @@ package e2e
 
 import (
 	. "github.com/onsi/ginkgo"
+	"k8s.io/utils/pointer"
 )
 
 var _ = Describe("When following the Cluster API quick-start [PR-Blocking]", func() {
-
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
 			E2EConfig:             e2eConfig,
@@ -33,5 +34,44 @@ var _ = Describe("When following the Cluster API quick-start [PR-Blocking]", fun
 			SkipCleanup:           skipCleanup,
 		}
 	})
+})
 
+var _ = Describe("When following the Cluster API quick-start with ClusterClass [PR-Informing]", func() {
+	QuickStartSpec(ctx, func() QuickStartSpecInput {
+		return QuickStartSpecInput{
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                pointer.String("topology"),
+		}
+	})
+})
+
+// NOTE: This test requires an IPv6 management cluster (can be configured via IP_FAMILY=IPv6).
+var _ = Describe("When following the Cluster API quick-start with IPv6 [IPv6] [PR-Informing]", func() {
+	QuickStartSpec(ctx, func() QuickStartSpecInput {
+		return QuickStartSpecInput{
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                pointer.String("ipv6"),
+		}
+	})
+})
+
+var _ = Describe("When following the Cluster API quick-start with Ignition", func() {
+	QuickStartSpec(ctx, func() QuickStartSpecInput {
+		return QuickStartSpecInput{
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                pointer.String("ignition"),
+		}
+	})
 })

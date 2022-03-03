@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -23,7 +24,6 @@ import (
 )
 
 var _ = Describe("When testing clusterctl upgrades [clusterctl-Upgrade]", func() {
-
 	ClusterctlUpgradeSpec(ctx, func() ClusterctlUpgradeSpecInput {
 		return ClusterctlUpgradeSpecInput{
 			E2EConfig:             e2eConfig,
@@ -33,5 +33,4 @@ var _ = Describe("When testing clusterctl upgrades [clusterctl-Upgrade]", func()
 			SkipCleanup:           skipCleanup,
 		}
 	})
-
 })

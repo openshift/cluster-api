@@ -1,10 +1,9 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.8.0
   creationTimestamp: null
   name: dockermachinepools.infrastructure.cluster.x-k8s.io
 spec:
@@ -136,6 +135,8 @@ spec:
                 description: Instances contains the status for each instance in the
                   pool
                 items:
+                  description: DockerMachinePoolInstanceStatus contains status information
+                    about a DockerMachinePool.
                   properties:
                     addresses:
                       description: Addresses contains the associated addresses for
@@ -318,6 +319,8 @@ spec:
                 description: Instances contains the status for each instance in the
                   pool
                 items:
+                  description: DockerMachinePoolInstanceStatus contains status information
+                    about a DockerMachinePool.
                   properties:
                     addresses:
                       description: Addresses contains the associated addresses for
@@ -501,6 +504,8 @@ spec:
                 description: Instances contains the status for each instance in the
                   pool
                 items:
+                  description: DockerMachinePoolInstanceStatus contains status information
+                    about a DockerMachinePool.
                   properties:
                     addresses:
                       description: Addresses contains the associated addresses for

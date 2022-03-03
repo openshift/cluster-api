@@ -23,20 +23,20 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/onsi/gomega"
-
 	"github.com/go-logr/logr"
+	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 const (
@@ -56,7 +56,6 @@ func TestControlPlaneInitMutex_Lock(t *testing.T) {
 	g.Expect(corev1.AddToScheme(scheme)).To(Succeed())
 
 	uid := types.UID("test-uid")
-
 	tests := []struct {
 		name          string
 		client        client.Client
@@ -129,6 +128,95 @@ func TestControlPlaneInitMutex_Lock(t *testing.T) {
 		})
 	}
 }
+
+func TestControlPlaneInitMutex_LockWithMachineDeletion(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := runtime.NewScheme()
+	g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+	g.Expect(corev1.AddToScheme(scheme)).To(Succeed())
+
+	newMachineName := "new-machine"
+	tests := []struct {
+		name                string
+		client              client.Client
+		expectedMachineName string
+	}{
+		{
+			name: "should not give the lock to new machine if the machine that created it does exist",
+			client: &fakeClient{
+				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+					&corev1.ConfigMap{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      configMapName(clusterName),
+							Namespace: clusterNamespace},
+						Data: map[string]string{
+							"lock-information": "{\"machineName\":\"existent-machine\"}",
+						}},
+					&clusterv1.Machine{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "existent-machine",
+							Namespace: clusterNamespace,
+						},
+					},
+				).Build(),
+			},
+			expectedMachineName: "existent-machine",
+		},
+		{
+			name: "should give the lock to new machine if the machine that created it does not exist",
+			client: &fakeClient{
+				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+					&corev1.ConfigMap{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      configMapName(clusterName),
+							Namespace: clusterNamespace},
+						Data: map[string]string{
+							"lock-information": "{\"machineName\":\"non-existent-machine\"}",
+						}},
+				).Build(),
+			},
+			expectedMachineName: newMachineName,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &ControlPlaneInitMutex{
+				log:    log.Log,
+				client: tc.client,
+			}
+
+			cluster := &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: clusterNamespace,
+					Name:      clusterName,
+				},
+			}
+			machine := &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: newMachineName,
+				},
+			}
+
+			g.Eventually(func(g Gomega) error {
+				l.Lock(ctx, cluster, machine)
+
+				cm := &corev1.ConfigMap{}
+				g.Expect(tc.client.Get(ctx, client.ObjectKey{
+					Name:      configMapName(clusterName),
+					Namespace: cluster.Namespace,
+				}, cm)).To(Succeed())
+
+				info, err := semaphore{cm}.information()
+				g.Expect(err).To(BeNil())
+
+				g.Expect(info.MachineName).To(Equal(tc.expectedMachineName))
+				return nil
+			}, "20s").Should(Succeed())
+		})
+	}
+}
+
 func TestControlPlaneInitMutex_UnLock(t *testing.T) {
 	uid := types.UID("test-uid")
 	configMap := &corev1.ConfigMap{
@@ -217,10 +305,11 @@ func TestInfoLines_Lock(t *testing.T) {
 	}
 
 	logtester := &logtests{
-		InfoLog: make([]line, 0),
+		InfoLog:  make([]line, 0),
+		ErrorLog: make([]line, 0),
 	}
 	l := &ControlPlaneInitMutex{
-		log:    logtester,
+		log:    logr.New(logtester),
 		client: c,
 	}
 
@@ -281,7 +370,8 @@ func (fc *fakeClient) Delete(ctx context.Context, obj client.Object, opts ...cli
 
 type logtests struct {
 	logr.Logger
-	InfoLog []line
+	InfoLog  []line
+	ErrorLog []line
 }
 
 type line struct {
@@ -289,7 +379,14 @@ type line struct {
 	data map[string]interface{}
 }
 
-func (l *logtests) Info(msg string, keysAndValues ...interface{}) {
+func (l *logtests) Init(info logr.RuntimeInfo) {
+}
+
+func (l *logtests) Enabled(level int) bool {
+	return true
+}
+
+func (l *logtests) Info(level int, msg string, keysAndValues ...interface{}) {
 	data := make(map[string]interface{})
 	for i := 0; i < len(keysAndValues); i += 2 {
 		data[keysAndValues[i].(string)] = keysAndValues[i+1]
@@ -299,6 +396,22 @@ func (l *logtests) Info(msg string, keysAndValues ...interface{}) {
 		data: data,
 	})
 }
-func (l *logtests) WithValues(keysAndValues ...interface{}) logr.Logger {
+
+func (l *logtests) Error(err error, msg string, keysAndValues ...interface{}) {
+	data := make(map[string]interface{})
+	for i := 0; i < len(keysAndValues); i += 2 {
+		data[keysAndValues[i].(string)] = keysAndValues[i+1]
+	}
+	l.ErrorLog = append(l.ErrorLog, line{
+		line: msg + err.Error(),
+		data: data,
+	})
+}
+
+func (l *logtests) WithValues(keysAndValues ...interface{}) logr.LogSink {
+	return l
+}
+
+func (l *logtests) WithName(name string) logr.LogSink {
 	return l
 }
