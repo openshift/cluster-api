@@ -68,7 +68,7 @@ func (r *MachinePoolReconciler) reconcileNodeRefs(ctx context.Context, cluster *
 	log = log.WithValues("cluster", cluster.Name)
 
 	// Check that the MachinePool has valid ProviderIDList.
-	if len(mp.Spec.ProviderIDList) == 0 {
+	if len(mp.Spec.ProviderIDList) == 0 && (mp.Spec.Replicas == nil || *mp.Spec.Replicas != 0) {
 		log.V(2).Info("MachinePool doesn't have any ProviderIDs yet")
 		return ctrl.Result{}, nil
 	}
@@ -156,7 +156,7 @@ func (r *MachinePoolReconciler) deleteRetiredNodes(ctx context.Context, c client
 			continue
 		}
 
-		nodeRefsMap[nodeProviderID.ID()] = node
+		nodeRefsMap[nodeProviderID.String()] = node
 	}
 	for _, providerID := range providerIDList {
 		pid, err := noderefutil.NewProviderID(providerID)
@@ -164,7 +164,7 @@ func (r *MachinePoolReconciler) deleteRetiredNodes(ctx context.Context, c client
 			log.V(2).Info("Failed to parse ProviderID, skipping", "err", err, "providerID", providerID)
 			continue
 		}
-		delete(nodeRefsMap, pid.ID())
+		delete(nodeRefsMap, pid.String())
 	}
 	for _, node := range nodeRefsMap {
 		if err := c.Delete(ctx, node); err != nil {
@@ -192,7 +192,7 @@ func (r *MachinePoolReconciler) getNodeReferences(ctx context.Context, c client.
 				continue
 			}
 
-			nodeRefsMap[nodeProviderID.ID()] = node
+			nodeRefsMap[nodeProviderID.String()] = node
 		}
 
 		if nodeList.Continue == "" {
@@ -207,7 +207,7 @@ func (r *MachinePoolReconciler) getNodeReferences(ctx context.Context, c client.
 			log.V(2).Info("Failed to parse ProviderID, skipping", "err", err, "providerID", providerID)
 			continue
 		}
-		if node, ok := nodeRefsMap[pid.ID()]; ok {
+		if node, ok := nodeRefsMap[pid.String()]; ok {
 			available++
 			if nodeIsReady(&node) {
 				ready++
@@ -221,7 +221,7 @@ func (r *MachinePoolReconciler) getNodeReferences(ctx context.Context, c client.
 		}
 	}
 
-	if len(nodeRefs) == 0 {
+	if len(nodeRefs) == 0 && len(providerIDList) != 0 {
 		return getNodeReferencesResult{}, errNoAvailableNodes
 	}
 	return getNodeReferencesResult{nodeRefs, available, ready}, nil

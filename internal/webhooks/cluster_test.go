@@ -31,6 +31,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/internal/webhooks/util"
 )
 
 func TestClusterDefaultNamespaces(t *testing.T) {
@@ -46,7 +47,9 @@ func TestClusterDefaultNamespaces(t *testing.T) {
 		},
 	}
 	webhook := &Cluster{}
-	t.Run("for Cluster", customDefaultValidateTest(ctx, c, webhook))
+	tFunc := util.CustomDefaultValidateTest(ctx, c, webhook)
+
+	t.Run("for Cluster", tFunc)
 	g.Expect(webhook.Default(ctx, c)).To(Succeed())
 
 	g.Expect(c.Spec.InfrastructureRef.Namespace).To(Equal(c.Namespace))
@@ -315,7 +318,7 @@ func TestClusterDefaultVariables(t *testing.T) {
 
 		t.Run(tt.name, func(t *testing.T) {
 			// Test if defaulting works in combination with validation.
-			customDefaultValidateTest(ctx, cluster, webhook)(t)
+			util.CustomDefaultValidateTest(ctx, cluster, webhook)(t)
 			// Test defaulting.
 			t.Run("default", func(t *testing.T) {
 				g := NewWithT(t)
@@ -348,8 +351,8 @@ func TestClusterDefaultTopologyVersion(t *testing.T) {
 
 	// Create the webhook and add the fakeClient as its client.
 	webhook := &Cluster{Client: fakeClient}
-
-	t.Run("for Cluster", customDefaultValidateTest(ctx, c, webhook))
+	tFunc := util.CustomDefaultValidateTest(ctx, c, webhook)
+	t.Run("for Cluster", tFunc)
 	g.Expect(webhook.Default(ctx, c)).To(Succeed())
 
 	g.Expect(c.Spec.Topology.Version).To(HavePrefix("v"))
@@ -1325,6 +1328,24 @@ func TestMovingBetweenManagedAndUnmanaged(t *testing.T) {
 				WithControlPlaneReplicas(3).
 				Build(),
 			wantErr: true,
+		},
+		{
+			name: "Allow cluster moving from Unmanaged to Managed i.e. adding the spec.topology.class field on update " +
+				"if and only if ClusterTopologyUnsafeUpdateClassNameAnnotation is set",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithAnnotations(map[string]string{clusterv1.ClusterTopologyUnsafeUpdateClassNameAnnotation: ""}).
+				Build(),
+			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				Build(),
+			updatedTopology: builder.ClusterTopology().
+				WithClass("class1").
+				WithVersion("v1.22.2").
+				WithControlPlaneReplicas(3).
+				Build(),
+			wantErr: false,
 		},
 		{
 			name: "Reject cluster moving from Managed to Unmanaged i.e. removing the spec.topology.class field on update",

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.1-experimental
+# syntax=docker/dockerfile:1.4
 
 # Copyright 2019 The Kubernetes Authors.
 #
@@ -25,7 +25,7 @@ ENV GOPROXY=$goproxy
 # Gets additional CAPD dependencies
 WORKDIR /tmp
 
-RUN curl -LO https://dl.k8s.io/release/v1.23.3/bin/linux/${ARCH}/kubectl && \
+RUN curl -LO https://dl.k8s.io/release/v1.24.0/bin/linux/${ARCH}/kubectl && \
     chmod +x ./kubectl && \
     mv ./kubectl /usr/bin/kubectl
 

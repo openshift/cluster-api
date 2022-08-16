@@ -29,6 +29,14 @@ providers:
   - name: "cluster-api"
     url: "https://github.com/myorg/myforkofclusterapi/releases/latest/core-components.yaml"
     type: "CoreProvider"
+  # add a custom provider on a self-hosted GitLab (host should start with "gitlab.")
+  - name: "my-other-infra-provider"
+    url: "https://gitlab.example.com/api/v4/projects/myorg%2Fmyrepo/packages/generic/myrepo/v1.2.3/infrastructure-components.yaml"
+    type: "InfrastructureProvider"
+  # override a pre-defined provider on a self-hosted GitLab (host should start with "gitlab.")
+  - name: "kubeadm"
+    url: "https://gitlab.example.com/api/v4/projects/external-packages%2Fcluster-api/packages/generic/cluster-api/v1.1.3/bootstrap-components.yaml"
+    type: "BootstrapProvider"
 ```
 
 See [provider contract](provider-contract.md) for instructions about how to set up a provider repository.
@@ -76,8 +84,6 @@ cert-manager:
 For situations when resources are limited or the network is slow, the cert-manager wait time to be running can be customized by adding a field to the clusterctl config file, for example:
 
 ```yaml
-
-```yaml
 cert-manager:
   ...
   timeout: 15m
@@ -90,6 +96,14 @@ If no value is specified, or the format is invalid, the default value of 10 minu
 Please note that the configuration above will be considered also when doing `clusterctl upgrade plan` or `clusterctl upgrade plan`.
 
 ## Overrides Layer
+
+<aside class="note warning">
+
+<h1> Warning! </h1>
+
+Overrides only provide file replacements; instead, provider version resolution is based only on the actual repository structure.
+
+</aside>
 
 `clusterctl` uses an overrides layer to read in injected provider components,
 cluster templates and metadata. By default, it reads the files from
@@ -148,6 +162,8 @@ run,
 
 ```bash
 clusterctl init --infrastructure aws:v0.5.0 -v5
+```
+```bash
 ...
 Using Override="infrastructure-components.yaml" Provider="infrastructure-aws" Version="v0.5.0"
 ...
@@ -169,6 +185,9 @@ overridesFolder: /Users/foobar/workspace/dev-releases
 
 Image override is an advanced feature and wrong configuration can easily lead to non-functional clusters.
 It's strongly recommended to test configurations on dev/test environments before using this functionality in production.
+
+This feature must always be used in conjunction with
+[version tag](commands/init.md#provider-version) when executing clusterctl commands.
 
 </aside>
 
@@ -214,3 +233,8 @@ images:
 To have more verbose logs you can use the `-v` flag when running the `clusterctl` and set the level of the logging verbose with a positive integer number, ie. `-v 3`.
 
 If you do not want to use the flag every time you issue a command you can set the environment variable `CLUSTERCTL_LOG_LEVEL` or set the variable in the `clusterctl` config file located by default at `$HOME/.cluster-api/clusterctl.yaml`.
+
+
+## Skip checking for updates
+
+`clusterctl` automatically checks for new versions every time it is used. If you do not want `clusterctl` to check for new updates you can set the environment variable `CLUSTERCTL_DISABLE_VERSIONCHECK` to `"true"` or set the variable in the `clusterctl` config file located by default at `$HOME/.cluster-api/clusterctl.yaml`.

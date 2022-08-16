@@ -135,15 +135,8 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	// Check if the infrastructure is ready, otherwise return and wait for the cluster object to be updated
-	if !cluster.Status.InfrastructureReady {
-		log.Info("Waiting for DockerCluster Controller to create cluster infrastructure")
-		conditions.MarkFalse(dockerMachine, infrav1.ContainerProvisionedCondition, infrav1.WaitingForClusterInfrastructureReason, clusterv1.ConditionSeverityInfo, "")
-		return ctrl.Result{}, nil
-	}
-
 	// Create a helper for managing the docker container hosting the machine.
-	externalMachine, err := docker.NewMachine(ctx, cluster, machine.Name, dockerMachine.Spec.CustomImage, nil)
+	externalMachine, err := docker.NewMachine(ctx, cluster, machine.Name, nil)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create helper for managing the externalMachine")
 	}
@@ -192,6 +185,13 @@ func patchDockerMachine(ctx context.Context, patchHelper *patch.Helper, dockerMa
 func (r *DockerMachineReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, dockerMachine *infrav1.DockerMachine, externalMachine *docker.Machine, externalLoadBalancer *docker.LoadBalancer) (res ctrl.Result, retErr error) {
 	log := ctrl.LoggerFrom(ctx)
 
+	// Check if the infrastructure is ready, otherwise return and wait for the cluster object to be updated
+	if !cluster.Status.InfrastructureReady {
+		log.Info("Waiting for DockerCluster Controller to create cluster infrastructure")
+		conditions.MarkFalse(dockerMachine, infrav1.ContainerProvisionedCondition, infrav1.WaitingForClusterInfrastructureReason, clusterv1.ConditionSeverityInfo, "")
+		return ctrl.Result{}, nil
+	}
+
 	// if the machine is already provisioned, return
 	if dockerMachine.Spec.ProviderID != nil {
 		// ensure ready state is set.
@@ -231,7 +231,9 @@ func (r *DockerMachineReconciler) reconcileNormal(ctx context.Context, cluster *
 
 	// Create the machine if not existing yet
 	if !externalMachine.Exists() {
-		if err := externalMachine.Create(ctx, role, machine.Spec.Version, dockerMachine.Spec.ExtraMounts); err != nil {
+		// NOTE: FailureDomains don't mean much in CAPD since it's all local, but we are setting a label on
+		// each container, so we can check placement.
+		if err := externalMachine.Create(ctx, dockerMachine.Spec.CustomImage, role, machine.Spec.Version, docker.FailureDomainLabel(machine.Spec.FailureDomain), dockerMachine.Spec.ExtraMounts); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "failed to create worker DockerMachine")
 		}
 	}
@@ -385,7 +387,7 @@ func (r *DockerMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 	)
 }
 
-// DockerClusterToDockerMachines is a handler.ToRequestsFunc to be used to enqeue
+// DockerClusterToDockerMachines is a handler.ToRequestsFunc to be used to enqueue
 // requests for reconciliation of DockerMachines.
 func (r *DockerMachineReconciler) DockerClusterToDockerMachines(o client.Object) []ctrl.Request {
 	result := []ctrl.Request{}

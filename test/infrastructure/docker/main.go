@@ -31,8 +31,9 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	cliflag "k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/logs"
+	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/klogr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
@@ -64,11 +65,10 @@ var (
 	healthAddr           string
 	webhookPort          int
 	webhookCertDir       string
+	logOptions           = logs.NewOptions()
 )
 
 func init() {
-	klog.InitFlags(nil)
-
 	_ = scheme.AddToScheme(myscheme)
 	_ = infrav1alpha3.AddToScheme(myscheme)
 	_ = infrav1alpha4.AddToScheme(myscheme)
@@ -82,6 +82,9 @@ func init() {
 }
 
 func initFlags(fs *pflag.FlagSet) {
+	logs.AddFlags(fs, logs.SkipLoggingConfigurationFlags())
+	logOptions.AddFlags(fs)
+
 	fs.StringVar(&metricsBindAddr, "metrics-bind-addr", "localhost:8080",
 		"The address the metric endpoint binds to.")
 	fs.IntVar(&concurrency, "concurrency", 10,
@@ -105,6 +108,7 @@ func initFlags(fs *pflag.FlagSet) {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	if _, err := os.ReadDir("/tmp/"); err != nil {
+		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
@@ -113,7 +117,13 @@ func main() {
 	pflag.CommandLine.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
 	pflag.Parse()
 
-	ctrl.SetLogger(klogr.New())
+	if err := logOptions.ValidateAndApply(nil); err != nil {
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+
+	// klog.Background will automatically use the right logger.
+	ctrl.SetLogger(klog.Background())
 
 	if profilerAddress != "" {
 		klog.Infof("Profiler listening for requests at %s", profilerAddress)
@@ -207,7 +217,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 }
 
 func setupWebhooks(mgr ctrl.Manager) {
-	if err := (&infrav1.DockerMachineTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&infrav1.DockerMachineTemplateWebhook{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "DockerMachineTemplate")
 		os.Exit(1)
 	}

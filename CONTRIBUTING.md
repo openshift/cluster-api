@@ -57,7 +57,7 @@ Help and contributions are very welcome in the form of code contributions but al
 
 ### Codebase and Go Modules
 
-> :warning: The project does not follow Go Modules guidelines for compatibility requirements for 1.x semver releases.
+> ⚠ The project does not follow Go Modules guidelines for compatibility requirements for 1.x semver releases.
 
 Cluster API follows upstream Kubernetes semantic versioning. With the v1 release of our codebase, we guarantee the following:
 
@@ -111,11 +111,12 @@ this should generally not be the case.
 
 Cluster API maintains the most recent release branch for all supported API and contract versions. Support for this section refers to the ability to backport and release patch versions.
 
-| API Version   | Branch | Supported Until |
-| ------------- | ----------- | ---------- |
-| **v1beta1**   | release-1.0 | current stable |
-| **v1alpha4**  | release-0.4 | 2022-04-06 |
-| **v1alpha3**  | release-0.3 | 2022-02-23 |
+| API Version   | Branch      | Supported Until |
+| ------------- |-------------|-----------------|
+| **v1beta1**   | release-1.1 | current stable  |
+| **v1beta1**   | release-1.0 | 2022-02-02      |
+| **v1alpha4**  | release-0.4 | 2022-04-06      |
+| **v1alpha3**  | release-0.3 | 2022-02-23      |
 
 - The API version is determined from the GroupVersion defined in the top-level `api/` package.
 - The EOL date is determined from the last release available once a new API version is published.
@@ -389,10 +390,16 @@ All our CRD objects should have the following `additionalPrinterColumns` order (
 
 Examples:
 ```bash
-$ kubectl get kubeadmcontrolplane
+kubectl get kubeadmcontrolplane
+```
+```bash
 NAMESPACE            NAME                               INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE     VERSION
 quick-start-d5ufye   quick-start-ntysk0-control-plane   true          true                   1          1       1                       2m44s   v1.23.3
-$ kubectl get machinedeployment
+```
+```bash
+kubectl get machinedeployment
+```
+```bash
 NAMESPACE            NAME                      CLUSTER              REPLICAS   READY   UPDATED   UNAVAILABLE   PHASE       AGE     VERSION
 quick-start-d5ufye   quick-start-ntysk0-md-0   quick-start-ntysk0   1                  1         1             ScalingUp   3m28s   v1.23.3
 ```
@@ -434,11 +441,11 @@ Whenever you meet requisites for taking responsibilities in a subarea, the follo
 3. Get positive feedback and +1s in the PR and wait one week lazy consensus after agreement.
 
 As of today there are following OWNERS files/Owner groups defining sub areas:
-- [Clusterctl](cmd/clusterctl)
-- [kubeadm Bootstrap Provider (CABPK)](bootstrap/kubeadm)
-- [kubeadm Control Plane Provider (KCP)](controlplane/kubeadm)
-- [Cluster Managed topologies, ClusterClass](internal/controllers/topology)
-- [Infrastructure Provider Docker (CAPD)](test/infrastructure/docker)
-- [Test](test)
-- [Test Framework](test/framework)
-- [Docs](docs)
+- [Clusterctl](https://github.com/kubernetes-sigs/cluster-api/tree/main/cmd/clusterctl)
+- [kubeadm Bootstrap Provider (CABPK)](https://github.com/kubernetes-sigs/cluster-api/tree/main/bootstrap/kubeadm)
+- [kubeadm Control Plane Provider (KCP)](https://github.com/kubernetes-sigs/cluster-api/tree/main/controlplane/kubeadm)
+- [Cluster Managed topologies, ClusterClass](https://github.com/kubernetes-sigs/cluster-api/tree/main/internal/controllers/topology)
+- [Infrastructure Provider Docker (CAPD)](https://github.com/kubernetes-sigs/cluster-api/tree/main/test/infrastructure/docker)
+- [Test](https://github.com/kubernetes-sigs/cluster-api/tree/main/test)
+- [Test Framework](https://github.com/kubernetes-sigs/cluster-api/tree/main/test/framework)
+- [Docs](https://github.com/kubernetes-sigs/cluster-api/tree/main/docs)

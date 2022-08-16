@@ -97,7 +97,12 @@ documentation][scale].
 * `machineTemplate.nodeDrainTimeout` - is a *metav1.Duration defining the total amount of time
   that the controller will spend on draining a control plane node.
   The default value is 0, meaning that the node can be drained without any time limitations.
-  
+
+* `machineTemplate.nodeDeletionTimeout` - is a *metav1.Duration defining how long the controller
+  will attempt to delete the Node that is hosted by a Machine after the Machine is marked for
+  deletion. A duration of 0 will retry deletion indefinitely. It defaults to 10 seconds on the
+  Machine.
+
 #### Required `status` fields
 
 The `ImplementationControlPlane` object **must** have a `status` object.
@@ -224,19 +229,21 @@ The `status` object **may** define several fields:
 
 ## Example usage
 
-``` yaml
+```yaml
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
 kind: KubeadmControlPlane
-apiVersion: cluster.x-k8s.io/v1alpha3
 metadata:
   name: kcp-1
   namespace: default
 spec:
-  infrastructureTemplate:
-    name: kcp-infra-template
-    namespace: default
-  kubeadmConfigSpec:
-    clusterConfiguration:
-  version: v1.16.2
+  machineTemplate:
+    infrastructureRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: DockerMachineTemplate
+      name: docker-machine-template-1
+      namespace: default
+  replicas: 3
+  version: v1.21.2
 ```
 
 [scale]: https://kubernetes.io/docs/tasks/access-kubernetes-api/custom-resources/custom-resource-definitions/#scale-subresource

@@ -9,7 +9,7 @@ A managed Cluster can be used to:
 * [Add a MachineDeployment](#add-a-machinedeployment)
 * [Use variables in a Cluster](#use-variables)
 * [Rebase a Cluster to a different ClusterClass](#rebase-a-cluster)
-
+* [Tips and tricks](#tips-and-tricks)
 
 ## Upgrade a Cluster
 Using a managed topology the operation to upgrade a Kubernetes cluster is a one-touch operation.
@@ -17,7 +17,8 @@ Let's assume we have created a CAPD cluster with ClusterClass and specified Kube
 
 ```bash
 > kubectl get kubeadmcontrolplane,machinedeployments
-
+```
+```bash
 NAME                                                                              CLUSTER                   INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE     VERSION
 kubeadmcontrolplane.controlplane.cluster.x-k8s.io/clusterclass-quickstart-XXXX    clusterclass-quickstart   true          true                   1          1       1         0             2m21s   v1.21.2
 
@@ -70,7 +71,7 @@ Assume we have created a CAPD cluster with ClusterClass and Kubernetes v1.23.3 (
 kubectl get machinedeployments
 ```
 Will give us:
-```bash 
+```bash
 NAME                                                            CLUSTER           REPLICAS   READY   UPDATED   UNAVAILABLE   PHASE     AGE   VERSION
 machinedeployment.cluster.x-k8s.io/capi-quickstart-md-0-XXXX   capi-quickstart   3          3       3         0             Running   21m   v1.23.3
 ```
@@ -179,8 +180,7 @@ In order to specify the value of a variable all we have to do is set the value i
 
 We can see the current unset variable with:
 ```bash 
-kubectl get cluster capi-quickstart -o jsonpath='{.spec.topology.variables[1]}'                                                                     
-
+kubectl get cluster capi-quickstart -o jsonpath='{.spec.topology.variables[1]}'                                     
 ```
 Which will return something like:
 ```bash
@@ -216,6 +216,56 @@ Note: Changing the etcd version may have unintended impacts on a running Cluster
 To perform more significant changes using a Cluster as a single point of control, it may be necessary to change the ClusterClass that the Cluster is based on. This is done by changing the class referenced in `/spec/topology/class`.
 
 To read more about changing an underlying class please refer to [ClusterClass rebase].
+
+## Tips and tricks
+
+Users should always aim at ensuring the stability of the Cluster and of the applications hosted on it while
+using `spec.topology` as a single point of control for making changes to the objects that are part of the Cluster.
+
+Following recommendation apply:
+
+- If possible, avoid concurrent changes to control-plane and/or MachineDeployments to prevent
+  excessive turnover on the underlying infrastructure or bottlenecks in the Cluster trying to move workloads
+  from one machine to the other.
+- Keep machine labels and annotation stable, because changing those values requires machines rollouts;
+  also, please note that machine labels and annotation are not propagated to Kubernetes nodes; see
+  [metadata propagation](../../../developer/architecture/controllers/metadata-propagation.md).
+- While upgrading a Cluster, if possible avoid any other concurrent change to the Cluster; please note
+  that you can rely on [version-aware patches](write-clusterclass.md#version-aware-patches) to ensure
+  the Cluster adapts to the new Kubernetes version in sync with the upgrade workflow.
+
+For more details about how changes can affect a Cluster, please look at [reference](change-clusterclass.md#reference).
+
+<aside class="note warning">
+
+<h1>Effects of concurrent changes</h1>
+
+When applying concurrent changes to a Cluster, the topology controller will immediately act in order to
+reconcile to the desired state, and thus proxy all the required changes to the underlying objects which
+in turn take action, and this might require rolling  out machines (create new, delete old).
+
+As noted above, when executed at scale this might create excessive turnover on the underlying infrastructure
+or bottlenecks in the Cluster trying to move workloads from one machine to the other.
+
+Additionally, in case of change of the Kubernetes version and other concurrent changes for Machines deployments
+this could lead to double rollout of the worker nodes:
+- The first rollout triggered by the changes to the machine deployments immediately applied to the underlying objects
+  (e.g change of labels). 
+- The second rollout triggered by the upgrade workflow changing the MachineDeployment version only after the control 
+  upgrade is completed (see [upgrade a cluster](#upgrade-a-cluster) above).
+
+Please note that:
+- Cluster API already implements strategies to ensure changes in a Cluster are executed in a safe way under
+  most of the circumstances, including users occasionally not acting according to above best practices;
+- The above-mentioned strategies are currently implemented on the abstraction controlling a single set of machines,
+  the control-plane (KCP) or the MachineDeployment;
+- In future Managed topologies could be improved by introducing strategies to ensure a higher safety across all
+  abstraction controlling Machines in a Cluster, but this work is currently at its initial stage and user feedback
+  could help in shaping out those improvements.
+- Similarly, in future we might consider implementing strategies to controlling changes across many Clusters. 
+
+</aside>
+
 
 [Quick Start guide]: ../../../user/quick-start.md
 [ClusterClass rebase]: ./change-clusterclass.md#rebase

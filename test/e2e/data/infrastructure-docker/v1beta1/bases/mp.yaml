@@ -20,6 +20,12 @@ spec:
         kind: DockerMachinePool
         name: "${CLUSTER_NAME}-dmp-0"
       version: "${KUBERNETES_VERSION}"
+  failureDomains:
+    - fd4
+    - fd5
+    - fd6
+    - fd7
+    - fd8
 ---
 # DockerMachinePool using default values referenced by the MachinePool
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
@@ -36,7 +42,4 @@ spec:
   joinConfiguration:
     nodeRegistration:
       kubeletExtraArgs:
-        # We have to pin the cgroupDriver to cgroupfs as kubeadm >=1.21 defaults to systemd
-        # kind will implement systemd support in: https://github.com/kubernetes-sigs/kind/issues/1726
-        cgroup-driver: cgroupfs
         eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%

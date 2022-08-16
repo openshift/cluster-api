@@ -224,7 +224,7 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 			referenceObject.SetAPIVersion(tc.request.Spec.InfrastructureRef.APIVersion)
 			referenceObject.SetKind(tc.request.Spec.InfrastructureRef.Kind)
 
-			fn := ClusterToInfrastructureMapFuncWithExternallyManagedCheck(context.Background(), tc.input, clientBuilder.Build(), referenceObject)
+			fn := ClusterToInfrastructureMapFunc(context.Background(), tc.input, clientBuilder.Build(), referenceObject)
 			out := fn(tc.request)
 			g.Expect(out).To(Equal(tc.output))
 		})
@@ -878,6 +878,31 @@ func TestRemoveOwnerRef(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			newOwnerRefs := RemoveOwnerRef(ownerRefs, tt.toBeRemoved)
 			g.Expect(HasOwnerRef(newOwnerRefs, tt.toBeRemoved)).NotTo(BeTrue())
+		})
+	}
+}
+
+func TestUnstructuredUnmarshalField(t *testing.T) {
+	tests := []struct {
+		name    string
+		obj     *unstructured.Unstructured
+		v       interface{}
+		fields  []string
+		wantErr bool
+	}{
+		{
+			"return error if object is nil",
+			nil,
+			nil,
+			nil,
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := UnstructuredUnmarshalField(tt.obj, tt.v, tt.fields...); (err != nil) != tt.wantErr {
+				t.Errorf("UnstructuredUnmarshalField() error = %v, wantErr %v", err, tt.wantErr)
+			}
 		})
 	}
 }

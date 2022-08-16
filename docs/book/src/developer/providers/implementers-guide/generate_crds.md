@@ -9,7 +9,9 @@ git init
 You'll then need to set up [go modules][gomod]
 
 ```bash
-$ go mod init github.com/liztio/cluster-api-provider-mailgun
+go mod init github.com/liztio/cluster-api-provider-mailgun
+```
+```bash
 go: creating new go.mod: module github.com/liztio/cluster-api-provider-mailgun
 ```
 [gomod]: https://github.com/golang/go/wiki/Modules#how-to-define-a-module
@@ -39,7 +41,7 @@ kubebuilder create api --group infrastructure --version v1alpha3 --kind MailgunC
 kubebuilder create api --group infrastructure --version v1alpha3 --kind MailgunMachine
 ```
 
-```
+```bash
 Create Resource under pkg/apis [y/n]?
 y
 Create Controller under pkg/controller [y/n]?
@@ -71,7 +73,7 @@ type MailgunMachine struct {
 ```
 
 And regenerate the CRDs:
-```shell
+```bash
 make manifests
 ```
 
@@ -83,10 +85,7 @@ make manifests
 
 The cluster API CRDs should be further customized:
 
-- [Apply the contract version label to support conversions](../v1alpha2-to-v1alpha3.md#apply-the-contract-version-label-clusterx-k8sioversion-version1_version2_version3-to-your-crds)
-- [Upgrade to CRD v1](../v1alpha2-to-v1alpha3.md#upgrade-to-crd-v1)
-- [Set “matchPolicy=Equivalent” kubebuilder marker for webhooks](../v1alpha2-to-v1alpha3.md#add-matchpolicyequivalent-kubebuilder-marker-in-webhooks)
-- [Refactor the kustomize config folder to support multi-tenancy](../v1alpha2-to-v1alpha3.md#refactor-kustomize-config-folder-to-support-multi-tenancy-when-using-webhooks)
+- [Apply the contract version label to support conversions](../contracts.md#api-version-labels)
 - [Ensure you are compliant with the clusterctl provider contract](../../../clusterctl/provider-contract.md#components-yaml)
 
 ### Commit your changes

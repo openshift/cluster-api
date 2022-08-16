@@ -35,9 +35,17 @@ capi:buildDockerImages () {
   ## Build CAPD provider images, if missing
   if [[ "$(docker images -q "$REGISTRY/capd-manager-$ARCH:$TAG" 2> /dev/null)" == "" ]]; then
     echo "+ Building CAPD images"
-    make -C test/infrastructure/docker docker-build
+    make docker-capd-build
   else
     echo "+ CAPD images already present in the system, skipping make"
+  fi
+
+  ## Build test extension images, if missing
+  if [[ "$(docker images -q "$REGISTRY/test-extension-$ARCH:$TAG" 2> /dev/null)" == "" ]]; then
+    echo "+ Building test-extension image"
+    make docker-build-test-extension
+  else
+    echo "+ test-extension image already present in the system, skipping make"
   fi
 }
 
@@ -207,9 +215,9 @@ EOL
 # the actual test run less sensible to the network speed.
 kind:prepullAdditionalImages () {
   # Pulling cert manager images so we can pre-load in kind nodes
-  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.5.3"
-  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.5.3"
-  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.5.3"
+  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.8.2"
+  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.8.2"
+  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.8.2"
 }
 
 # kind:prepullImage pre-pull a docker image if no already present locally.

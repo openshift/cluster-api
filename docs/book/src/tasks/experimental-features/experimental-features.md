@@ -33,7 +33,9 @@ variables:
   EXP_CLUSTER_RESOURCE_SET: "true"
   EXP_MACHINE_POOL: "true"
   CLUSTER_TOPOLOGY: "true"
+  EXP_RUNTIME_SDK: "true"
 ```
+
 Another way is to set them as environmental variables before running e2e tests.
 
 ## Enabling Experimental Features on Tilt
@@ -41,17 +43,11 @@ Another way is to set them as environmental variables before running e2e tests.
 On development environments started with `Tilt`, features can be enabled by setting the feature variables in `kustomize_substitutions`, e.g.:
 
 ```yaml
-{
-  "enable_providers": ["kubeadm-bootstrap","kubeadm-control-plane"],
-  "allowed_contexts": ["kind-kind"],
-  "default_registry": "gcr.io/cluster-api-provider",
-  "provider_repos": [],
-  "kustomize_substitutions": {
-    "EXP_CLUSTER_RESOURCE_SET": "true",
-    "EXP_MACHINE_POOL": "true",
-    "CLUSTER_TOPOLOGY": "true"
-  }
-}
+kustomize_substitutions:
+  EXP_CLUSTER_RESOURCE_SET: 'true'
+  EXP_MACHINE_POOL: 'true'
+  CLUSTER_TOPOLOGY: 'true'
+  EXP_RUNTIME_SDK: 'true'
 ```
 
 For more details on setting up a development environment with `tilt`, see [Developing Cluster API with Tilt](../../developer/tilt.md)
@@ -61,8 +57,10 @@ For more details on setting up a development environment with `tilt`, see [Devel
 To enable/disable features on existing management clusters, users can modify CAPI controller manager deployment which will restart all controllers with requested features.
 
 ```
-#  kubectl edit -n capi-system deployment.apps/capi-controller-manager
-   // Enable/disable available feautures by modifying Args below.
+kubectl edit -n capi-system deployment.apps/capi-controller-manager
+```
+```
+// Enable/disable available feautures by modifying Args below.
     Args:
       --leader-elect
       --feature-gates=MachinePool=true,ClusterResourceSet=true
@@ -70,8 +68,8 @@ To enable/disable features on existing management clusters, users can modify CAP
 
 Similarly, to **validate** if a particular feature is enabled, see cluster-api-provider deployment arguments by:
 
-```
-# kubectl describe -n capi-system deployment.apps/capi-controller-manager
+```bash
+kubectl describe -n capi-system deployment.apps/capi-controller-manager
 ```
 
 ## Active Experimental Features
@@ -80,6 +78,7 @@ Similarly, to **validate** if a particular feature is enabled, see cluster-api-p
 * [ClusterResourceSet](./cluster-resource-set.md)
 * [ClusterClass](./cluster-class/index.md)
 * [Ignition Bootstrap configuration](./ignition.md)
+* [Runtime SDK](runtime-sdk/index.md)
 
 **Warning**: Experimental features are unreliable, i.e., some may one day be promoted to the main repository, or they may be modified arbitrarily or even disappear altogether.
 In short, they are not subject to any compatibility or deprecation promise.

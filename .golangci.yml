@@ -3,6 +3,7 @@ linters:
   enable:
   - asciicheck
   - bodyclose
+  - containedctx
   - deadcode
   - depguard
   - dogsled
@@ -11,7 +12,6 @@ linters:
   - gci
   - goconst
   - gocritic
-  - gocyclo
   - godot
   - gofmt
   - goimports
@@ -25,6 +25,7 @@ linters:
   - misspell
   - nakedret
   - nilerr
+  - noctx
   - nolintlint
   - prealloc
   - predeclared
@@ -37,6 +38,7 @@ linters:
   - typecheck
   - unconvert
   - unparam
+  - unused
   - varcheck
   - whitespace
 
@@ -106,6 +108,21 @@ linters-settings:
         alias: addonsv1alpha4
       - pkg: sigs.k8s.io/cluster-api/exp/addons/api/v1beta1
         alias: addonsv1
+      # CAPI exp runtime
+      - pkg: sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1
+        alias: runtimev1
+      - pkg: sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1
+        alias: runtimehooksv1
+      - pkg: sigs.k8s.io/cluster-api/exp/runtime/controllers
+        alias: runtimecontrollers
+      - pkg: sigs.k8s.io/cluster-api/exp/runtime/catalog
+        alias: runtimecatalog
+      - pkg: sigs.k8s.io/cluster-api/internal/runtime/client
+        alias: runtimeclient
+      - pkg: sigs.k8s.io/cluster-api/internal/runtime/registry
+        alias: runtimeregistry
+      - pkg: sigs.k8s.io/cluster-api/internal/webhooks/runtime
+        alias: runtimewebhooks
       # CAPD
       - pkg: sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha3
         alias: infrav1alpha3
@@ -149,6 +166,8 @@ linters-settings:
     - unnecessaryDefer
     - whyNoLint
     - wrapperFunc
+  unused:
+    go: "1.17"
 issues:
   max-same-issues: 0
   max-issues-per-linter: 0
@@ -210,11 +229,11 @@ issues:
   - linters:
     - revive
     text: exported (method|function|type|const) (.+) should have comment or be unexported
-    path: .*(api|types)\/.*\/conversion.*\.go$
+    path: .*(api|types|test)\/.*\/conversion.*\.go$
   - linters:
     - revive
     text: "var-naming: don't use underscores in Go names;"
-    path: .*(api|types)\/.*\/conversion.*\.go$
+    path: .*(api|types|test)\/.*\/conversion.*\.go$
   - linters:
     - revive
     text: "receiver-naming: receiver name"
@@ -222,7 +241,7 @@ issues:
   - linters:
     - stylecheck
     text: "ST1003: should not use underscores in Go names;"
-    path: .*(api|types)\/.*\/conversion.*\.go$
+    path: .*(api|types|test)\/.*\/conversion.*\.go$
   - linters:
     - stylecheck
     text: "ST1016: methods on the same type should have the same receiver name"
@@ -232,12 +251,20 @@ issues:
     - typecheck
     text: import (".+") is a program, not an importable package
     path: ^tools\.go$
-  # Ignore ifshort false positive
-  # TODO(sbueringer) false positive: https://github.com/esimonov/ifshort/issues/23
+  # TODO(sbueringer) Ignore ifshort false positive: https://github.com/esimonov/ifshort/issues/23
   - linters:
     - ifshort
     text:  "variable 'isDeleteNodeAllowed' is only used in the if-statement.*"
     path: ^internal/controllers/machine/machine_controller\.go$
+  - linters:
+    - ifshort
+    text: "variable 'kcpMachinesWithErrors' is only used in the if-statement.*"
+    path: ^controlplane/kubeadm/internal/workload_cluster_conditions\.go$
+  # We don't care about defer in for loops in test files.
+  - linters:
+    - gocritic
+    text: "deferInLoop: Possible resource leak, 'defer' is called in the 'for' loop"
+    path: _test\.go
 
 run:
   timeout: 10m
@@ -246,6 +273,7 @@ run:
   - e2e
   skip-files:
   - "zz_generated.*\\.go$"
+  - "vendored_openapi\\.go$"
   skip-dirs:
   - third_party
   allow-parallel-runners: true

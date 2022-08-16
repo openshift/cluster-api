@@ -62,6 +62,7 @@ func TestKubeadmControlPlaneDefault(t *testing.T) {
 	t.Run("for KubeadmControlPlane", utildefaulting.DefaultValidateTest(updateDefaultingValidationKCP))
 	kcp.Default()
 
+	g.Expect(kcp.Spec.KubeadmConfigSpec.Format).To(Equal(bootstrapv1.CloudConfig))
 	g.Expect(kcp.Spec.MachineTemplate.InfrastructureRef.Namespace).To(Equal(kcp.Namespace))
 	g.Expect(kcp.Spec.Version).To(Equal("v1.18.3"))
 	g.Expect(kcp.Spec.RolloutStrategy.Type).To(Equal(RollingUpdateStrategyType))
@@ -82,6 +83,9 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 					Namespace:  "foo",
 					Name:       "infraTemplate",
 				},
+			},
+			KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+				ClusterConfiguration: &bootstrapv1.ClusterConfiguration{},
 			},
 			Replicas: pointer.Int32Ptr(1),
 			Version:  "v1.19.0",
@@ -128,6 +132,9 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 
 	invalidVersion2 := valid.DeepCopy()
 	invalidVersion2.Spec.Version = "1.16.6"
+
+	invalidCoreDNSVersion := valid.DeepCopy()
+	invalidCoreDNSVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS.ImageTag = "v1.7" // not a valid semantic version
 
 	invalidIgnitionConfiguration := valid.DeepCopy()
 	invalidIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{}
@@ -188,6 +195,11 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 			kcp:       invalidVersion1,
 		},
 		{
+			name:      "should return error when given an invalid semantic CoreDNS version",
+			expectErr: true,
+			kcp:       invalidCoreDNSVersion,
+		},
+		{
 			name:      "should return error when maxSurge is not 1",
 			expectErr: true,
 			kcp:       invalidMaxSurge,
@@ -239,7 +251,8 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 					Namespace:  "foo",
 					Name:       "infraTemplate",
 				},
-				NodeDrainTimeout: &metav1.Duration{Duration: time.Second},
+				NodeDrainTimeout:    &metav1.Duration{Duration: time.Second},
+				NodeDeletionTimeout: &metav1.Duration{Duration: time.Second},
 			},
 			Replicas: pointer.Int32Ptr(1),
 			RolloutStrategy: &RolloutStrategy{
@@ -365,6 +378,7 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	validUpdate.Spec.MachineTemplate.InfrastructureRef.APIVersion = "test/v1alpha2"
 	validUpdate.Spec.MachineTemplate.InfrastructureRef.Name = "orange"
 	validUpdate.Spec.MachineTemplate.NodeDrainTimeout = &metav1.Duration{Duration: 10 * time.Second}
+	validUpdate.Spec.MachineTemplate.NodeDeletionTimeout = &metav1.Duration{Duration: 10 * time.Second}
 	validUpdate.Spec.Replicas = pointer.Int32Ptr(5)
 	now := metav1.NewTime(time.Now())
 	validUpdate.Spec.RolloutAfter = &now
@@ -576,6 +590,9 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	disallowedUpgrade119Version := before.DeepCopy()
 	disallowedUpgrade119Version.Spec.Version = "v1.19.0"
 
+	disallowedUpgrade120AlphaVersion := before.DeepCopy()
+	disallowedUpgrade120AlphaVersion.Spec.Version = "v1.20.0-alpha.0.734_ba502ee555924a"
+
 	updateNTPServers := before.DeepCopy()
 	updateNTPServers.Spec.KubeadmConfigSpec.NTP.Servers = []string{"new-server"}
 
@@ -593,6 +610,16 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 
 	validIgnitionConfigurationAfter := validIgnitionConfigurationBefore.DeepCopy()
 	validIgnitionConfigurationAfter.Spec.KubeadmConfigSpec.Ignition.ContainerLinuxConfig.AdditionalConfig = "foo: bar"
+
+	updateInitConfigurationPatches := before.DeepCopy()
+	updateInitConfigurationPatches.Spec.KubeadmConfigSpec.InitConfiguration.Patches = &bootstrapv1.Patches{
+		Directory: "/tmp/patches",
+	}
+
+	updateJoinConfigurationPatches := before.DeepCopy()
+	updateJoinConfigurationPatches.Spec.KubeadmConfigSpec.InitConfiguration.Patches = &bootstrapv1.Patches{
+		Directory: "/tmp/patches",
+	}
 
 	tests := []struct {
 		name                  string
@@ -877,6 +904,12 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			kcp:       disallowedUpgrade119Version,
 		},
 		{
+			name:      "should return error when trying to upgrade two minor versions",
+			expectErr: true,
+			before:    disallowedUpgrade118Prev,
+			kcp:       disallowedUpgrade120AlphaVersion,
+		},
+		{
 			name:      "should not return an error when maxSurge value is updated to 0",
 			expectErr: false,
 			before:    before,
@@ -899,6 +932,18 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			expectErr: false,
 			before:    before,
 			kcp:       disableNTPServers,
+		},
+		{
+			name:      "should allow changes to initConfiguration.patches",
+			expectErr: false,
+			before:    before,
+			kcp:       updateInitConfigurationPatches,
+		},
+		{
+			name:      "should allow changes to joinConfiguration.patches",
+			expectErr: false,
+			before:    before,
+			kcp:       updateJoinConfigurationPatches,
 		},
 		{
 			name:                  "should return error when Ignition configuration is invalid",

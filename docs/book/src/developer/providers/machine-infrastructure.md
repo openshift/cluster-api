@@ -38,6 +38,8 @@ A machine infrastructure provider must define an API type for "infrastructure ma
             defined as:
                 - `type` (string): one of `Hostname`, `ExternalIP`, `InternalIP`, `ExternalDNS`, `InternalDNS`
                 - `address` (string)
+7. Should have a conditions field with the following:
+   1. A Ready condition to represent the overall operational state of the component. It can be based on the summary of more detailed conditions existing on the same object, e.g. instanceReady, SecurityGroupsReady conditions.
 
 
 ### InfraMachineTemplate Resources
@@ -113,6 +115,8 @@ The following diagram shows the typical logic for a machine infrastructure provi
 1. If the `Cluster` to which this resource belongs cannot be found, exit the reconciliation
 1. Add the provider-specific finalizer, if needed
 1. If the associated `Cluster`'s `status.infrastructureReady` is `false`, exit the reconciliation
+    1. **Note**: This check should not be blocking any further delete reconciliation flows.
+    1. **Note**: This check should only be performed after appropriate owner references (if any) are updated.
 1. If the associated `Machine`'s `spec.bootstrap.dataSecretName` is `nil`, exit the reconciliation
 1. Reconcile provider-specific machine infrastructure
     1. If any errors are encountered:

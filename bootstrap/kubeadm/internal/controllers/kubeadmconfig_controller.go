@@ -246,9 +246,10 @@ func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Status is ready means a config has been generated.
 	case config.Status.Ready:
 		if config.Spec.JoinConfiguration != nil && config.Spec.JoinConfiguration.Discovery.BootstrapToken != nil {
-			if !configOwner.IsInfrastructureReady() {
-				// If the BootstrapToken has been generated for a join and the infrastructure is not ready.
-				// This indicates the token in the join config has not been consumed and it may need a refresh.
+			if !configOwner.HasNodeRefs() {
+				// If the BootstrapToken has been generated for a join but the config owner has no nodeRefs,
+				// this indicates that the node has not yet joined and the token in the join config has not
+				// been consumed and it may need a refresh.
 				return r.refreshBootstrapToken(ctx, config, cluster)
 			}
 			if configOwner.IsMachinePool() {
@@ -447,13 +448,19 @@ func (r *KubeadmConfigReconciler) handleClusterNotInitialized(ctx context.Contex
 		return ctrl.Result{}, err
 	}
 
+	users, err := r.resolveUsers(ctx, scope.Config)
+	if err != nil {
+		conditions.MarkFalse(scope.Config, bootstrapv1.DataSecretAvailableCondition, bootstrapv1.DataSecretGenerationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+		return ctrl.Result{}, err
+	}
+
 	controlPlaneInput := &cloudinit.ControlPlaneInput{
 		BaseUserData: cloudinit.BaseUserData{
 			AdditionalFiles:     files,
 			NTP:                 scope.Config.Spec.NTP,
 			PreKubeadmCommands:  scope.Config.Spec.PreKubeadmCommands,
 			PostKubeadmCommands: scope.Config.Spec.PostKubeadmCommands,
-			Users:               scope.Config.Spec.Users,
+			Users:               users,
 			Mounts:              scope.Config.Spec.Mounts,
 			DiskSetup:           scope.Config.Spec.DiskSetup,
 			KubeadmVerbosity:    verbosityFlag,
@@ -540,13 +547,19 @@ func (r *KubeadmConfigReconciler) joinWorker(ctx context.Context, scope *Scope) 
 		return ctrl.Result{}, err
 	}
 
+	users, err := r.resolveUsers(ctx, scope.Config)
+	if err != nil {
+		conditions.MarkFalse(scope.Config, bootstrapv1.DataSecretAvailableCondition, bootstrapv1.DataSecretGenerationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+		return ctrl.Result{}, err
+	}
+
 	nodeInput := &cloudinit.NodeInput{
 		BaseUserData: cloudinit.BaseUserData{
 			AdditionalFiles:      files,
 			NTP:                  scope.Config.Spec.NTP,
 			PreKubeadmCommands:   scope.Config.Spec.PreKubeadmCommands,
 			PostKubeadmCommands:  scope.Config.Spec.PostKubeadmCommands,
-			Users:                scope.Config.Spec.Users,
+			Users:                users,
 			Mounts:               scope.Config.Spec.Mounts,
 			DiskSetup:            scope.Config.Spec.DiskSetup,
 			KubeadmVerbosity:     verbosityFlag,
@@ -635,6 +648,12 @@ func (r *KubeadmConfigReconciler) joinControlplane(ctx context.Context, scope *S
 		return ctrl.Result{}, err
 	}
 
+	users, err := r.resolveUsers(ctx, scope.Config)
+	if err != nil {
+		conditions.MarkFalse(scope.Config, bootstrapv1.DataSecretAvailableCondition, bootstrapv1.DataSecretGenerationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+		return ctrl.Result{}, err
+	}
+
 	controlPlaneJoinInput := &cloudinit.ControlPlaneJoinInput{
 		JoinConfiguration: joinData,
 		Certificates:      certificates,
@@ -643,7 +662,7 @@ func (r *KubeadmConfigReconciler) joinControlplane(ctx context.Context, scope *S
 			NTP:                  scope.Config.Spec.NTP,
 			PreKubeadmCommands:   scope.Config.Spec.PreKubeadmCommands,
 			PostKubeadmCommands:  scope.Config.Spec.PostKubeadmCommands,
-			Users:                scope.Config.Spec.Users,
+			Users:                users,
 			Mounts:               scope.Config.Spec.Mounts,
 			DiskSetup:            scope.Config.Spec.DiskSetup,
 			KubeadmVerbosity:     verbosityFlag,
@@ -713,7 +732,46 @@ func (r *KubeadmConfigReconciler) resolveSecretFileContent(ctx context.Context, 
 	return data, nil
 }
 
-// ClusterToKubeadmConfigs is a handler.ToRequestsFunc to be used to enqeue
+// resolveUsers maps .Spec.Users into cloudinit.Users, resolving any object references
+// along the way.
+func (r *KubeadmConfigReconciler) resolveUsers(ctx context.Context, cfg *bootstrapv1.KubeadmConfig) ([]bootstrapv1.User, error) {
+	collected := make([]bootstrapv1.User, 0, len(cfg.Spec.Users))
+
+	for i := range cfg.Spec.Users {
+		in := cfg.Spec.Users[i]
+		if in.PasswdFrom != nil {
+			data, err := r.resolveSecretPasswordContent(ctx, cfg.Namespace, in)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to resolve passwd source")
+			}
+			in.PasswdFrom = nil
+			passwdContent := string(data)
+			in.Passwd = &passwdContent
+		}
+		collected = append(collected, in)
+	}
+
+	return collected, nil
+}
+
+// resolveSecretUserContent returns passwd fetched from a referenced secret object.
+func (r *KubeadmConfigReconciler) resolveSecretPasswordContent(ctx context.Context, ns string, source bootstrapv1.User) ([]byte, error) {
+	secret := &corev1.Secret{}
+	key := types.NamespacedName{Namespace: ns, Name: source.PasswdFrom.Secret.Name}
+	if err := r.Client.Get(ctx, key, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, errors.Wrapf(err, "secret not found: %s", key)
+		}
+		return nil, errors.Wrapf(err, "failed to retrieve Secret %q", key)
+	}
+	data, ok := secret.Data[source.PasswdFrom.Secret.Key]
+	if !ok {
+		return nil, errors.Errorf("secret references non-existent secret key: %q", source.PasswdFrom.Secret.Key)
+	}
+	return data, nil
+}
+
+// ClusterToKubeadmConfigs is a handler.ToRequestsFunc to be used to enqueue
 // requests for reconciliation of KubeadmConfigs.
 func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(o client.Object) []ctrl.Request {
 	result := []ctrl.Request{}
@@ -761,7 +819,7 @@ func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(o client.Object) []ctr
 	return result
 }
 
-// MachineToBootstrapMapFunc is a handler.ToRequestsFunc to be used to enqeue
+// MachineToBootstrapMapFunc is a handler.ToRequestsFunc to be used to enqueue
 // request for reconciliation of KubeadmConfig.
 func (r *KubeadmConfigReconciler) MachineToBootstrapMapFunc(o client.Object) []ctrl.Request {
 	m, ok := o.(*clusterv1.Machine)

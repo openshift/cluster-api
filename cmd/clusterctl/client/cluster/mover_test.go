@@ -704,7 +704,7 @@ func Test_objectMover_backupTargetObject(t *testing.T) {
 				g.Expect(string(fileContents)).To(Equal(expectedFileContents))
 
 				// Add delay so we ensure the file ModTime of updated files is different from old ones in the original files
-				time.Sleep(time.Millisecond * 5)
+				time.Sleep(time.Millisecond * 50)
 
 				// Running backupTargetObject should override any existing files since it represents a new backup
 				err = mover.backupTargetObject(node, dir)
@@ -929,7 +929,7 @@ func Test_objectMover_filesToObjs(t *testing.T) {
 
 			for _, fileName := range tt.files {
 				path := filepath.Join(dir, fileName)
-				file, err := os.Create(path)
+				file, err := os.Create(path) //nolint:gosec // No security issue: unit test.
 				if err != nil {
 					return
 				}
