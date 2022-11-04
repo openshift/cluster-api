@@ -81,7 +81,7 @@ func (webhook *Cluster) Default(ctx context.Context, obj runtime.Object) error {
 		clusterClass, err := webhook.getClusterClassForCluster(ctx, cluster)
 		if err != nil {
 			// Return early with errors if the ClusterClass can't be retrieved.
-			return apierrors.NewInternalError(errors.Wrapf(err, "Cluster %s can't be validated. ClusterClass %s can not be retrieved.", cluster.Name, cluster.Spec.Topology.Class))
+			return apierrors.NewInternalError(errors.Wrapf(err, "Cluster %s can't be validated. ClusterClass %s can not be retrieved", cluster.Name, cluster.Spec.Topology.Class))
 		}
 
 		// We gather all defaulting errors and return them together.
@@ -142,17 +142,18 @@ func (webhook *Cluster) ValidateUpdate(ctx context.Context, oldObj, newObj runti
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type.
-func (webhook *Cluster) ValidateDelete(_ context.Context, obj runtime.Object) error {
+func (webhook *Cluster) ValidateDelete(_ context.Context, _ runtime.Object) error {
 	return nil
 }
 
 func (webhook *Cluster) validate(ctx context.Context, oldCluster, newCluster *clusterv1.Cluster) error {
 	var allErrs field.ErrorList
+	specPath := field.NewPath("spec")
 	if newCluster.Spec.InfrastructureRef != nil && newCluster.Spec.InfrastructureRef.Namespace != newCluster.Namespace {
 		allErrs = append(
 			allErrs,
 			field.Invalid(
-				field.NewPath("spec", "infrastructureRef", "namespace"),
+				specPath.Child("infrastructureRef", "namespace"),
 				newCluster.Spec.InfrastructureRef.Namespace,
 				"must match metadata.namespace",
 			),
@@ -163,16 +164,17 @@ func (webhook *Cluster) validate(ctx context.Context, oldCluster, newCluster *cl
 		allErrs = append(
 			allErrs,
 			field.Invalid(
-				field.NewPath("spec", "controlPlaneRef", "namespace"),
+				specPath.Child("controlPlaneRef", "namespace"),
 				newCluster.Spec.ControlPlaneRef.Namespace,
 				"must match metadata.namespace",
 			),
 		)
 	}
+	topologyPath := specPath.Child("topology")
 
 	// Validate the managed topology, if defined.
 	if newCluster.Spec.Topology != nil {
-		allErrs = append(allErrs, webhook.validateTopology(ctx, oldCluster, newCluster)...)
+		allErrs = append(allErrs, webhook.validateTopology(ctx, oldCluster, newCluster, topologyPath)...)
 	}
 
 	// On update.
@@ -180,7 +182,7 @@ func (webhook *Cluster) validate(ctx context.Context, oldCluster, newCluster *cl
 		// Error if the update moves the cluster from Managed to Unmanaged i.e. the managed topology is removed on update.
 		if oldCluster.Spec.Topology != nil && newCluster.Spec.Topology == nil {
 			allErrs = append(allErrs, field.Forbidden(
-				field.NewPath("spec", "topology"),
+				topologyPath,
 				"cannot be removed from an existing Cluster",
 			))
 		}
@@ -192,13 +194,13 @@ func (webhook *Cluster) validate(ctx context.Context, oldCluster, newCluster *cl
 	return nil
 }
 
-func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newCluster *clusterv1.Cluster) field.ErrorList {
+func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newCluster *clusterv1.Cluster, fldPath *field.Path) field.ErrorList {
 	// NOTE: ClusterClass and managed topologies are behind ClusterTopology feature gate flag; the web hook
 	// must prevent the usage of Cluster.Topology in case the feature flag is disabled.
 	if !feature.Gates.Enabled(feature.ClusterTopology) {
 		return field.ErrorList{
 			field.Forbidden(
-				field.NewPath("spec", "topology"),
+				fldPath,
 				"can be set only if the ClusterTopology feature flag is enabled",
 			),
 		}
@@ -211,7 +213,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 		allErrs = append(
 			allErrs,
 			field.Required(
-				field.NewPath("spec", "topology", "class"),
+				fldPath.Child("class"),
 				"class cannot be empty",
 			),
 		)
@@ -222,7 +224,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 		allErrs = append(
 			allErrs,
 			field.Invalid(
-				field.NewPath("spec", "topology", "version"),
+				fldPath.Child("version"),
 				newCluster.Spec.Topology.Version,
 				"version must be a valid semantic version",
 			),
@@ -235,7 +237,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 	if err := webhook.Client.Get(ctx, client.ObjectKey{Namespace: newCluster.Namespace, Name: newCluster.Spec.Topology.Class}, clusterClass); err != nil {
 		allErrs = append(
 			allErrs, field.Invalid(
-				field.NewPath("spec", "topology", "class"),
+				fldPath.Child("class"),
 				newCluster.Name,
 				fmt.Sprintf("ClusterClass with name %q could not be found", newCluster.Spec.Topology.Class)))
 		return allErrs
@@ -245,7 +247,10 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 
 	// Check if the variables defined in the ClusterClass are valid.
 	allErrs = append(allErrs, variables.ValidateClusterVariables(newCluster.Spec.Topology.Variables, clusterClass.Spec.Variables,
-		field.NewPath("spec", "topology", "variables"))...)
+		fldPath.Child("variables"))...)
+
+	// validate the MachineHealthChecks defined in the cluster topology
+	allErrs = append(allErrs, validateMachineHealthChecks(newCluster, clusterClass)...)
 
 	if newCluster.Spec.Topology.Workers != nil {
 		for i, md := range newCluster.Spec.Topology.Workers.MachineDeployments {
@@ -254,20 +259,22 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 				continue
 			}
 
-			allErrs = append(allErrs, variables.ValidateTopLevelClusterVariablesExist(md.Variables.Overrides, newCluster.Spec.Topology.Variables,
-				field.NewPath("spec", "topology", "workers", "machineDeployments").Index(i).Child("variables", "overrides"))...)
 			allErrs = append(allErrs, variables.ValidateMachineDeploymentVariables(md.Variables.Overrides, clusterClass.Spec.Variables,
-				field.NewPath("spec", "topology", "workers", "machineDeployments").Index(i).Child("variables", "overrides"))...)
+				fldPath.Child("workers", "machineDeployments").Index(i).Child("variables", "overrides"))...)
 		}
 	}
 
 	if oldCluster != nil { // On update
-		// Topology or Class can not be added on update.
+		// Topology or Class can not be added on update unless unsafe cluster topology update annotation is set
 		if oldCluster.Spec.Topology == nil || oldCluster.Spec.Topology.Class == "" {
+			if _, ok := newCluster.Annotations[clusterv1.ClusterTopologyUnsafeUpdateClassNameAnnotation]; ok {
+				return allErrs
+			}
+
 			allErrs = append(
 				allErrs,
 				field.Forbidden(
-					field.NewPath("spec", "topology", "class"),
+					fldPath.Child("class"),
 					"class cannot be set on an existing Cluster",
 				),
 			)
@@ -281,7 +288,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 			allErrs = append(
 				allErrs,
 				field.Invalid(
-					field.NewPath("spec", "topology", "version"),
+					fldPath.Child("version"),
 					newCluster.Spec.Topology.Version,
 					"version must be a valid semantic version",
 				),
@@ -293,7 +300,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 			allErrs = append(
 				allErrs,
 				field.Invalid(
-					field.NewPath("spec", "topology", "version"),
+					fldPath.Child("version"),
 					oldCluster.Spec.Topology.Version,
 					fmt.Sprintf("old version %q cannot be compared with %q", oldVersion, inVersion),
 				),
@@ -303,7 +310,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 			allErrs = append(
 				allErrs,
 				field.Invalid(
-					field.NewPath("spec", "topology", "version"),
+					fldPath.Child("version"),
 					newCluster.Spec.Topology.Version,
 					fmt.Sprintf("version cannot be decreased from %q to %q", oldVersion, inVersion),
 				),
@@ -319,7 +326,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 			allErrs = append(
 				allErrs,
 				field.Forbidden(
-					field.NewPath("spec", "topology", "version"),
+					fldPath.Child("version"),
 					fmt.Sprintf("version cannot be increased from %q to %q", oldVersion, inVersion),
 				),
 			)
@@ -332,7 +339,7 @@ func (webhook *Cluster) validateTopology(ctx context.Context, oldCluster, newClu
 			if err != nil {
 				allErrs = append(
 					allErrs, field.Forbidden(
-						field.NewPath("spec", "topology", "class"),
+						fldPath.Child("class"),
 						fmt.Sprintf("ClusterClass with name %q could not be found, change from class %[1]q to class %q cannot be validated",
 							oldCluster.Spec.Topology.Class, newCluster.Spec.Topology.Class)))
 
@@ -354,4 +361,85 @@ func (webhook *Cluster) getClusterClassForCluster(ctx context.Context, cluster *
 		return nil, err
 	}
 	return clusterClass, nil
+}
+
+func validateMachineHealthChecks(cluster *clusterv1.Cluster, clusterClass *clusterv1.ClusterClass) field.ErrorList {
+	var allErrs field.ErrorList
+
+	// Validate ControlPlane MachineHealthCheck if defined.
+	if cluster.Spec.Topology.ControlPlane.MachineHealthCheck != nil && !cluster.Spec.Topology.ControlPlane.MachineHealthCheck.MachineHealthCheckClass.IsZero() {
+		// Ensure ControlPlane does not define a MachineHealthCheck if the ClusterClass does not define MachineInfrastructure.
+		if clusterClass.Spec.ControlPlane.MachineInfrastructure == nil {
+			allErrs = append(allErrs, field.Forbidden(
+				field.NewPath("spec", "topology", "controlPlane", "machineHealthCheck"),
+				"can be set only if spec.controlPlane.machineInfrastructure is set in ClusterClass",
+			))
+		}
+		// Ensure ControlPlane MachineHealthCheck defines UnhealthyConditions.
+		if len(cluster.Spec.Topology.ControlPlane.MachineHealthCheck.MachineHealthCheckClass.UnhealthyConditions) == 0 {
+			allErrs = append(allErrs, field.Forbidden(
+				field.NewPath("spec", "topology", "controlPlane", "machineHealthCheck", "unhealthyConditions"),
+				"must have at least one value",
+			))
+		}
+	}
+
+	// If MachineHealthCheck is explicitly enabled then make sure that a MachineHealthCheck definition is
+	// available either in the Cluster topology or in the ClusterClass.
+	// (One of these definitions will be used in the controller to create the MachineHealthCheck)
+	if cluster.Spec.Topology.ControlPlane.MachineHealthCheck != nil &&
+		cluster.Spec.Topology.ControlPlane.MachineHealthCheck.Enable != nil &&
+		*cluster.Spec.Topology.ControlPlane.MachineHealthCheck.Enable &&
+		cluster.Spec.Topology.ControlPlane.MachineHealthCheck.MachineHealthCheckClass.IsZero() &&
+		clusterClass.Spec.ControlPlane.MachineHealthCheck == nil {
+		allErrs = append(allErrs, field.Forbidden(
+			field.NewPath("spec", "topology", "controlPlane", "machineHealthCheck", "enable"),
+			fmt.Sprintf("cannot be set to %t as MachineHealthCheck definition is not available in the Cluster topology or the ClusterClass", *cluster.Spec.Topology.ControlPlane.MachineHealthCheck.Enable),
+		))
+	}
+
+	if cluster.Spec.Topology.Workers != nil {
+		for i, md := range cluster.Spec.Topology.Workers.MachineDeployments {
+			// If MachineHealthCheck is defined ensure it defines UnhealthyConditions.
+			if md.MachineHealthCheck != nil && !md.MachineHealthCheck.MachineHealthCheckClass.IsZero() {
+				if len(md.MachineHealthCheck.MachineHealthCheckClass.UnhealthyConditions) == 0 {
+					allErrs = append(allErrs, field.Forbidden(
+						field.NewPath("spec", "topology", "workers", "machineDeployments", "machineHealthCheck").Index(i).Child("unhealthyConditions"),
+						"must have at least one value",
+					))
+				}
+			}
+
+			// If MachineHealthCheck is explicitly enabled then make sure that a MachineHealthCheck definition is
+			// available either in the Cluster topology or in the ClusterClass.
+			// (One of these definitions will be used in the controller to create the MachineHealthCheck)
+			mdClass := machineDeploymentClassOfName(clusterClass, md.Class)
+			if mdClass != nil { // Note: we skip handling the nil case here as it is already handled in previous validations.
+				if md.MachineHealthCheck != nil &&
+					md.MachineHealthCheck.Enable != nil &&
+					*md.MachineHealthCheck.Enable &&
+					md.MachineHealthCheck.MachineHealthCheckClass.IsZero() &&
+					mdClass.MachineHealthCheck == nil {
+					allErrs = append(allErrs, field.Forbidden(
+						field.NewPath("spec", "topology", "workers", "machineDeployments", "machineHealthCheck").Index(i).Child("enable"),
+						fmt.Sprintf("cannot be set to %t as MachineHealthCheck definition is not available in the Cluster topology or the ClusterClass", *md.MachineHealthCheck.Enable),
+					))
+				}
+			}
+		}
+	}
+
+	return allErrs
+}
+
+// machineDeploymentClassOfName find a MachineDeploymentClass of the given name in the provided ClusterClass.
+// Returns nill if can not find one.
+// TODO: Check if there is already a helper function that can do this.
+func machineDeploymentClassOfName(clusterClass *clusterv1.ClusterClass, name string) *clusterv1.MachineDeploymentClass {
+	for _, mdClass := range clusterClass.Spec.Workers.MachineDeployments {
+		if mdClass.Class == name {
+			return &mdClass
+		}
+	}
+	return nil
 }

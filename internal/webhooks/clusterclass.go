@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/topology/check"
 	"sigs.k8s.io/cluster-api/internal/topology/variables"
@@ -147,7 +149,7 @@ func (webhook *ClusterClass) validate(ctx context.Context, oldClusterClass, newC
 
 	// Validate variables.
 	allErrs = append(allErrs,
-		variables.ValidateClusterClassVariables(newClusterClass.Spec.Variables, field.NewPath("spec", "variables"))...,
+		variables.ValidateClusterClassVariables(ctx, newClusterClass.Spec.Variables, field.NewPath("spec", "variables"))...,
 	)
 
 	// Validate patches.
@@ -169,6 +171,10 @@ func (webhook *ClusterClass) validate(ctx context.Context, oldClusterClass, newC
 		// Ensure no MachineDeploymentClass currently in use has been removed from the ClusterClass.
 		allErrs = append(allErrs,
 			webhook.validateRemovedMachineDeploymentClassesAreNotUsed(clusters, oldClusterClass, newClusterClass)...)
+
+		// Ensure no MachineHealthCheck currently in use has been removed from the ClusterClass.
+		allErrs = append(allErrs,
+			validateUpdatesToMachineHealthCheckClasses(clusters, oldClusterClass, newClusterClass)...)
 
 		// Ensure no Variable would be invalidated by the update in spec
 		allErrs = append(allErrs,
@@ -291,6 +297,72 @@ func validateVariableUpdates(clusters []clusterv1.Cluster, oldClusterClass, newC
 
 	// Aggregate the errors from the validation checks and return one error message of each type for each variable with a list of violating clusters.
 	return aggregateErrors(errorInfo, clusterClassVariablesIndex, path)
+}
+
+// validateUpdatesToMachineHealthCheckClasses checks if the updates made to MachineHealthChecks are valid.
+// It makes sure that if a MachineHealthCheck definition is dropped from the ClusterClass then none of the
+// clusters using the ClusterClass rely on it to create a MachineHealthCheck.
+// A cluster relies on an MachineHealthCheck in the ClusterClass if in cluster topology MachineHealthCheck
+// is explicitly enabled and it does not provide a MachineHealthCheckOverride.
+func validateUpdatesToMachineHealthCheckClasses(clusters []clusterv1.Cluster, oldClusterClass, newClusterClass *clusterv1.ClusterClass) field.ErrorList {
+	var allErrs field.ErrorList
+
+	// Check if the MachineHealthCheck for the control plane is dropped.
+	if oldClusterClass.Spec.ControlPlane.MachineHealthCheck != nil && newClusterClass.Spec.ControlPlane.MachineHealthCheck == nil {
+		// Make sure that none of the clusters are using this MachineHealthCheck.
+		clustersUsingMHC := []string{}
+		for _, cluster := range clusters {
+			if cluster.Spec.Topology.ControlPlane.MachineHealthCheck != nil &&
+				cluster.Spec.Topology.ControlPlane.MachineHealthCheck.Enable != nil &&
+				*cluster.Spec.Topology.ControlPlane.MachineHealthCheck.Enable &&
+				cluster.Spec.Topology.ControlPlane.MachineHealthCheck.MachineHealthCheckClass.IsZero() {
+				clustersUsingMHC = append(clustersUsingMHC, cluster.Name)
+			}
+		}
+		if len(clustersUsingMHC) != 0 {
+			allErrs = append(allErrs, field.Forbidden(
+				field.NewPath("spec", "controlPlane", "machineHealthCheck"),
+				fmt.Sprintf("MachineHealthCheck cannot be deleted because it is used by Cluster(s) %q", strings.Join(clustersUsingMHC, ",")),
+			))
+		}
+	}
+
+	// For each MachineDeploymentClass check if the MachineHealthCheck definition is dropped.
+	for i, newMdClass := range newClusterClass.Spec.Workers.MachineDeployments {
+		oldMdClass := machineDeploymentClassOfName(oldClusterClass, newMdClass.Class)
+		if oldMdClass == nil {
+			// This is a new MachineDeploymentClass. Nothing to do here.
+			continue
+		}
+		// If the MachineHealthCheck is dropped then check that no cluster is using it.
+		if oldMdClass.MachineHealthCheck != nil && newMdClass.MachineHealthCheck == nil {
+			clustersUsingMHC := []string{}
+			for _, cluster := range clusters {
+				if cluster.Spec.Topology.Workers == nil {
+					continue
+				}
+				for _, mdTopology := range cluster.Spec.Topology.Workers.MachineDeployments {
+					if mdTopology.Class == newMdClass.Class {
+						if mdTopology.MachineHealthCheck != nil &&
+							mdTopology.MachineHealthCheck.Enable != nil &&
+							*mdTopology.MachineHealthCheck.Enable &&
+							mdTopology.MachineHealthCheck.MachineHealthCheckClass.IsZero() {
+							clustersUsingMHC = append(clustersUsingMHC, cluster.Name)
+							break
+						}
+					}
+				}
+			}
+			if len(clustersUsingMHC) != 0 {
+				allErrs = append(allErrs, field.Forbidden(
+					field.NewPath("spec", "workers", "machineDeployments").Index(i).Child("machineHealthCheck"),
+					fmt.Sprintf("MachineHealthCheck cannot be deleted because it is used by Cluster(s) %q", strings.Join(clustersUsingMHC, ",")),
+				))
+			}
+		}
+	}
+
+	return allErrs
 }
 
 type errorAggregator map[variableValidationKey][]string
@@ -440,22 +512,14 @@ func (webhook *ClusterClass) classNamesFromWorkerClass(w clusterv1.WorkersClass)
 
 func (webhook *ClusterClass) getClustersUsingClusterClass(ctx context.Context, clusterClass *clusterv1.ClusterClass) ([]clusterv1.Cluster, error) {
 	clusters := &clusterv1.ClusterList{}
-	clustersUsingClusterClass := []clusterv1.Cluster{}
 	err := webhook.Client.List(ctx, clusters,
-		client.MatchingLabels{
-			clusterv1.ClusterTopologyOwnedLabel: "",
-		},
+		client.MatchingFields{index.ClusterClassNameField: clusterClass.Name},
 		client.InNamespace(clusterClass.Namespace),
 	)
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range clusters.Items {
-		if c.Spec.Topology.Class == clusterClass.Name {
-			clustersUsingClusterClass = append(clustersUsingClusterClass, c)
-		}
-	}
-	return clustersUsingClusterClass, nil
+	return clusters.Items, nil
 }
 
 func getClusterClassVariablesMapWithReverseIndex(clusterClassVariables []clusterv1.ClusterClassVariable) (map[string]*clusterv1.ClusterClassVariable, map[string]int) {

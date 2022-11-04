@@ -81,7 +81,7 @@ func Test_clusterctlClient_InitImages(t *testing.T) {
 				kubeconfigContext:      "mgmt-context",
 			},
 			expectedImages: []string{
-				"k8s.gcr.io/cluster-api-aws/cluster-api-aws-controller:v0.5.3",
+				"registry.k8s.io/cluster-api-aws/cluster-api-aws-controller:v0.5.3",
 			},
 			wantErr: false,
 		},
@@ -509,6 +509,28 @@ func Test_clusterctlClient_Init(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "Init (with an NOT empty cluster) adds the same core providers version again - should ignore duplicate",
+			field: field{
+				client: fakeClusterWithCoreProvider(), // clusterctl client for an management cluster with CoreProvider cluster-api already installed.
+				hasCRD: true,
+			},
+			args: args{
+				coreProvider:           "cluster-api:v1.0.0", // core provider of the same version is already installed on the cluster. should be skipped.
+				bootstrapProvider:      []string{},
+				infrastructureProvider: []string{"infra"},
+				targetNameSpace:        "",
+			},
+			want: []want{
+				// Only the infra provider should be installed. Core provider should be skipped.
+				{
+					provider:        infraProviderConfig,
+					version:         "v3.0.0",
+					targetNamespace: "ns4",
+				},
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -754,6 +776,21 @@ func fakeInitializedCluster() *fakeClient {
 	return client
 }
 
+func fakeClusterWithCoreProvider() *fakeClient {
+	client := fakeEmptyCluster()
+
+	input := cluster.Kubeconfig{
+		Path:    "kubeconfig",
+		Context: "mgmt-context",
+	}
+	p := client.clusters[input].Proxy()
+	fp := p.(*test.FakeProxy)
+
+	fp.WithProviderInventory(capiProviderConfig.Name(), capiProviderConfig.Type(), "v1.0.0", "ns1")
+
+	return client
+}
+
 func componentsYAML(ns string) []byte {
 	var namespaceYaml = []byte("apiVersion: v1\n" +
 		"kind: Namespace\n" +
@@ -817,7 +854,7 @@ spec:
   template:
     spec:
       containers:
-      - image: k8s.gcr.io/cluster-api-aws/cluster-api-aws-controller:v0.5.3
+      - image: registry.k8s.io/cluster-api-aws/cluster-api-aws-controller:v0.5.3
         name: manager
         volumeMounts:
         - mountPath: /home/.aws

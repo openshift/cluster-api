@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.8.0
+    controller-gen.kubebuilder.io/version: v0.10.0
   creationTimestamp: null
   name: clusterclasses.cluster.x-k8s.io
 spec:
@@ -93,6 +93,7 @@ spec:
                             description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                             type: string
                         type: object
+                        x-kubernetes-map-type: atomic
                     required:
                     - ref
                     type: object
@@ -158,6 +159,7 @@ spec:
                         description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - ref
                 type: object
@@ -205,6 +207,7 @@ spec:
                         description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - ref
                 type: object
@@ -282,6 +285,7 @@ spec:
                                         https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                       type: string
                                   type: object
+                                  x-kubernetes-map-type: atomic
                               required:
                               - ref
                               type: object
@@ -336,6 +340,7 @@ spec:
                                         https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                       type: string
                                   type: object
+                                  x-kubernetes-map-type: atomic
                               required:
                               - ref
                               type: object
@@ -470,6 +475,7 @@ spec:
                             description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                             type: string
                         type: object
+                        x-kubernetes-map-type: atomic
                       unhealthyConditions:
                         description: UnhealthyConditions contains a list of the conditions
                           that determine whether a node is considered unhealthy. The
@@ -502,6 +508,7 @@ spec:
                           over MaxUnhealthy. Eg. "[3-5]" - This means that remediation
                           will be allowed only when: (a) there are at least 3 unhealthy
                           machines (and) (b) there are at most 5 unhealthy machines'
+                        pattern: ^\[[0-9]+-[0-9]+\]$
                         type: string
                     type: object
                   machineInfrastructure:
@@ -548,6 +555,7 @@ spec:
                             description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                             type: string
                         type: object
+                        x-kubernetes-map-type: atomic
                     required:
                     - ref
                     type: object
@@ -613,6 +621,7 @@ spec:
                         description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - ref
                 type: object
@@ -660,6 +669,7 @@ spec:
                         description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - ref
                 type: object
@@ -672,8 +682,9 @@ spec:
                     to customize the referenced templates.
                   properties:
                     definitions:
-                      description: 'Definitions define the patches inline. Note: Patches
-                        will be applied in the order of the array.'
+                      description: 'Definitions define inline patches. Note: Patches
+                        will be applied in the order of the array. Note: Exactly one
+                        of Definitions or External must be set.'
                       items:
                         description: PatchDefinition defines a patch which is applied
                           to customize the referenced templates.
@@ -794,11 +805,23 @@ spec:
                         will be disabled. If EnabledIf is not set, the patch will
                         be enabled per default.
                       type: string
+                    external:
+                      description: 'External defines an external patch. Note: Exactly
+                        one of Definitions or External must be set.'
+                      properties:
+                        generateExtension:
+                          description: GenerateExtension references an extension which
+                            is called to generate patches.
+                          type: string
+                        validateExtension:
+                          description: ValidateExtension references an extension which
+                            is called to validate the topology.
+                          type: string
+                      type: object
                     name:
                       description: Name of the patch.
                       type: string
                   required:
-                  - definitions
                   - name
                   type: object
                 type: array
@@ -826,6 +849,14 @@ spec:
                             via OpenAPI v3 schema. The schema is a subset of the schema
                             used in Kubernetes CRDs.
                           properties:
+                            additionalProperties:
+                              description: 'AdditionalProperties specifies the schema
+                                of values in a map (keys are always strings). NOTE:
+                                Can only be set if type is object. NOTE: AdditionalProperties
+                                is mutually exclusive with Properties. NOTE: This
+                                field uses PreserveUnknownFields and Schemaless, because
+                                recursive validation is not possible.'
+                              x-kubernetes-preserve-unknown-fields: true
                             default:
                               description: 'Default is the default value of the variable.
                                 NOTE: Can be set for all types.'
@@ -912,9 +943,10 @@ spec:
                               type: string
                             properties:
                               description: 'Properties specifies fields of an object.
-                                NOTE: Can only be set if type is object. NOTE: This
-                                field uses PreserveUnknownFields and Schemaless, because
-                                recursive validation is not possible.'
+                                NOTE: Can only be set if type is object. NOTE: Properties
+                                is mutually exclusive with AdditionalProperties. NOTE:
+                                This field uses PreserveUnknownFields and Schemaless,
+                                because recursive validation is not possible.'
                               x-kubernetes-preserve-unknown-fields: true
                             required:
                               description: 'Required specifies which fields of an
@@ -1027,6 +1059,7 @@ spec:
                                   description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                   type: string
                               type: object
+                              x-kubernetes-map-type: atomic
                             unhealthyConditions:
                               description: UnhealthyConditions contains a list of
                                 the conditions that determine whether a node is considered
@@ -1062,6 +1095,7 @@ spec:
                                 This means that remediation will be allowed only when:
                                 (a) there are at least 3 unhealthy machines (and)
                                 (b) there are at most 5 unhealthy machines'
+                              pattern: ^\[[0-9]+-[0-9]+\]$
                               type: string
                           type: object
                         template:
@@ -1119,6 +1153,7 @@ spec:
                                         https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                       type: string
                                   type: object
+                                  x-kubernetes-map-type: atomic
                               required:
                               - ref
                               type: object
@@ -1173,6 +1208,7 @@ spec:
                                         https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                       type: string
                                   type: object
+                                  x-kubernetes-map-type: atomic
                               required:
                               - ref
                               type: object
@@ -1211,13 +1247,57 @@ spec:
                     type: array
                 type: object
             type: object
+          status:
+            description: ClusterClassStatus defines the observed state of the ClusterClass.
+            properties:
+              conditions:
+                description: Conditions defines current observed state of the ClusterClass.
+                items:
+                  description: Condition defines an observation of a Cluster API resource
+                    operational state.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned from one status
+                        to another. This should be when the underlying condition changed.
+                        If that is not known, then using the time when the API field
+                        changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: A human readable message indicating details about
+                        the transition. This field may be empty.
+                      type: string
+                    reason:
+                      description: The reason for the condition's last transition
+                        in CamelCase. The specific API may choose whether or not this
+                        field is considered a guaranteed API. This field may not be
+                        empty.
+                      type: string
+                    severity:
+                      description: Severity provides an explicit classification of
+                        Reason code, so the users or machines can immediately understand
+                        the current situation and act accordingly. The Severity field
+                        MUST be set only when Status=False.
+                      type: string
+                    status:
+                      description: Status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: Type of condition in CamelCase or in foo.example.com/CamelCase.
+                        Many .condition.type values are consistent across resources
+                        like Available, but because arbitrary conditions can be useful
+                        (see .node.status.conditions), the ability to deconflict is
+                        important.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - status
+                  - type
+                  type: object
+                type: array
+            type: object
         type: object
     served: true
     storage: true
-    subresources: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
+    subresources:
+      status: {}

@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.8.0
+    controller-gen.kubebuilder.io/version: v0.10.0
   creationTimestamp: null
   name: machines.cluster.x-k8s.io
 spec:
@@ -100,6 +100,7 @@ spec:
                         description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                   data:
                     description: "Data contains the bootstrap data, such as cloud-init
                       details scripts. If nil, the Machine should remain in the Pending
@@ -158,6 +159,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               nodeDrainTimeout:
                 description: 'NodeDrainTimeout is the total amount of time that the
                   controller will spend on draining a node. The default value is 0,
@@ -333,6 +335,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               observedGeneration:
                 description: ObservedGeneration is the latest generation observed
                   by the controller.
@@ -443,6 +446,7 @@ spec:
                         description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                   dataSecretName:
                     description: DataSecretName is the name of the secret that stores
                       the bootstrap data script. If nil, the Machine should remain
@@ -496,6 +500,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               nodeDrainTimeout:
                 description: 'NodeDrainTimeout is the total amount of time that the
                   controller will spend on draining a node. The default value is 0,
@@ -647,7 +652,7 @@ spec:
                     type: string
                   containerRuntimeVersion:
                     description: ContainerRuntime Version reported by the node through
-                      runtime remote API (e.g. docker://1.5.0).
+                      runtime remote API (e.g. containerd://1.4.2).
                     type: string
                   kernelVersion:
                     description: Kernel Version reported by the node from 'uname -r'
@@ -724,6 +729,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               observedGeneration:
                 description: ObservedGeneration is the latest generation observed
                   by the controller.
@@ -833,6 +839,7 @@ spec:
                         description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                   dataSecretName:
                     description: DataSecretName is the name of the secret that stores
                       the bootstrap data script. If nil, the Machine should remain
@@ -886,11 +893,24 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
+              nodeDeletionTimeout:
+                description: NodeDeletionTimeout defines how long the controller will
+                  attempt to delete the Node that the Machine hosts after the Machine
+                  is marked for deletion. A duration of 0 will retry deletion indefinitely.
+                  Defaults to 10 seconds.
+                type: string
               nodeDrainTimeout:
                 description: 'NodeDrainTimeout is the total amount of time that the
                   controller will spend on draining a node. The default value is 0,
                   meaning that the node can be drained without any time limitations.
                   NOTE: NodeDrainTimeout is different from `kubectl drain --timeout`'
+                type: string
+              nodeVolumeDetachTimeout:
+                description: NodeVolumeDetachTimeout is the total amount of time that
+                  the controller will spend on waiting for all volumes to be detached.
+                  The default value is 0, meaning that the volumes can be detached
+                  without any time limitations.
                 type: string
               providerID:
                 description: ProviderID is the identification ID of the machine provided
@@ -942,6 +962,11 @@ spec:
               bootstrapReady:
                 description: BootstrapReady is the state of the bootstrap provider.
                 type: boolean
+              certificatesExpiryDate:
+                description: CertificatesExpiryDate is the expiry date of the machine
+                  certificates. This value is only set for control plane machines.
+                format: date-time
+                type: string
               conditions:
                 description: Conditions defines current service state of the Machine.
                 items:
@@ -1038,7 +1063,7 @@ spec:
                     type: string
                   containerRuntimeVersion:
                     description: ContainerRuntime Version reported by the node through
-                      runtime remote API (e.g. docker://1.5.0).
+                      runtime remote API (e.g. containerd://1.4.2).
                     type: string
                   kernelVersion:
                     description: Kernel Version reported by the node from 'uname -r'
@@ -1115,6 +1140,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               observedGeneration:
                 description: ObservedGeneration is the latest generation observed
                   by the controller.
@@ -1130,9 +1156,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

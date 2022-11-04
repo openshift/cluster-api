@@ -18,14 +18,15 @@ limitations under the License.
 package types
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
 )
@@ -58,7 +59,7 @@ func (n *Node) WithStatus(status string) *Node {
 }
 
 // String returns the name of the node.
-func (n *Node) String() string {
+func (n Node) String() string {
 	return n.Name
 }
 
@@ -98,6 +99,21 @@ func (n *Node) Delete(ctx context.Context) error {
 
 	err = containerRuntime.DeleteContainer(ctx, n.Name)
 	if err != nil {
+		log := ctrl.LoggerFrom(ctx)
+
+		// Use our own context, so we are able to get debug information even
+		// when the context used in the layers above is already timed out.
+		debugCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		var buffer bytes.Buffer
+		err = containerRuntime.ContainerDebugInfo(debugCtx, n.Name, &buffer)
+		if err != nil {
+			log.Error(err, "failed to get logs from the machine container")
+		} else {
+			log.Info("Got logs from the machine container", "output", strings.ReplaceAll(buffer.String(), "\\n", "\n"))
+		}
+
 		return errors.Wrapf(err, "failed to delete container %q", n.Name)
 	}
 
@@ -162,22 +178,6 @@ type ContainerCmd struct {
 	stdin    io.Reader
 	stdout   io.Writer
 	stderr   io.Writer
-}
-
-// RunLoggingOutputOnFail runs the cmd, logging error output if Run returns an error.
-func (c *ContainerCmd) RunLoggingOutputOnFail(ctx context.Context) ([]string, error) {
-	var buff bytes.Buffer
-	c.SetStdout(&buff)
-	c.SetStderr(&buff)
-	err := c.Run(ctx)
-	out := make([]string, 0)
-	if err != nil {
-		scanner := bufio.NewScanner(&buff)
-		for scanner.Scan() {
-			out = append(out, scanner.Text())
-		}
-	}
-	return out, errors.WithStack(err)
 }
 
 // Run will run a configured ContainerCmd inside a container instance.

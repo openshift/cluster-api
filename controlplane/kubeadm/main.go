@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// main is the main package for the Kubeadm Control Plane provider.
 package main
 
 import (
@@ -35,8 +36,10 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	cliflag "k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/logs"
+	logsv1 "k8s.io/component-base/logs/api/v1"
+	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/klogr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -86,10 +89,14 @@ var (
 	webhookCertDir                 string
 	healthAddr                     string
 	etcdDialTimeout                time.Duration
+	logOptions                     = logs.NewOptions()
 )
 
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
+	logs.AddFlags(fs, logs.SkipLoggingConfigurationFlags())
+	logsv1.AddFlags(logOptions, fs)
+
 	fs.StringVar(&metricsBindAddr, "metrics-bind-addr", "localhost:8080",
 		"The address the metric endpoint binds to.")
 
@@ -142,12 +149,21 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	pflag.Parse()
 
-	ctrl.SetLogger(klogr.New())
+	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+
+	// klog.Background will automatically use the right logger.
+	ctrl.SetLogger(klog.Background())
 
 	if profilerAddress != "" {
-		klog.Infof("Profiler listening for requests at %s", profilerAddress)
+		setupLog.Info(fmt.Sprintf("Profiler listening for requests at %s", profilerAddress))
 		go func() {
-			klog.Info(http.ListenAndServe(profilerAddress, nil))
+			srv := http.Server{Addr: profilerAddress, ReadHeaderTimeout: 2 * time.Second}
+			if err := srv.ListenAndServe(); err != nil {
+				setupLog.Error(err, "problem running profiler server")
+			}
 		}()
 	}
 
@@ -207,7 +223,9 @@ func setupChecks(mgr ctrl.Manager) {
 func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	// Set up a ClusterCacheTracker to provide to controllers
 	// requiring a connection to a remote cluster
+	log := ctrl.Log.WithName("remote").WithName("ClusterCacheTracker")
 	tracker, err := remote.NewClusterCacheTracker(mgr, remote.ClusterCacheTrackerOptions{
+		Log:     &log,
 		Indexes: remote.DefaultIndexes,
 		ClientUncachedObjects: []client.Object{
 			&corev1.ConfigMap{},
@@ -223,7 +241,6 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	}
 	if err := (&remote.ClusterCacheReconciler{
 		Client:           mgr.GetClient(),
-		Log:              ctrl.Log.WithName("remote").WithName("ClusterCacheReconciler"),
 		Tracker:          tracker,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(kubeadmControlPlaneConcurrency)); err != nil {

@@ -27,6 +27,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -92,13 +93,13 @@ func (t *healthCheckTarget) needsRemediation(logger logr.Logger, timeoutForMachi
 	now := time.Now()
 
 	if t.Machine.Status.FailureReason != nil {
-		conditions.MarkFalse(t.Machine, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.MachineHasFailureReason, clusterv1.ConditionSeverityWarning, "FailureReason: %v", t.Machine.Status.FailureReason)
+		conditions.MarkFalse(t.Machine, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.MachineHasFailureReason, clusterv1.ConditionSeverityWarning, "FailureReason: %v", *t.Machine.Status.FailureReason)
 		logger.V(3).Info("Target is unhealthy", "failureReason", t.Machine.Status.FailureReason)
 		return true, time.Duration(0)
 	}
 
 	if t.Machine.Status.FailureMessage != nil {
-		conditions.MarkFalse(t.Machine, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.MachineHasFailureReason, clusterv1.ConditionSeverityWarning, "FailureMessage: %v", t.Machine.Status.FailureMessage)
+		conditions.MarkFalse(t.Machine, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.MachineHasFailureReason, clusterv1.ConditionSeverityWarning, "FailureMessage: %v", *t.Machine.Status.FailureMessage)
 		logger.V(3).Info("Target is unhealthy", "failureMessage", t.Machine.Status.FailureMessage)
 		return true, time.Duration(0)
 	}
@@ -147,14 +148,15 @@ func (t *healthCheckTarget) needsRemediation(logger logr.Logger, timeoutForMachi
 		}
 		logger.V(3).Info("Using comparison time", "time", comparisonTime)
 
+		timeoutDuration := timeoutForMachineToHaveNode.Duration
 		if comparisonTime.Add(timeoutForMachineToHaveNode.Duration).Before(now) {
-			conditions.MarkFalse(t.Machine, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.NodeStartupTimeoutReason, clusterv1.ConditionSeverityWarning, "Node failed to report startup in %s", timeoutForMachineToHaveNode.String())
-			logger.V(3).Info("Target is unhealthy: machine has no node", "duration", timeoutForMachineToHaveNode.String())
+			conditions.MarkFalse(t.Machine, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.NodeStartupTimeoutReason, clusterv1.ConditionSeverityWarning, "Node failed to report startup in %s", timeoutDuration)
+			logger.V(3).Info("Target is unhealthy: machine has no node", "duration", timeoutDuration)
 			return true, time.Duration(0)
 		}
 
 		durationUnhealthy := now.Sub(comparisonTime)
-		nextCheck := timeoutForMachineToHaveNode.Duration - durationUnhealthy + time.Second
+		nextCheck := timeoutDuration - durationUnhealthy + time.Second
 
 		return false, nextCheck
 	}
@@ -199,9 +201,10 @@ func (r *Reconciler) getTargetsFromMHC(ctx context.Context, logger logr.Logger, 
 
 	targets := []healthCheckTarget{}
 	for k := range machines {
+		logger.WithValues("Machine", klog.KObj(&machines[k]))
 		skip, reason := shouldSkipRemediation(&machines[k])
 		if skip {
-			logger.Info("skipping remediation", "machine", machines[k].Name, "reason", reason)
+			logger.Info("skipping remediation", "reason", reason)
 			continue
 		}
 

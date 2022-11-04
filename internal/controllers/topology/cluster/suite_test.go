@@ -53,6 +53,11 @@ func TestMain(m *testing.M) {
 		if err := index.AddDefaultIndexes(ctx, mgr); err != nil {
 			panic(fmt.Sprintf("unable to setup index: %v", err))
 		}
+		// Set up the ClusterClassName index explicitly here. This index is ordinarily created in
+		// index.AddDefaultIndexes. That doesn't happen here because the ClusterClass feature flag is not set.
+		if err := index.ByClusterClassName(ctx, mgr); err != nil {
+			panic(fmt.Sprintf("unable to setup index: %v", err))
+		}
 	}
 	setupReconcilers := func(ctx context.Context, mgr ctrl.Manager) {
 		unstructuredCachingClient, err := client.NewDelegatingClient(
@@ -86,10 +91,10 @@ func TestMain(m *testing.M) {
 	SetDefaultEventuallyPollingInterval(100 * time.Millisecond)
 	SetDefaultEventuallyTimeout(30 * time.Second)
 	os.Exit(envtest.Run(ctx, envtest.RunInput{
-		M:                   m,
-		ManagerUncachedObjs: []client.Object{},
-		SetupEnv:            func(e *envtest.Environment) { env = e },
-		SetupIndexes:        setupIndexes,
-		SetupReconcilers:    setupReconcilers,
+		M:                m,
+		SetupEnv:         func(e *envtest.Environment) { env = e },
+		SetupIndexes:     setupIndexes,
+		SetupReconcilers: setupReconcilers,
+		MinK8sVersion:    "v1.22.0", // ClusterClass uses server side apply that went GA in 1.22; we do not support previous version because of bug/inconsistent behaviours in the older release.
 	}))
 }

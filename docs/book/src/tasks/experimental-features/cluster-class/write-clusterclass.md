@@ -3,7 +3,7 @@
 
 A ClusterClass becomes more useful and valuable when it can be used to create many Cluster of a similar 
 shape. The goal of this document is to explain how ClusterClasses can be written in a way that they are 
-flexible enough to be used in as many Cluster as possible by supporting variants of the same base Cluster shape.
+flexible enough to be used in as many Clusters as possible by supporting variants of the same base Cluster shape.
 
 **Table of Contents**
 
@@ -16,6 +16,9 @@ flexible enough to be used in as many Cluster as possible by supporting variants
     * [Complex variable types](#complex-variable-types)
     * [Using variable values in JSON patches](#using-variable-values-in-json-patches)
     * [Optional patches](#optional-patches)
+    * [Version-aware patches](#version-aware-patches)
+* [JSON patches tips &amp; tricks](#json-patches-tips--tricks)
+    
 
 ## Basic ClusterClass
 
@@ -203,8 +206,8 @@ spec:
       openAPIV3Schema:
         type: string
         description: ImageRepository is the container registry to pull images from.
-        default: k8s.gcr.io
-        example: k8s.gcr.io
+        default: registry.k8s.io
+        example: registry.k8s.io
 ```
 
 <aside class="note">
@@ -212,7 +215,7 @@ spec:
 <h1>Supported types</h1>
 
 The following basic types are supported: `string`, `integer`, `number` and `boolean`. We are also 
-supporting complex types, please see the [complex variables](#complex-variables) section.
+supporting complex types, please see the [complex variable types](#complex-variable-types) section.
 
 </aside>
 
@@ -382,11 +385,18 @@ In addition to variables specified in the ClusterClass, the following builtin va
 referenced in patches:
 - `builtin.cluster.{name,namespace}`
 - `builtin.cluster.topology.{version,class}`
-- `builtin.controlPlane.{replicas,version}`
+- `builtin.cluster.network.{serviceDomain,services,pods,ipFamily}`
+- `builtin.controlPlane.{replicas,version,name}`
     - Please note, these variables are only available when patching control plane or control plane 
       machine templates.
+- `builtin.controlPlane.machineTemplate.infrastructureRef.name`
+    - Please note, these variables are only available when using a control plane with machines and 
+      when patching control plane or control plane machine templates.
 - `builtin.machineDeployment.{replicas,version,class,name,topologyName}`
     - Please note, these variables are only available when patching the templates of a MachineDeployment 
+      and contain the values of the current `MachineDeployment` topology.
+- `builtin.machineDeployment.{infrastructureRef.name,bootstrap.configRef.name}`
+    - Please note, these variables are only available when patching the templates of a MachineDeployment
       and contain the values of the current `MachineDeployment` topology.
 
 Builtin variables can be referenced just like regular variables, e.g.:
@@ -443,9 +453,9 @@ spec:
 
 ### Complex variable types
 
-Variables can also be objects and arrays. An object is specified with the type `object` and
-by the schemas of the fields of the object. An array is specified via the type `array` and
-the schema of the array items.
+Variables can also be objects, maps and arrays. An object is specified with the type `object` and
+by the schemas of the fields of the object. A map is specified with the type `object` and the schema 
+of the map values. An array is specified via the type `array` and the schema of the array items.
 
 ```yaml
 apiVersion: cluster.x-k8s.io/v1beta1
@@ -466,6 +476,16 @@ spec:
           # Schema of the noProxy field.
           noProxy:
             type: string
+  - name: mdConfig
+    schema:
+      openAPIV3Schema:
+        type: object
+        additionalProperties:
+          # Schema of the map values.
+          type: object
+          properties:
+            osImage:
+              type: string
   - name: dnsServers
     schema:
       openAPIV3Schema:
@@ -475,7 +495,7 @@ spec:
           type: string
 ```
 
-Objects and arrays can be used in patches either directly by referencing the variable name,
+Objects, maps and arrays can be used in patches either directly by referencing the variable name,
 or by accessing individual fields. For example:
 ```yaml
 apiVersion: cluster.x-k8s.io/v1beta1
@@ -490,6 +510,11 @@ spec:
     valueFrom:
       # Use the url field of the httpProxy variable.
       variable: httpProxy.url
+  - op: add
+    path: /spec/template/spec/customImage
+    valueFrom:
+      # Use the osImage field of the mdConfig variable for the current MD class.
+      template: "{{ (index .mdConfig .builtin.machineDeployment.class).osImage }}"
   - op: add
     path: /spec/template/spec/dnsServers
     valueFrom:
@@ -526,6 +551,23 @@ spec:
           name:
             type: string
 ```
+
+Even if OpenAPI schema allows defining free form objects, e.g.
+
+```yaml
+variables:
+  - name: freeFormObject
+    schema:
+      openAPIV3Schema:
+        type: object
+```
+
+User should be aware that the lack of the validation of users provided data could lead to problems
+when those values are used in patch or when the generated templates are created (see e.g.
+ [6135](https://github.com/kubernetes-sigs/cluster-api/issues/6135)).
+
+As a consequence we recommend avoiding this practice while we are considering alternatives to make
+it explicit for the ClusterClass authors to opt-in in this feature, thus accepting the implied risks.
 
 ### Using variable values in JSON patches
 
@@ -587,6 +629,9 @@ constant default value which can be specified in the schema is not enough.
           # If .vnetName is set, it is used. Otherwise, we will use `{{.builtin.cluster.name}}-vnet`.  
           template: "{{ if .vnetName }}{{.vnetName}}{{else}}{{.builtin.cluster.name}}-vnet{{end}}"
 ```
+When writing templates, a subset of functions from [the sprig library](http://masterminds.github.io/sprig/) can be used to
+write expressions like e.g. `{{ .name | upper }}`. Only functions that are guaranteed to evaluate to the same result
+for a given input are allowed (e.g. `upper` or `max` can be used, while `now` or `randAlpha` can not be used).
 
 ### Optional patches
 
@@ -633,9 +678,153 @@ Of course the same is possible by adding a boolean variable to a configuration o
 
 Builtin variables can be leveraged to apply a patch only for a specific Kubernetes version.
 ```yaml
-    enabledIf: "{{ if eq "v1.21.1" .builtin.controlPlane.version }}true{{end}}"
+    enabledIf: '{{ semverCompare "1.21.1" .builtin.controlPlane.version }}'
 ```
+
+With `semverCompare` and `coalesce` a feature can be enabled in newer versions of Kubernetes for both KubeadmConfigTemplate and KubeadmControlPlane.
+```yaml
+    enabledIf: '{{ semverCompare "^1.22.0" (coalesce .builtin.controlPlane.version .builtin.machineDeployment.version )}}'
+```
+
+<aside class="note">
+
+<h1>Builtin Variables</h1>
+
+Please be aware that while you can use builtin variables, if you use for example a MachineDeployment-specific variable this
+can mean that patches are only applied to some MachineDeployments. `enabledIf` is evaluated for each template that should be patched
+individually.
+
+</aside>
+
+### Version-aware patches
+
+In some cases the ClusterClass authors want a patch to be computed according to the Kubernetes version in use.
+
+While this is not a problem "per se" and it does not differ from writing any other patch, it is important 
+to keep in mind that there could be different Kubernetes version in a Cluster at any time, all of them
+accessible via built in variables:
+ 
+- `builtin.cluster.topology.version` defines the Kubernetes version from `cluster.topology`, and it acts
+  as the desired Kubernetes version for the entire cluster. However, during an upgrade workflow it could happen that
+  some objects in the Cluster are still at the older version.
+- `builtin.controlPlane.version`, represent the desired version for the control plane object; usually this
+  version changes immediately after `cluster.topology.version` is updated (unless there are other operations
+  in progress preventing the upgrade to start).
+- `builtin.machineDeployment.version`, represent the desired version for each specific MachineDeployment object;
+  this version changes only after the upgrade for the control plane is completed, and in case of many
+  MachineDeployments in the same cluster, they are upgraded sequentially.
+
+This info should provide the bases for developing version-aware patches, allowing the patch author to determine when a
+patch should adapt to the new Kubernetes version by choosing one of the above variables. In practice the
+following rules applies to the most common use cases:
+
+- When developing a version-aware patch for the control plane, `builtin.controlPlane.version` must be used.
+- When developing a version-aware patch for MachineDeployments, `builtin.machineDeployment.version` must be used.
+
+**Tips & Tricks**:
+
+Sometimes users need to define variables to be used by version-aware patches, and in this case it is important
+to keep in mind that there could be different Kubernetes versions in a Cluster at any time.
+
+A simple approach to solve this problem is to define a map of version-aware variables, with the key of each item
+being the Kubernetes version. Patch could then use the proper builtin variables as a lookup entry to fetch 
+the corresponding values for the Kubernetes version in use by each object.
+
+## JSON patches tips & tricks
+
+JSON patches specification [RFC6902] requires that the target of
+add operation must exist.
+
+As a consequence ClusterClass authors should pay special attention when the following
+conditions apply in order to prevent errors when a patch is applied:
+
+* the patch tries to `add` a value to an **array** (which is a **slice** in the corresponding go struct)
+* the slice was defined with `omitempty`
+* the slice currently does not exist
+
+A workaround in this particular case is to create the array in the patch instead of adding to the non-existing one.
+When creating the slice, existing values would be overwritten so this should only be used when it does not exist.
+
+The following example shows both cases to consider while writing a patch for adding a value to a slice.
+This patch targets to add a file to the `files` slice of a `KubeadmConfigTemplate` which has [omitempty](https://github.com/kubernetes-sigs/cluster-api/blob/main/bootstrap/kubeadm/api/v1beta1/kubeadmconfig_types.go#L54) set.
+
+{{#tabs name:"tab-configuration-patches" tabs:"Add to existing slice,Create slice"}}
+{{#tab Add to existing slice}}
+
+This patch **requires** the key `.spec.template.spec.files` to exist to succeed.
+
+```yaml
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: ClusterClass
+metadata:
+  name: my-clusterclass
+spec:
+  ...
+  patches:
+  - name: add file
+    definitions:
+    - selector:
+        apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+        kind: KubeadmConfigTemplate
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/files/-
+        value:
+          content: Some content.
+          path: /some/file
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfigTemplate
+metadata:
+  name: "quick-start-default-worker-bootstraptemplate"
+spec:
+  template:
+    spec:
+      ...
+      files:
+      - content: Some other content
+        path: /some/other/file
+```
+
+{{#/tab }}
+{{#tab Create slice}}
+
+This patch would **overwrite** an existing slice at `.spec.template.spec.files`.
+
+```yaml
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: ClusterClass
+metadata:
+  name: my-clusterclass
+spec:
+  ...
+  patches:
+  - name: add file
+    definitions:
+    - selector:
+        apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+        kind: KubeadmConfigTemplate
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/files
+        value:
+        - content: Some content.
+          path: /some/file
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfigTemplate
+metadata:
+  name: "quick-start-default-worker-bootstraptemplate"
+spec:
+  template:
+    spec:
+      ...
+```
+
+{{#/tab }}
+{{#/tabs }}
 
 <!-- links -->
 [Changing a ClusterClass]: ./change-clusterclass.md
 [clusterctl alpha topology plan]: ../../../clusterctl/commands/alpha-topology-plan.md
+[RFC6902]: https://datatracker.ietf.org/doc/html/rfc6902#appendix-A.12

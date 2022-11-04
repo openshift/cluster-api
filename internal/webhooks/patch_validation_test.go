@@ -24,9 +24,11 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/pointer"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
 )
 
@@ -34,6 +36,7 @@ func TestValidatePatches(t *testing.T) {
 	tests := []struct {
 		name         string
 		clusterClass clusterv1.ClusterClass
+		runtimeSDK   bool
 		wantErr      bool
 	}{
 		{
@@ -279,8 +282,9 @@ func TestValidatePatches(t *testing.T) {
 					},
 					Patches: []clusterv1.ClusterClassPatch{
 						{
-							Name:      "patch1",
-							EnabledIf: pointer.String(`template {{ .variableB }}`),
+							Name:        "patch1",
+							EnabledIf:   pointer.String(`template {{ .variableB }}`),
+							Definitions: []clusterv1.PatchDefinition{},
 						},
 					},
 				},
@@ -1378,9 +1382,142 @@ func TestValidatePatches(t *testing.T) {
 			},
 			wantErr: false,
 		},
+
+		// Patch with External
+		{
+			name: "pass if patch defines both external.generateExtension and external.validateExtension",
+			clusterClass: clusterv1.ClusterClass{
+				Spec: clusterv1.ClusterClassSpec{
+					ControlPlane: clusterv1.ControlPlaneClass{
+						LocalObjectTemplate: clusterv1.LocalObjectTemplate{
+							Ref: &corev1.ObjectReference{
+								APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+								Kind:       "ControlPlaneTemplate",
+							},
+						},
+					},
+
+					Patches: []clusterv1.ClusterClassPatch{
+						{
+							Name: "patch1",
+							External: &clusterv1.ExternalPatchDefinition{
+								GenerateExtension: pointer.String("generate-extension"),
+								ValidateExtension: pointer.String("generate-extension"),
+							},
+						},
+					},
+				},
+			},
+			runtimeSDK: true,
+			wantErr:    false,
+		},
+		{
+			name: "error if patch defines both external and RuntimeSDK is not enabled",
+			clusterClass: clusterv1.ClusterClass{
+				Spec: clusterv1.ClusterClassSpec{
+					ControlPlane: clusterv1.ControlPlaneClass{
+						LocalObjectTemplate: clusterv1.LocalObjectTemplate{
+							Ref: &corev1.ObjectReference{
+								APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+								Kind:       "ControlPlaneTemplate",
+							},
+						},
+					},
+
+					Patches: []clusterv1.ClusterClassPatch{
+						{
+							Name: "patch1",
+							External: &clusterv1.ExternalPatchDefinition{
+								GenerateExtension: pointer.String("generate-extension"),
+								ValidateExtension: pointer.String("generate-extension"),
+							},
+						},
+					},
+				},
+			},
+			runtimeSDK: false,
+			wantErr:    true,
+		},
+		{
+			name: "error if patch defines neither external.generateExtension nor external.validateExtension",
+			clusterClass: clusterv1.ClusterClass{
+				Spec: clusterv1.ClusterClassSpec{
+					ControlPlane: clusterv1.ControlPlaneClass{
+						LocalObjectTemplate: clusterv1.LocalObjectTemplate{
+							Ref: &corev1.ObjectReference{
+								APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+								Kind:       "ControlPlaneTemplate",
+							},
+						},
+					},
+
+					Patches: []clusterv1.ClusterClassPatch{
+						{
+							Name:     "patch1",
+							External: &clusterv1.ExternalPatchDefinition{},
+						},
+					},
+				},
+			},
+			runtimeSDK: true,
+			wantErr:    true,
+		},
+		{
+			name: "error if patch defines both external and definitions",
+			clusterClass: clusterv1.ClusterClass{
+				Spec: clusterv1.ClusterClassSpec{
+					ControlPlane: clusterv1.ControlPlaneClass{
+						LocalObjectTemplate: clusterv1.LocalObjectTemplate{
+							Ref: &corev1.ObjectReference{
+								APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+								Kind:       "ControlPlaneTemplate",
+							},
+						},
+					},
+
+					Patches: []clusterv1.ClusterClassPatch{
+						{
+							Name: "patch1",
+							External: &clusterv1.ExternalPatchDefinition{
+								GenerateExtension: pointer.String("generate-extension"),
+								ValidateExtension: pointer.String("generate-extension"),
+							},
+							Definitions: []clusterv1.PatchDefinition{},
+						},
+					},
+				},
+			},
+			runtimeSDK: true,
+			wantErr:    true,
+		},
+		{
+			name: "error if neither external nor definitions is defined",
+			clusterClass: clusterv1.ClusterClass{
+				Spec: clusterv1.ClusterClassSpec{
+					ControlPlane: clusterv1.ControlPlaneClass{
+						LocalObjectTemplate: clusterv1.LocalObjectTemplate{
+							Ref: &corev1.ObjectReference{
+								APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+								Kind:       "ControlPlaneTemplate",
+							},
+						},
+					},
+
+					Patches: []clusterv1.ClusterClassPatch{
+						{
+							Name: "patch1",
+						},
+					},
+				},
+			},
+			runtimeSDK: true,
+			wantErr:    true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, tt.runtimeSDK)()
+
 			g := NewWithT(t)
 
 			errList := validatePatches(&tt.clusterClass)
@@ -1401,7 +1538,7 @@ func Test_validateSelectors(t *testing.T) {
 		wantErr      bool
 	}{
 		{
-			name: "error if no selectors are all set to false or empty",
+			name: "error if selectors are all set to false or empty",
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
 				Kind:       "InfrastructureClusterTemplate",
@@ -1651,6 +1788,65 @@ func Test_validateSelectors(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "fail if selector targets ControlPlane Machine Infrastructure but does not have MatchResources.ControlPlane enabled",
+			selector: clusterv1.PatchSelector{
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Kind:       "InfrastructureMachineTemplate",
+				MatchResources: clusterv1.PatchSelectorMatch{
+					MachineDeploymentClass: &clusterv1.PatchSelectorMatchMachineDeploymentClass{
+						Names: []string{"bb"},
+					},
+					ControlPlane: false,
+				},
+			},
+			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithControlPlaneInfrastructureMachineTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+							Kind:       "InfrastructureMachineTemplate",
+						}),
+				).
+				Build(),
+			wantErr: true,
+		},
+		// The following tests have selectors which match multiple resources at the same time.
+		{
+			name: "fail if selector targets a matching infrastructureCluster reference and a not matching control plane",
+			selector: clusterv1.PatchSelector{
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Kind:       "InfrastructureClusterTemplate",
+				MatchResources: clusterv1.PatchSelectorMatch{
+					InfrastructureCluster: true,
+					ControlPlane:          true,
+				},
+			},
+			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+							Kind:       "InfrastructureClusterTemplate",
+						}),
+				).
+				WithControlPlaneTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+							Kind:       "NonMatchingControlPlaneTemplate",
+						}),
+				).
+				WithControlPlaneInfrastructureMachineTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+							Kind:       "NonMatchingInfrastructureMachineTemplate",
+						}),
+				).
+				Build(),
+			wantErr: true,
+		},
+		{
 			name: "pass if selector targets BOTH an existing ControlPlane MachineInfrastructureTemplate and an existing MachineDeploymentClass InfrastructureTemplate",
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
@@ -1700,7 +1896,63 @@ func Test_validateSelectors(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "fail if selector targets ControlPlane Machine Infrastructure but does not have MatchResources.ControlPlane enabled",
+			name: "fail if selector targets BOTH an existing ControlPlane MachineInfrastructureTemplate and an existing MachineDeploymentClass InfrastructureTemplate but does not match all MachineDeployment classes",
+			selector: clusterv1.PatchSelector{
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Kind:       "InfrastructureMachineTemplate",
+				MatchResources: clusterv1.PatchSelectorMatch{
+					MachineDeploymentClass: &clusterv1.PatchSelectorMatchMachineDeploymentClass{
+						Names: []string{"aa", "bb"},
+					},
+					ControlPlane: true,
+				},
+			},
+			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithControlPlaneTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+							Kind:       "NonMatchingControlPlaneTemplate",
+						}),
+				).
+				WithControlPlaneInfrastructureMachineTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+							Kind:       "InfrastructureMachineTemplate",
+						}),
+				).
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("aa").
+						WithInfrastructureTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+								Kind:       "NonMatchingInfrastructureMachineTemplate",
+							})).
+						WithBootstrapTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+								Kind:       "BootstrapTemplate",
+							})).
+						Build(),
+					*builder.MachineDeploymentClass("bb").
+						WithInfrastructureTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+								Kind:       "InfrastructureMachineTemplate",
+							})).
+						WithBootstrapTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+								Kind:       "BootstrapTemplate",
+							})).
+						Build(),
+				).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "fail if selector targets BOTH an existing ControlPlane MachineInfrastructureTemplate and an existing MachineDeploymentClass InfrastructureTemplate but matches only one",
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
 				Kind:       "InfrastructureMachineTemplate",
@@ -1708,16 +1960,89 @@ func Test_validateSelectors(t *testing.T) {
 					MachineDeploymentClass: &clusterv1.PatchSelectorMatchMachineDeploymentClass{
 						Names: []string{"bb"},
 					},
-					ControlPlane: false,
+					ControlPlane: true,
 				},
 			},
 			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithControlPlaneTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+							Kind:       "NonMatchingControlPlaneTemplate",
+						}),
+				).
 				WithControlPlaneInfrastructureMachineTemplate(
 					refToUnstructured(
 						&corev1.ObjectReference{
 							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
 							Kind:       "InfrastructureMachineTemplate",
 						}),
+				).
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("bb").
+						WithInfrastructureTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+								Kind:       "OtherInfrastructureMachineTemplate",
+							})).
+						WithBootstrapTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+								Kind:       "BootstrapTemplate",
+							})).
+						Build(),
+				).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "fail if selector targets everything but nothing matches",
+			selector: clusterv1.PatchSelector{
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Kind:       "NotMatchingInfrastructureMachineTemplate",
+				MatchResources: clusterv1.PatchSelectorMatch{
+					ControlPlane:          true,
+					InfrastructureCluster: true,
+					MachineDeploymentClass: &clusterv1.PatchSelectorMatchMachineDeploymentClass{
+						Names: []string{"bb"},
+					},
+				},
+			},
+			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+							Kind:       "InfrastructureClusterTemplate",
+						}),
+				).
+				WithControlPlaneTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+							Kind:       "NonMatchingControlPlaneTemplate",
+						}),
+				).
+				WithControlPlaneInfrastructureMachineTemplate(
+					refToUnstructured(
+						&corev1.ObjectReference{
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+							Kind:       "InfrastructureMachineTemplate",
+						}),
+				).
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("bb").
+						WithInfrastructureTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+								Kind:       "OtherInfrastructureMachineTemplate",
+							})).
+						WithBootstrapTemplate(
+							refToUnstructured(&corev1.ObjectReference{
+								APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+								Kind:       "BootstrapTemplate",
+							})).
+						Build(),
 				).
 				Build(),
 			wantErr: true,

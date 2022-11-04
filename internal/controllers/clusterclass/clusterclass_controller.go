@@ -19,6 +19,7 @@ package clusterclass
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -34,13 +35,14 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/external"
 	tlog "sigs.k8s.io/cluster-api/internal/log"
 	"sigs.k8s.io/cluster-api/util/annotations"
-	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	"sigs.k8s.io/cluster-api/util/conversion"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io;bootstrap.cluster.x-k8s.io;controlplane.cluster.x-k8s.io,resources=*,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusterclasses,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusterclasses;clusterclasses/status,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 
 // Reconciler reconciles the ClusterClass object.
@@ -59,7 +61,7 @@ type Reconciler struct {
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&clusterv1.ClusterClass{}).
-		Named("topology/clusterclass").
+		Named("clusterclass").
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Complete(r)
@@ -91,18 +93,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 		return ctrl.Result{}, nil
 	}
 
-	// We use the patchHelper to patch potential changes to the ObjectReferences in ClusterClass.
 	patchHelper, err := patch.NewHelper(clusterClass, r.Client)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create patch helper for %s", tlog.KObj{Obj: clusterClass})
 	}
 
 	defer func() {
 		if err := patchHelper.Patch(ctx, clusterClass); err != nil {
-			reterr = kerrors.NewAggregate([]error{
-				reterr,
-				errors.Wrapf(err, "failed to patch %s", tlog.KObj{Obj: clusterClass})},
-			)
+			reterr = kerrors.NewAggregate([]error{reterr, errors.Wrapf(err, "failed to patch %s", tlog.KObj{Obj: clusterClass})})
+			return
 		}
 	}()
 
@@ -133,37 +132,82 @@ func (r *Reconciler) reconcile(ctx context.Context, clusterClass *clusterv1.Clus
 		}
 	}
 
-	// Ensure all the referenced objects are owned by the ClusterClass and that references are
-	// upgraded to the latest contract.
-	// Nb. Some external objects can be referenced multiple times in the ClusterClass. We
-	// update the API contracts of all the references but we set the owner reference on the unique
-	// external object only once.
+	// Ensure all referenced objects are owned by the ClusterClass.
+	// Nb. Some external objects can be referenced multiple times in the ClusterClass,
+	// but we only want to set the owner reference once per unique external object.
+	// For example the same KubeadmConfigTemplate could be referenced in multiple MachineDeployment
+	// classes.
 	errs := []error{}
-	patchedRefs := sets.NewString()
+	reconciledRefs := sets.NewString()
+	outdatedRefs := map[*corev1.ObjectReference]*corev1.ObjectReference{}
 	for i := range refs {
 		ref := refs[i]
 		uniqueKey := uniqueObjectRefKey(ref)
-		if err := r.reconcileExternal(ctx, clusterClass, ref, !patchedRefs.Has(uniqueKey)); err != nil {
+
+		// Continue as we only have to reconcile every referenced object once.
+		if reconciledRefs.Has(uniqueKey) {
+			continue
+		}
+
+		reconciledRefs.Insert(uniqueKey)
+
+		// Add the ClusterClass as owner reference to the templates so clusterctl move
+		// can identify all related objects and Kubernetes garbage collector deletes
+		// all referenced templates on ClusterClass deletion.
+		if err := r.reconcileExternal(ctx, clusterClass, ref); err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		patchedRefs.Insert(uniqueKey)
+
+		// Check if the template reference is outdated, i.e. it is not using the latest apiVersion
+		// for the current CAPI contract.
+		updatedRef := ref.DeepCopy()
+		if err := conversion.UpdateReferenceAPIContract(ctx, r.Client, r.APIReader, updatedRef); err != nil {
+			errs = append(errs, err)
+		}
+		if ref.GroupVersionKind().Version != updatedRef.GroupVersionKind().Version {
+			outdatedRefs[ref] = updatedRef
+		}
+	}
+	if len(errs) > 0 {
+		return ctrl.Result{}, kerrors.NewAggregate(errs)
 	}
 
-	return ctrl.Result{}, kerrors.NewAggregate(errs)
+	reconcileConditions(clusterClass, outdatedRefs)
+
+	return ctrl.Result{}, nil
 }
 
-func (r *Reconciler) reconcileExternal(ctx context.Context, clusterClass *clusterv1.ClusterClass, ref *corev1.ObjectReference, setOwnerRef bool) error {
+func reconcileConditions(clusterClass *clusterv1.ClusterClass, outdatedRefs map[*corev1.ObjectReference]*corev1.ObjectReference) {
+	if len(outdatedRefs) > 0 {
+		var msg []string
+		for currentRef, updatedRef := range outdatedRefs {
+			msg = append(msg, fmt.Sprintf("Ref %q should be %q", refString(currentRef), refString(updatedRef)))
+		}
+		conditions.Set(
+			clusterClass,
+			conditions.FalseCondition(
+				clusterv1.ClusterClassRefVersionsUpToDateCondition,
+				clusterv1.ClusterClassOutdatedRefVersionsReason,
+				clusterv1.ConditionSeverityWarning,
+				strings.Join(msg, ", "),
+			),
+		)
+		return
+	}
+
+	conditions.Set(
+		clusterClass,
+		conditions.TrueCondition(clusterv1.ClusterClassRefVersionsUpToDateCondition),
+	)
+}
+
+func refString(ref *corev1.ObjectReference) string {
+	return fmt.Sprintf("%s %s/%s", ref.GroupVersionKind().String(), ref.Namespace, ref.Name)
+}
+
+func (r *Reconciler) reconcileExternal(ctx context.Context, clusterClass *clusterv1.ClusterClass, ref *corev1.ObjectReference) error {
 	log := ctrl.LoggerFrom(ctx)
-
-	if err := utilconversion.UpdateReferenceAPIContract(ctx, r.Client, r.APIReader, ref); err != nil {
-		return errors.Wrapf(err, "failed to update reference API contract of %s", tlog.KRef{Ref: ref})
-	}
-
-	// If we dont need to set the ownerReference then return early.
-	if !setOwnerRef {
-		return nil
-	}
 
 	obj, err := external.Get(ctx, r.UnstructuredCachingClient, ref, clusterClass.Namespace)
 	if err != nil {
@@ -173,7 +217,7 @@ func (r *Reconciler) reconcileExternal(ctx context.Context, clusterClass *cluste
 		return errors.Wrapf(err, "failed to get the external object for the cluster class. refGroupVersionKind: %s, refName: %s", ref.GroupVersionKind(), ref.Name)
 	}
 
-	// If external ref is paused, return early.
+	// If referenced object is paused, return early.
 	if annotations.HasPaused(obj) {
 		log.V(3).Info("External object referenced is paused", "refGroupVersionKind", ref.GroupVersionKind(), "refName", ref.Name)
 		return nil

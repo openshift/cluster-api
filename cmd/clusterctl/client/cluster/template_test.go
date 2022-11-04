@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/google/go-github/v33/github"
+	"github.com/google/go-github/v45/github"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -307,6 +307,12 @@ func Test_templateClient_GetFromURL(t *testing.T) {
 	path := filepath.Join(tmpDir, "cluster-template.yaml")
 	g.Expect(os.WriteFile(path, []byte(template), 0600)).To(Succeed())
 
+	// redirect stdin
+	saveStdin := os.Stdin
+	defer func() { os.Stdin = saveStdin }()
+	os.Stdin, err = os.Open(path) //nolint:gosec
+	g.Expect(err).NotTo(HaveOccurred())
+
 	type args struct {
 		templateURL         string
 		targetNamespace     string
@@ -332,6 +338,16 @@ func Test_templateClient_GetFromURL(t *testing.T) {
 			name: "Get from GitHub",
 			args: args{
 				templateURL:         "https://github.com/kubernetes-sigs/cluster-api/blob/main/config/default/cluster-template.yaml",
+				targetNamespace:     "",
+				skipTemplateProcess: false,
+			},
+			want:    template,
+			wantErr: false,
+		},
+		{
+			name: "Get from stdin",
+			args: args{
+				templateURL:         "-",
 				targetNamespace:     "",
 				skipTemplateProcess: false,
 			},

@@ -17,7 +17,7 @@ ROOT_DIR:=$(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 TOOLS_DIR := $(realpath ../../hack/tools)
 TOOLS_BIN_DIR := $(TOOLS_DIR)/bin
 BIN_DIR := bin
-CRATE_INSTALL := $(realpath ../../third_party/japaric-trust/crate_install.sh)
+MDBOOK_INSTALL := $(realpath ../../scripts/ci-install-mdbook.sh)
 
 export PATH := $(TOOLS_BIN_DIR):$(PATH)
 
@@ -34,22 +34,24 @@ RELEASELINK := $(TOOLS_BIN_DIR)/mdbook-releaselink
 $(RELEASELINK): $(TOOLS_DIR)/go.mod
 	cd $(TOOLS_DIR); go build -tags=tools -o $(BIN_DIR)/mdbook-releaselink ./mdbook/releaselink
 
-MDBOOK := $(TOOLS_BIN_DIR)/mdbook
+# Only set MDBOOK if it's not set as an environment variable
+MDBOOK ?= $(TOOLS_BIN_DIR)/mdbook
 $(MDBOOK):
-	$(CRATE_INSTALL) --git rust-lang/mdBook --tag v0.4.11 --to $(TOOLS_BIN_DIR) --force
+	$(MDBOOK_INSTALL) v0.4.11 $(TOOLS_BIN_DIR)
 
-MDBOOK_LINKCHECK := $(TOOLS_BIN_DIR)/mdbook-linkcheck
-$(MDBOOK_LINKCHECK):
-	$(CRATE_INSTALL) --git Michael-F-Bryan/mdbook-linkcheck --tag v0.7.0 --to $(TOOLS_BIN_DIR) --force
+RUNTIME_OPENAPI_GEN_BIN := runtime-openapi-gen
+RUNTIME_OPENAPI_GEN := $(abspath $(TOOLS_BIN_DIR)/$(RUNTIME_OPENAPI_GEN_BIN))
+
+runtimesdk-yaml:
+	$(MAKE) -C $(ROOT_DIR)/../../ $(RUNTIME_OPENAPI_GEN_BIN)
+	$(RUNTIME_OPENAPI_GEN) --version book --output-file ./src/tasks/experimental-features/runtime-sdk/runtime-sdk-openapi.yaml
+
+BOOK_DEPS := runtimesdk-yaml
 
 .PHONY: serve
-serve: $(MDBOOK) $(TABULATE) $(EMBED) $(RELEASELINK) $(MDBOOK_LINKCHECK)
+serve: $(MDBOOK) $(TABULATE) $(EMBED) $(RELEASELINK) runtimesdk-yaml
 	$(MDBOOK) serve
 
 .PHONY: build
-build: $(MDBOOK) $(TABULATE) $(EMBED) $(RELEASELINK) $(MDBOOK_LINKCHECK)
-	$(MDBOOK) build
-
-.PHONY: verify
-verify: $(MDBOOK) $(TABULATE) $(EMBED) $(RELEASELINK) $(MDBOOK_LINKCHECK)
+build: $(MDBOOK) $(TABULATE) $(EMBED) $(RELEASELINK) runtimesdk-yaml
 	$(MDBOOK) build

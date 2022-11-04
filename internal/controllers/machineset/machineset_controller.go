@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -45,6 +46,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
+	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
@@ -117,8 +119,6 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
-	log := ctrl.LoggerFrom(ctx)
-
 	machineSet := &clusterv1.MachineSet{}
 	if err := r.Client.Get(ctx, req.NamespacedName, machineSet); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -129,6 +129,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 		// Error reading the object - requeue the request.
 		return ctrl.Result{}, err
 	}
+
+	// AddOwners adds the owners of MachineSet as k/v pairs to the logger.
+	// Specifically, it will add MachineDeployment.
+	ctx, log, err := clog.AddOwners(ctx, r.Client, machineSet)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	log = log.WithValues("Cluster", klog.KRef(machineSet.ObjectMeta.Namespace, machineSet.Spec.ClusterName))
+	ctx = ctrl.LoggerInto(ctx, log)
 
 	cluster, err := util.GetClusterByName(ctx, r.Client, machineSet.ObjectMeta.Namespace, machineSet.Spec.ClusterName)
 	if err != nil {
@@ -192,7 +202,6 @@ func patchMachineSet(ctx context.Context, patchHelper *patch.Helper, machineSet 
 
 func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, machineSet *clusterv1.MachineSet) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
-	log.V(4).Info("Reconcile MachineSet")
 
 	// Reconcile and retrieve the Cluster object.
 	if machineSet.Labels == nil {
@@ -248,10 +257,12 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 		return ctrl.Result{}, errors.Wrap(err, "failed to list machines")
 	}
 
-	// Filter out irrelevant machines (deleting/mismatch labels) and claim orphaned machines.
+	// Filter out irrelevant machines (i.e. IsControlledBy something else) and claim orphaned machines.
+	// Machines in deleted state are deliberately not excluded https://github.com/kubernetes-sigs/cluster-api/pull/3434.
 	filteredMachines := make([]*clusterv1.Machine, 0, len(allMachines.Items))
 	for idx := range allMachines.Items {
 		machine := &allMachines.Items[idx]
+		log = log.WithValues("Machine", klog.KObj(machine))
 		if shouldExcludeMachine(machineSet, machine) {
 			continue
 		}
@@ -259,11 +270,11 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 		// Attempt to adopt machine if it meets previous conditions and it has no controller references.
 		if metav1.GetControllerOf(machine) == nil {
 			if err := r.adoptOrphan(ctx, machineSet, machine); err != nil {
-				log.Error(err, "Failed to adopt Machine", "machine", machine.Name)
+				log.Error(err, "Failed to adopt Machine")
 				r.recorder.Eventf(machineSet, corev1.EventTypeWarning, "FailedAdopt", "Failed to adopt Machine %q: %v", machine.Name, err)
 				continue
 			}
-			log.Info("Adopted Machine", "machine", machine.Name)
+			log.Info("Adopted Machine")
 			r.recorder.Eventf(machineSet, corev1.EventTypeNormal, "SuccessfulAdopt", "Adopted Machine %q", machine.Name)
 		}
 
@@ -272,13 +283,14 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 
 	var errs []error
 	for _, machine := range filteredMachines {
+		log = log.WithValues("Machine", klog.KObj(machine))
 		// filteredMachines contains machines in deleting status to calculate correct status.
 		// skip remediation for those in deleting status.
 		if !machine.DeletionTimestamp.IsZero() {
 			continue
 		}
 		if conditions.IsFalse(machine, clusterv1.MachineOwnerRemediatedCondition) {
-			log.Info("Deleting unhealthy machine", "machine", machine.GetName())
+			log.Info("Deleting machine because marked as unhealthy by the MachineHealthCheck controller")
 			patch := client.MergeFrom(machine.DeepCopy())
 			if err := r.Client.Delete(ctx, machine); err != nil {
 				errs = append(errs, errors.Wrap(err, "failed to delete"))
@@ -328,7 +340,6 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 
 	// Quickly reconcile until the nodes become Ready.
 	if machineSet.Status.ReadyReplicas != replicas {
-		log.V(4).Info("Some nodes are not ready yet, requeuing until they are ready")
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
@@ -345,10 +356,10 @@ func (r *Reconciler) syncReplicas(ctx context.Context, ms *clusterv1.MachineSet,
 	switch {
 	case diff < 0:
 		diff *= -1
-		log.Info("Too few replicas", "need", *(ms.Spec.Replicas), "creating", diff)
+		log.Info(fmt.Sprintf("MachineSet is scaling up to %d replicas by creating %d machines", *(ms.Spec.Replicas), diff), "replicas", *(ms.Spec.Replicas), "machineCount", len(machines))
 		if ms.Annotations != nil {
 			if _, ok := ms.Annotations[clusterv1.DisableMachineCreate]; ok {
-				log.V(2).Info("Automatic creation of new machines disabled for machine set")
+				log.Info("Automatic creation of new machines disabled for machine set")
 				return nil
 			}
 		}
@@ -358,9 +369,6 @@ func (r *Reconciler) syncReplicas(ctx context.Context, ms *clusterv1.MachineSet,
 		)
 
 		for i := 0; i < diff; i++ {
-			log.Info(fmt.Sprintf("Creating machine %d of %d, ( spec.replicas(%d) > currentMachineCount(%d) )",
-				i+1, diff, *(ms.Spec.Replicas), len(machines)))
-
 			machine := r.getNewMachine(ms)
 
 			// Clone and set the infrastructure and bootstrap references.
@@ -370,7 +378,7 @@ func (r *Reconciler) syncReplicas(ctx context.Context, ms *clusterv1.MachineSet,
 			)
 
 			if machine.Spec.Bootstrap.ConfigRef != nil {
-				bootstrapRef, err = external.CloneTemplate(ctx, &external.CloneTemplateInput{
+				bootstrapRef, err = external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
 					Client:      r.Client,
 					TemplateRef: machine.Spec.Bootstrap.ConfigRef,
 					Namespace:   machine.Namespace,
@@ -386,12 +394,13 @@ func (r *Reconciler) syncReplicas(ctx context.Context, ms *clusterv1.MachineSet,
 				})
 				if err != nil {
 					conditions.MarkFalse(ms, clusterv1.MachinesCreatedCondition, clusterv1.BootstrapTemplateCloningFailedReason, clusterv1.ConditionSeverityError, err.Error())
-					return errors.Wrapf(err, "failed to clone bootstrap configuration for MachineSet %q in namespace %q", ms.Name, ms.Namespace)
+					return errors.Wrapf(err, "failed to clone bootstrap configuration from %s %s while creating a machine", machine.Spec.Bootstrap.ConfigRef.Kind, klog.KRef(machine.Spec.Bootstrap.ConfigRef.Namespace, machine.Spec.Bootstrap.ConfigRef.Name))
 				}
 				machine.Spec.Bootstrap.ConfigRef = bootstrapRef
+				log = log.WithValues(bootstrapRef.Kind, klog.KRef(bootstrapRef.Namespace, bootstrapRef.Name))
 			}
 
-			infraRef, err = external.CloneTemplate(ctx, &external.CloneTemplateInput{
+			infraRef, err = external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
 				Client:      r.Client,
 				TemplateRef: &machine.Spec.InfrastructureRef,
 				Namespace:   machine.Namespace,
@@ -407,30 +416,31 @@ func (r *Reconciler) syncReplicas(ctx context.Context, ms *clusterv1.MachineSet,
 			})
 			if err != nil {
 				conditions.MarkFalse(ms, clusterv1.MachinesCreatedCondition, clusterv1.InfrastructureTemplateCloningFailedReason, clusterv1.ConditionSeverityError, err.Error())
-				return errors.Wrapf(err, "failed to clone infrastructure configuration for MachineSet %q in namespace %q", ms.Name, ms.Namespace)
+				return errors.Wrapf(err, "failed to clone infrastructure machine from %s %s while creating a machine", machine.Spec.InfrastructureRef.Kind, klog.KRef(machine.Spec.InfrastructureRef.Namespace, machine.Spec.InfrastructureRef.Name))
 			}
+			log = log.WithValues(infraRef.Kind, klog.KRef(infraRef.Namespace, infraRef.Name))
 			machine.Spec.InfrastructureRef = *infraRef
 
 			if err := r.Client.Create(ctx, machine); err != nil {
-				log.Error(err, "Unable to create Machine", "machine", machine.Name)
-				r.recorder.Eventf(ms, corev1.EventTypeWarning, "FailedCreate", "Failed to create machine %q: %v", machine.Name, err)
+				log.Error(err, "Error while creating a machine")
+				r.recorder.Eventf(ms, corev1.EventTypeWarning, "FailedCreate", "Failed to create machine: %v", err)
 				errs = append(errs, err)
 				conditions.MarkFalse(ms, clusterv1.MachinesCreatedCondition, clusterv1.MachineCreationFailedReason,
 					clusterv1.ConditionSeverityError, err.Error())
 
 				// Try to cleanup the external objects if the Machine creation failed.
 				if err := r.Client.Delete(ctx, util.ObjectReferenceToUnstructured(*infraRef)); !apierrors.IsNotFound(err) {
-					log.Error(err, "Failed to cleanup infrastructure configuration object after Machine creation error")
+					log.Error(err, "Failed to cleanup infrastructure machine object after Machine creation error", infraRef.Kind, klog.KRef(infraRef.Namespace, infraRef.Name))
 				}
 				if bootstrapRef != nil {
 					if err := r.Client.Delete(ctx, util.ObjectReferenceToUnstructured(*bootstrapRef)); !apierrors.IsNotFound(err) {
-						log.Error(err, "Failed to cleanup bootstrap configuration object after Machine creation error")
+						log.Error(err, "Failed to cleanup bootstrap configuration object after Machine creation error", bootstrapRef.Kind, klog.KRef(bootstrapRef.Namespace, bootstrapRef.Name))
 					}
 				}
 				continue
 			}
 
-			log.Info(fmt.Sprintf("Created machine %d of %d with name %q", i+1, diff, machine.Name))
+			log.Info(fmt.Sprintf("Created machine %d of %d", i+1, diff), "Machine", klog.KObj(machine))
 			r.recorder.Eventf(ms, corev1.EventTypeNormal, "SuccessfulCreate", "Created machine %q", machine.Name)
 			machineList = append(machineList, machine)
 		}
@@ -440,25 +450,29 @@ func (r *Reconciler) syncReplicas(ctx context.Context, ms *clusterv1.MachineSet,
 		}
 		return r.waitForMachineCreation(ctx, machineList)
 	case diff > 0:
-		log.Info("Too many replicas", "need", *(ms.Spec.Replicas), "deleting", diff)
+		log.Info(fmt.Sprintf("MachineSet is scaling down to %d replicas by deleting %d machines", *(ms.Spec.Replicas), diff), "replicas", *(ms.Spec.Replicas), "machineCount", len(machines), "deletePolicy", ms.Spec.DeletePolicy)
 
 		deletePriorityFunc, err := getDeletePriorityFunc(ms)
 		if err != nil {
 			return err
 		}
-		log.Info("Found delete policy", "delete-policy", ms.Spec.DeletePolicy)
 
 		var errs []error
 		machinesToDelete := getMachinesToDeletePrioritized(machines, diff, deletePriorityFunc)
-		for _, machine := range machinesToDelete {
-			if err := r.Client.Delete(ctx, machine); err != nil {
-				log.Error(err, "Unable to delete Machine", "machine", machine.Name)
-				r.recorder.Eventf(ms, corev1.EventTypeWarning, "FailedDelete", "Failed to delete machine %q: %v", machine.Name, err)
-				errs = append(errs, err)
-				continue
+		for i, machine := range machinesToDelete {
+			log := log.WithValues("Machine", klog.KObj(machine))
+			if machine.GetDeletionTimestamp().IsZero() {
+				log.Info(fmt.Sprintf("Deleting machine %d of %d", i+1, diff))
+				if err := r.Client.Delete(ctx, machine); err != nil {
+					log.Error(err, "Unable to delete Machine")
+					r.recorder.Eventf(ms, corev1.EventTypeWarning, "FailedDelete", "Failed to delete machine %q: %v", machine.Name, err)
+					errs = append(errs, err)
+					continue
+				}
+				r.recorder.Eventf(ms, corev1.EventTypeNormal, "SuccessfulDelete", "Deleted machine %q", machine.Name)
+			} else {
+				log.Info(fmt.Sprintf("Waiting for machine %d of %d to be deleted", i+1, diff))
 			}
-			log.Info("Deleted machine", "machine", machine.Name)
-			r.recorder.Eventf(ms, corev1.EventTypeNormal, "SuccessfulDelete", "Deleted machine %q", machine.Name)
 		}
 
 		if len(errs) > 0 {
@@ -561,18 +575,19 @@ func (r *Reconciler) waitForMachineDeletion(ctx context.Context, machineList []*
 	return nil
 }
 
-// MachineToMachineSets is a handler.ToRequestsFunc to be used to enqeue requests for reconciliation
+// MachineToMachineSets is a handler.ToRequestsFunc to be used to enqueue requests for reconciliation
 // for MachineSets that might adopt an orphaned Machine.
 func (r *Reconciler) MachineToMachineSets(o client.Object) []ctrl.Request {
-	ctx := context.Background()
-	// This won't log unless the global logger is set
-	log := ctrl.LoggerFrom(ctx, "object", client.ObjectKeyFromObject(o))
 	result := []ctrl.Request{}
 
 	m, ok := o.(*clusterv1.Machine)
 	if !ok {
 		panic(fmt.Sprintf("Expected a Machine but got a %T", o))
 	}
+
+	// This won't log unless the global logger is set
+	ctx := context.Background()
+	log := ctrl.LoggerFrom(ctx, "Machine", klog.KObj(m))
 
 	// Check if the controller reference is already set and
 	// return an empty result when one is found.
@@ -650,18 +665,20 @@ func (r *Reconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluste
 	templateLabel := labels.Set(ms.Spec.Template.Labels).AsSelectorPreValidated()
 
 	for _, machine := range filteredMachines {
+		log = log.WithValues("Machine", klog.KObj(machine))
+
 		if templateLabel.Matches(labels.Set(machine.Labels)) {
 			fullyLabeledReplicasCount++
 		}
 
 		if machine.Status.NodeRef == nil {
-			log.V(2).Info("Unable to retrieve Node status, missing NodeRef", "machine", machine.Name)
+			log.V(4).Info("Waiting for the machine controller to set status.NodeRef on the Machine")
 			continue
 		}
 
 		node, err := r.getMachineNode(ctx, cluster, machine)
-		if err != nil {
-			log.Error(err, "Unable to retrieve Node status")
+		if err != nil && machine.GetDeletionTimestamp().IsZero() {
+			log.Error(err, "Unable to retrieve Node status", "node", klog.KObj(node))
 			continue
 		}
 
@@ -670,6 +687,8 @@ func (r *Reconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluste
 			if noderefutil.IsNodeAvailable(node, ms.Spec.MinReadySeconds, metav1.Now()) {
 				availableReplicasCount++
 			}
+		} else if machine.GetDeletionTimestamp().IsZero() {
+			log.Info("Waiting for the Kubernetes node on the machine to report ready state")
 		}
 	}
 
@@ -684,17 +703,17 @@ func (r *Reconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluste
 		ms.Status.ReadyReplicas != newStatus.ReadyReplicas ||
 		ms.Status.AvailableReplicas != newStatus.AvailableReplicas ||
 		ms.Generation != ms.Status.ObservedGeneration {
-		// Save the generation number we acted on, otherwise we might wrongfully indicate
-		// that we've seen a spec update when we retry.
-		newStatus.ObservedGeneration = ms.Generation
-		newStatus.DeepCopyInto(&ms.Status)
-
-		log.V(4).Info(fmt.Sprintf("Updating status for %v: %s/%s, ", ms.Kind, ms.Namespace, ms.Name) +
+		log.V(4).Info("Updating status: " +
 			fmt.Sprintf("replicas %d->%d (need %d), ", ms.Status.Replicas, newStatus.Replicas, desiredReplicas) +
 			fmt.Sprintf("fullyLabeledReplicas %d->%d, ", ms.Status.FullyLabeledReplicas, newStatus.FullyLabeledReplicas) +
 			fmt.Sprintf("readyReplicas %d->%d, ", ms.Status.ReadyReplicas, newStatus.ReadyReplicas) +
 			fmt.Sprintf("availableReplicas %d->%d, ", ms.Status.AvailableReplicas, newStatus.AvailableReplicas) +
-			fmt.Sprintf("sequence No: %v->%v", ms.Status.ObservedGeneration, newStatus.ObservedGeneration))
+			fmt.Sprintf("observedGeneration %v->%v", ms.Status.ObservedGeneration, ms.Generation))
+
+		// Save the generation number we acted on, otherwise we might wrongfully indicate
+		// that we've seen a spec update when we retry.
+		newStatus.ObservedGeneration = ms.Generation
+		newStatus.DeepCopyInto(&ms.Status)
 	}
 	switch {
 	// We are scaling up
@@ -710,6 +729,9 @@ func (r *Reconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluste
 		// NOTE: we are checking the number of machines ready so we report resize completed only when the machines
 		// are actually provisioned (vs reporting completed immediately after the last machine object is created). This convention is also used by KCP.
 		if newStatus.ReadyReplicas == newStatus.Replicas {
+			if conditions.IsFalse(ms, clusterv1.ResizedCondition) {
+				log.Info("All the replicas are ready", "replicas", newStatus.ReadyReplicas)
+			}
 			conditions.MarkTrue(ms, clusterv1.ResizedCondition)
 		}
 		// This means that there was no error in generating the desired number of machine objects

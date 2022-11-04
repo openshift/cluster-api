@@ -38,7 +38,7 @@ import (
 )
 
 // TestNewFakeClient is a fake test to document fakeClient usage.
-func TestNewFakeClient(t *testing.T) {
+func TestNewFakeClient(_ *testing.T) {
 	// create a fake config with a provider named P1 and a variable named var
 	repository1Config := config.NewProvider("p1", "url", clusterctlv1.CoreProviderType)
 
@@ -78,6 +78,10 @@ func (f fakeClient) GetProvidersConfig() ([]Provider, error) {
 
 func (f fakeClient) GetProviderComponents(provider string, providerType clusterctlv1.ProviderType, options ComponentsOptions) (Components, error) {
 	return f.internalClient.GetProviderComponents(provider, providerType, options)
+}
+
+func (f fakeClient) GenerateProvider(provider string, providerType clusterctlv1.ProviderType, options ComponentsOptions) (Components, error) {
+	return f.internalClient.GenerateProvider(provider, providerType, options)
 }
 
 func (f fakeClient) GetClusterTemplate(options GetClusterTemplateOptions) (Template, error) {
@@ -169,7 +173,7 @@ func newFakeClient(configClient config.Client) *fakeClient {
 		// converting the client.Kubeconfig to cluster.Kubeconfig alias
 		k := cluster.Kubeconfig(i.Kubeconfig)
 		if _, ok := fake.clusters[k]; !ok {
-			return nil, errors.Errorf("Cluster for kubeconfig %q and/or context %q does not exist.", i.Kubeconfig.Path, i.Kubeconfig.Context)
+			return nil, errors.Errorf("Cluster for kubeconfig %q and/or context %q does not exist", i.Kubeconfig.Path, i.Kubeconfig.Context)
 		}
 		return fake.clusters[k], nil
 	}
@@ -179,7 +183,7 @@ func newFakeClient(configClient config.Client) *fakeClient {
 		InjectClusterClientFactory(clusterClientFactory),
 		InjectRepositoryFactory(func(input RepositoryClientFactoryInput) (repository.Client, error) {
 			if _, ok := fake.repositories[input.Provider.ManifestLabel()]; !ok {
-				return nil, errors.Errorf("Repository for kubeconfig %q does not exist.", input.Provider.ManifestLabel())
+				return nil, errors.Errorf("repository for kubeconfig %q does not exist", input.Provider.ManifestLabel())
 			}
 			return fake.repositories[input.Provider.ManifestLabel()], nil
 		}),
@@ -222,7 +226,7 @@ func newFakeCluster(kubeconfig cluster.Kubeconfig, configClient config.Client) *
 		cluster.InjectPollImmediateWaiter(pollImmediateWaiter),
 		cluster.InjectRepositoryFactory(func(provider config.Provider, configClient config.Client, options ...repository.Option) (repository.Client, error) {
 			if _, ok := fake.repositories[provider.Name()]; !ok {
-				return nil, errors.Errorf("Repository for kubeconfig %q does not exists.", provider.Name())
+				return nil, errors.Errorf("repository for kubeconfig %q does not exist", provider.Name())
 			}
 			return fake.repositories[provider.Name()], nil
 		}),

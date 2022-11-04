@@ -17,6 +17,8 @@ limitations under the License.
 package v1beta1
 
 import (
+	"reflect"
+
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +28,7 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=clusterclasses,shortName=cc,scope=Namespaced,categories=cluster-api
 // +kubebuilder:storageversion
+// +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of ClusterClass"
 
 // ClusterClass is a template which can be used to create managed topologies.
@@ -33,7 +36,8 @@ type ClusterClass struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec ClusterClassSpec `json:"spec,omitempty"`
+	Spec   ClusterClassSpec   `json:"spec,omitempty"`
+	Status ClusterClassStatus `json:"status,omitempty"`
 }
 
 // ClusterClassSpec describes the desired state of the ClusterClass.
@@ -158,6 +162,7 @@ type MachineHealthCheckClass struct {
 	// (a) there are at least 3 unhealthy machines (and)
 	// (b) there are at most 5 unhealthy machines
 	// +optional
+	// +kubebuilder:validation:Pattern=^\[[0-9]+-[0-9]+\]$
 	UnhealthyRange *string `json:"unhealthyRange,omitempty"`
 
 	// Machines older than this duration without a node will be considered to have
@@ -174,6 +179,11 @@ type MachineHealthCheckClass struct {
 	// a controller that lives outside of Cluster API.
 	// +optional
 	RemediationTemplate *corev1.ObjectReference `json:"remediationTemplate,omitempty"`
+}
+
+// IsZero returns true if none of the values of MachineHealthCheckClass are defined.
+func (m MachineHealthCheckClass) IsZero() bool {
+	return reflect.ValueOf(m).IsZero()
 }
 
 // ClusterClassVariable defines a variable which can
@@ -216,12 +226,23 @@ type JSONSchemaProps struct {
 
 	// Properties specifies fields of an object.
 	// NOTE: Can only be set if type is object.
+	// NOTE: Properties is mutually exclusive with AdditionalProperties.
 	// NOTE: This field uses PreserveUnknownFields and Schemaless,
 	// because recursive validation is not possible.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +kubebuilder:validation:Schemaless
 	Properties map[string]JSONSchemaProps `json:"properties,omitempty"`
+
+	// AdditionalProperties specifies the schema of values in a map (keys are always strings).
+	// NOTE: Can only be set if type is object.
+	// NOTE: AdditionalProperties is mutually exclusive with Properties.
+	// NOTE: This field uses PreserveUnknownFields and Schemaless,
+	// because recursive validation is not possible.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	AdditionalProperties *JSONSchemaProps `json:"additionalProperties,omitempty"`
 
 	// Required specifies which fields of an object are required.
 	// NOTE: Can only be set if type is object.
@@ -325,9 +346,16 @@ type ClusterClassPatch struct {
 	// +optional
 	EnabledIf *string `json:"enabledIf,omitempty"`
 
-	// Definitions define the patches inline.
+	// Definitions define inline patches.
 	// Note: Patches will be applied in the order of the array.
-	Definitions []PatchDefinition `json:"definitions"`
+	// Note: Exactly one of Definitions or External must be set.
+	// +optional
+	Definitions []PatchDefinition `json:"definitions,omitempty"`
+
+	// External defines an external patch.
+	// Note: Exactly one of Definitions or External must be set.
+	// +optional
+	External *ExternalPatchDefinition `json:"external,omitempty"`
 }
 
 // PatchDefinition defines a patch which is applied to customize the referenced templates.
@@ -430,12 +458,45 @@ type JSONPatchValue struct {
 	Template *string `json:"template,omitempty"`
 }
 
+// ExternalPatchDefinition defines an external patch.
+// Note: At least one of GenerateExtension or ValidateExtension must be set.
+type ExternalPatchDefinition struct {
+	// GenerateExtension references an extension which is called to generate patches.
+	// +optional
+	GenerateExtension *string `json:"generateExtension,omitempty"`
+
+	// ValidateExtension references an extension which is called to validate the topology.
+	// +optional
+	ValidateExtension *string `json:"validateExtension,omitempty"`
+}
+
 // LocalObjectTemplate defines a template for a topology Class.
 type LocalObjectTemplate struct {
 	// Ref is a required reference to a custom resource
 	// offered by a provider.
 	Ref *corev1.ObjectReference `json:"ref"`
 }
+
+// ANCHOR: ClusterClassStatus
+
+// ClusterClassStatus defines the observed state of the ClusterClass.
+type ClusterClassStatus struct {
+	// Conditions defines current observed state of the ClusterClass.
+	// +optional
+	Conditions Conditions `json:"conditions,omitempty"`
+}
+
+// GetConditions returns the set of conditions for this object.
+func (c *ClusterClass) GetConditions() Conditions {
+	return c.Status.Conditions
+}
+
+// SetConditions sets the conditions on this object.
+func (c *ClusterClass) SetConditions(conditions Conditions) {
+	c.Status.Conditions = conditions
+}
+
+// ANCHOR_END: ClusterClassStatus
 
 // +kubebuilder:object:root=true
 

@@ -627,7 +627,7 @@ func TestPatchHelper(t *testing.T) {
 					return false
 				}
 
-				return objAfter.Spec.Paused == true &&
+				return objAfter.Spec.Paused &&
 					reflect.DeepEqual(obj.Spec.InfrastructureRef, objAfter.Spec.InfrastructureRef)
 			}, timeout).Should(BeTrue())
 		})
@@ -762,7 +762,7 @@ func TestPatchHelper(t *testing.T) {
 			g.Expect(err).NotTo(HaveOccurred())
 
 			t.Log("Updating the object spec")
-			obj.Spec.Replicas = pointer.Int32Ptr(10)
+			obj.Spec.Replicas = pointer.Int32(10)
 
 			t.Log("Patching the object")
 			g.Expect(patcher.Patch(ctx, obj, WithStatusObservedGeneration{})).To(Succeed())
@@ -802,7 +802,7 @@ func TestPatchHelper(t *testing.T) {
 			g.Expect(err).NotTo(HaveOccurred())
 
 			t.Log("Updating the object spec")
-			obj.Spec.Replicas = pointer.Int32Ptr(10)
+			obj.Spec.Replicas = pointer.Int32(10)
 
 			t.Log("Updating the object status")
 			obj.Status.AvailableReplicas = 6

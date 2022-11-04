@@ -30,6 +30,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -44,9 +45,21 @@ import (
 type ObjectMover interface {
 	// Move moves all the Cluster API objects existing in a namespace (or from all the namespaces if empty) to a target management cluster.
 	Move(namespace string, toCluster Client, dryRun bool) error
-	// Backup saves all the Cluster API objects existing in a namespace (or from all the namespaces if empty) to a target management cluster.
+
+	// ToDirectory writes all the Cluster API objects existing in a namespace (or from all the namespaces if empty) to a target directory.
+	ToDirectory(namespace string, directory string) error
+
+	// FromDirectory reads all the Cluster API objects existing in a configured directory to a target management cluster.
+	FromDirectory(toCluster Client, directory string) error
+
+	// Backup saves all the Cluster API objects existing in a namespace (or from all the namespaces if empty) to a target directory.
+	//
+	// Deprecated: This will be dropped in a future release. Please use ToDirectory.
 	Backup(namespace string, directory string) error
+
 	// Restore restores all the Cluster API objects existing in a configured directory to a target management cluster.
+	//
+	// Deprecated: This will be dropped in a future release. Please use FromDirectory.
 	Restore(toCluster Client, directory string) error
 }
 
@@ -93,21 +106,33 @@ func (o *objectMover) Move(namespace string, toCluster Client, dryRun bool) erro
 
 func (o *objectMover) Backup(namespace string, directory string) error {
 	log := logf.Log
-	log.Info("Performing backup...")
+	log.V(5).Info("Deprecated: This function will be dropped in a future release. Please use ToDirectory instead of Backup.")
+	return o.ToDirectory(namespace, directory)
+}
+
+func (o *objectMover) ToDirectory(namespace string, directory string) error {
+	log := logf.Log
+	log.Info("Moving to directory...")
 
 	objectGraph, err := o.getObjectGraph(namespace)
 	if err != nil {
 		return errors.Wrap(err, "failed to get object graph")
 	}
 
-	return o.backup(objectGraph, directory)
+	return o.toDirectory(objectGraph, directory)
 }
 
 func (o *objectMover) Restore(toCluster Client, directory string) error {
 	log := logf.Log
-	log.Info("Performing restore...")
+	log.V(5).Info("Deprecated: This function will be dropped in a future release. Please use FromDirectory instead of Restore.")
+	return o.FromDirectory(toCluster, directory)
+}
 
-	// Build an empty object graph used for the restore sequence not tied to a specific namespace
+func (o *objectMover) FromDirectory(toCluster Client, directory string) error {
+	log := logf.Log
+	log.Info("Moving from directory...")
+
+	// Build an empty object graph used for the fromDirectory sequence not tied to a specific namespace
 	objectGraph := newObjectGraph(o.fromProxy, o.fromProviderInventory)
 
 	// Gets all the types defined by the CRDs installed by clusterctl plus the ConfigMap/Secret core types.
@@ -134,13 +159,13 @@ func (o *objectMover) Restore(toCluster Client, directory string) error {
 	// Completes the graph by setting for each node the list of tenants the node belongs to.
 	objectGraph.setTenants()
 
-	// Check whether nodes are not included in GVK considered for restore.
+	// Check whether nodes are not included in GVK considered for fromDirectory.
 	objectGraph.checkVirtualNode()
 
 	// Restore the objects to the target cluster.
 	proxy := toCluster.Proxy()
 
-	return o.restore(objectGraph, proxy)
+	return o.fromDirectory(objectGraph, proxy)
 }
 
 func (o *objectMover) filesToObjs(dir string) ([]unstructured.Unstructured, error) {
@@ -190,7 +215,7 @@ func (o *objectMover) getObjectGraph(namespace string) (*objectGraph, error) {
 		return nil, errors.Wrap(err, "failed to discover the object graph")
 	}
 
-	// Checks if Cluster API has already completed the provisioning of the infrastructure for the objects involved in the move/backup operation.
+	// Checks if Cluster API has already completed the provisioning of the infrastructure for the objects involved in the move/toDirectory operation.
 	// This is required because if the infrastructure is provisioned, then we can reasonably assume that the objects we are moving/backing up are
 	// not currently waiting for long-running reconciliation loops, and so we can safely rely on the pause field on the Cluster object
 	// for blocking any further object reconciliation on the source objects.
@@ -268,7 +293,7 @@ func (o *objectMover) checkProvisioningCompleted(graph *objectGraph) error {
 	return kerrors.NewAggregate(errList)
 }
 
-// getClusterObj retrieves the the clusterObj corresponding to a node with type Cluster.
+// getClusterObj retrieves the clusterObj corresponding to a node with type Cluster.
 func getClusterObj(proxy Proxy, cluster *node, clusterObj *clusterv1.Cluster) error {
 	c, err := proxy.NewClient()
 	if err != nil {
@@ -286,7 +311,7 @@ func getClusterObj(proxy Proxy, cluster *node, clusterObj *clusterv1.Cluster) er
 	return nil
 }
 
-// getMachineObj retrieves the the machineObj corresponding to a node with type Machine.
+// getMachineObj retrieves the machineObj corresponding to a node with type Machine.
 func getMachineObj(proxy Proxy, machine *node, machineObj *clusterv1.Machine) error {
 	c, err := proxy.NewClient()
 	if err != nil {
@@ -320,9 +345,9 @@ func (o *objectMover) move(graph *objectGraph, toProxy Proxy) error {
 		return err
 	}
 
-	log.V(1).Info("Pausing the source cluster classes")
+	log.V(1).Info("Pausing the source ClusterClasses")
 	if err := setClusterClassPause(o.fromProxy, clusterClasses, true, o.dryRun); err != nil {
-		return errors.Wrap(err, "error pausing cluser classes")
+		return errors.Wrap(err, "error pausing ClusterClasses")
 	}
 
 	// Ensure all the expected target namespaces are in place before creating objects.
@@ -354,10 +379,10 @@ func (o *objectMover) move(graph *objectGraph, toProxy Proxy) error {
 		}
 	}
 
-	// Resume the cluster classes in the target management cluster, so the controllers start reconciling it.
-	log.V(1).Info("Resuming the target cluter classes")
+	// Resume the ClusterClasses in the target management cluster, so the controllers start reconciling it.
+	log.V(1).Info("Resuming the target ClusterClasses")
 	if err := setClusterClassPause(toProxy, clusterClasses, false, o.dryRun); err != nil {
-		return errors.Wrap(err, "error resuming cluster classes")
+		return errors.Wrap(err, "error resuming ClusterClasses")
 	}
 
 	// Reset the pause field on the Cluster object in the target management cluster, so the controllers start reconciling it.
@@ -365,11 +390,11 @@ func (o *objectMover) move(graph *objectGraph, toProxy Proxy) error {
 	return setClusterPause(toProxy, clusters, false, o.dryRun)
 }
 
-func (o *objectMover) backup(graph *objectGraph, directory string) error {
+func (o *objectMover) toDirectory(graph *objectGraph, directory string) error {
 	log := logf.Log
 
 	clusters := graph.getClusters()
-	log.Info("Starting backup of Cluster API objects", "Clusters", len(clusters))
+	log.Info("Starting move of Cluster API objects", "Clusters", len(clusters))
 
 	clusterClasses := graph.getClusterClasses()
 	log.Info("Moving Cluster API objects", "ClusterClasses", len(clusterClasses))
@@ -380,9 +405,9 @@ func (o *objectMover) backup(graph *objectGraph, directory string) error {
 		return err
 	}
 
-	log.V(1).Info("Pausing the source cluster classes")
+	log.V(1).Info("Pausing the source ClusterClasses")
 	if err := setClusterClassPause(o.fromProxy, clusterClasses, true, o.dryRun); err != nil {
-		return errors.Wrap(err, "error pausing cluser classes")
+		return errors.Wrap(err, "error pausing ClusterClasses")
 	}
 
 	// Define the move sequence by processing the ownerReference chain, so we ensure that a Kubernetes object is moved only after its owners.
@@ -400,10 +425,10 @@ func (o *objectMover) backup(graph *objectGraph, directory string) error {
 		}
 	}
 
-	// Resume the cluster classes in the target management cluster, so the controllers start reconciling it.
-	log.V(1).Info("Resuming the target cluter classes")
+	// Resume the ClusterClasses in the target management cluster, so the controllers start reconciling it.
+	log.V(1).Info("Resuming the target ClusterClasses")
 	if err := setClusterClassPause(o.fromProxy, clusterClasses, false, o.dryRun); err != nil {
-		return errors.Wrap(err, "error resuming cluster classes")
+		return errors.Wrap(err, "error resuming ClusterClasses")
 	}
 
 	// Reset the pause field on the Cluster object in the target management cluster, so the controllers start reconciling it.
@@ -411,7 +436,7 @@ func (o *objectMover) backup(graph *objectGraph, directory string) error {
 	return setClusterPause(o.fromProxy, clusters, false, o.dryRun)
 }
 
-func (o *objectMover) restore(graph *objectGraph, toProxy Proxy) error {
+func (o *objectMover) fromDirectory(graph *objectGraph, toProxy Proxy) error {
 	log := logf.Log
 
 	// Get clusters from graph
@@ -442,13 +467,13 @@ func (o *objectMover) restore(graph *objectGraph, toProxy Proxy) error {
 
 	// Resume reconciling the ClusterClasses after being restored from a backup.
 	// By default, during backup, ClusterClasses are paused so they must be unpaused to be used again
-	log.V(1).Info("Resuming the target cluter classes")
+	log.V(1).Info("Resuming the target ClusterClasses")
 	if err := setClusterClassPause(toProxy, clusterClasses, false, o.dryRun); err != nil {
-		return errors.Wrap(err, "error resuming cluster classes")
+		return errors.Wrap(err, "error resuming ClusterClasses")
 	}
 
-	// Resume reconciling the Clusters after being restored from a backup.
-	// By default, during backup, Clusters are paused so they must be unpaused to be used again
+	// Resume reconciling the Clusters after being restored from a directory.
+	// By default, when moved to a directory, Clusters are paused, so they must be unpaused to be used again.
 	log.V(1).Info("Resuming the target cluster")
 	return setClusterPause(toProxy, clusters, false, o.dryRun)
 }
@@ -540,7 +565,7 @@ func setClusterPause(proxy Proxy, clusters []*node, value bool, dryRun bool) err
 	setClusterPauseBackoff := newWriteBackoff()
 	for i := range clusters {
 		cluster := clusters[i]
-		log.V(5).Info("Set Cluster.Spec.Paused", "Paused", value, "Cluster", cluster.identity.Name, "Namespace", cluster.identity.Namespace)
+		log.V(5).Info("Set Cluster.Spec.Paused", "paused", value, "Cluster", klog.KRef(cluster.identity.Namespace, cluster.identity.Name))
 
 		// Nb. The operation is wrapped in a retry loop to make setClusterPause more resilient to unexpected conditions.
 		if err := retryWithExponentialBackoff(setClusterPauseBackoff, func() error {
@@ -971,7 +996,7 @@ func (o *objectMover) restoreTargetObject(nodeToCreate *node, toProxy Proxy) err
 	existingTargetObj.SetAPIVersion(nodeToCreate.restoreObject.GetAPIVersion())
 	existingTargetObj.SetKind(nodeToCreate.restoreObject.GetKind())
 	if err := cTo.Get(ctx, objKey, existingTargetObj); err == nil {
-		log.V(5).Info("Object already exists, skipping restore", nodeToCreate.identity.Kind, nodeToCreate.identity.Name, "Namespace", nodeToCreate.identity.Namespace)
+		log.V(5).Info("Object already exists, skipping moving from directory", nodeToCreate.identity.Kind, nodeToCreate.identity.Name, "Namespace", nodeToCreate.identity.Namespace)
 
 		// Update the nodes UID since it already exits. Any nodes owned by this existing node will be updated when the owner chain is rebuilt
 		nodeToCreate.newUID = existingTargetObj.GetUID()

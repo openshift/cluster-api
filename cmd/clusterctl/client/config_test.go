@@ -56,27 +56,35 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 			// note: these will be sorted by name by the Providers() call, so be sure they are in alphabetical order here too
 			wantProviders: []string{
 				config.ClusterAPIProviderName,
-				config.AWSEKSBootstrapProviderName,
 				config.KubeadmBootstrapProviderName,
+				config.MicroK8sBootstrapProviderName,
 				config.TalosBootstrapProviderName,
-				config.AWSEKSControlPlaneProviderName,
 				config.KubeadmControlPlaneProviderName,
+				config.MicroK8sControlPlaneProviderName,
 				config.NestedControlPlaneProviderName,
 				config.TalosControlPlaneProviderName,
 				config.AWSProviderName,
 				config.AzureProviderName,
 				config.BYOHProviderName,
+				config.CloudStackProviderName,
 				config.DOProviderName,
 				config.DockerProviderName,
 				config.GCPProviderName,
 				config.HetznerProviderName,
 				config.IBMCloudProviderName,
+				config.KubevirtProviderName,
 				config.MAASProviderName,
 				config.Metal3ProviderName,
 				config.NestedProviderName,
+				config.NutanixProviderName,
+				config.OCIProviderName,
 				config.OpenStackProviderName,
+				config.OutscaleProviderName,
 				config.PacketProviderName,
 				config.SideroProviderName,
+				config.VCloudDirectorProviderName,
+				config.VclusterProviderName,
+				config.VirtinkProviderName,
 				config.VSphereProviderName,
 			},
 			wantErr: false,
@@ -89,28 +97,36 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 			// note: these will be sorted by name by the Providers() call, so be sure they are in alphabetical order here too
 			wantProviders: []string{
 				config.ClusterAPIProviderName,
-				config.AWSEKSBootstrapProviderName,
 				customProviderConfig.Name(),
 				config.KubeadmBootstrapProviderName,
+				config.MicroK8sBootstrapProviderName,
 				config.TalosBootstrapProviderName,
-				config.AWSEKSControlPlaneProviderName,
 				config.KubeadmControlPlaneProviderName,
+				config.MicroK8sControlPlaneProviderName,
 				config.NestedControlPlaneProviderName,
 				config.TalosControlPlaneProviderName,
 				config.AWSProviderName,
 				config.AzureProviderName,
 				config.BYOHProviderName,
+				config.CloudStackProviderName,
 				config.DOProviderName,
 				config.DockerProviderName,
 				config.GCPProviderName,
 				config.HetznerProviderName,
 				config.IBMCloudProviderName,
+				config.KubevirtProviderName,
 				config.MAASProviderName,
 				config.Metal3ProviderName,
 				config.NestedProviderName,
+				config.NutanixProviderName,
+				config.OCIProviderName,
 				config.OpenStackProviderName,
+				config.OutscaleProviderName,
 				config.PacketProviderName,
 				config.SideroProviderName,
+				config.VCloudDirectorProviderName,
+				config.VclusterProviderName,
+				config.VirtinkProviderName,
 				config.VSphereProviderName,
 			},
 			wantErr: false,
@@ -259,8 +275,8 @@ func Test_clusterctlClient_templateOptionsToVariables(t *testing.T) {
 					ClusterName:              "foo",
 					TargetNamespace:          "bar",
 					KubernetesVersion:        "v1.2.3",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
-					WorkerMachineCount:       pointer.Int64Ptr(2),
+					ControlPlaneMachineCount: pointer.Int64(1),
+					WorkerMachineCount:       pointer.Int64(2),
 				},
 			},
 			wantVars: map[string]string{
@@ -279,8 +295,8 @@ func Test_clusterctlClient_templateOptionsToVariables(t *testing.T) {
 					ClusterName:              "foo",
 					TargetNamespace:          "bar",
 					KubernetesVersion:        "", // empty means to use value from env variables/config file
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
-					WorkerMachineCount:       pointer.Int64Ptr(2),
+					ControlPlaneMachineCount: pointer.Int64(1),
+					WorkerMachineCount:       pointer.Int64(2),
 				},
 			},
 			wantVars: map[string]string{
@@ -357,7 +373,7 @@ func Test_clusterctlClient_templateOptionsToVariables(t *testing.T) {
 					ClusterName:              "foo",
 					TargetNamespace:          "bar",
 					KubernetesVersion:        "v1.2.3",
-					ControlPlaneMachineCount: pointer.Int64Ptr(-1),
+					ControlPlaneMachineCount: pointer.Int64(-1),
 				},
 			},
 			wantErr: true,
@@ -369,8 +385,8 @@ func Test_clusterctlClient_templateOptionsToVariables(t *testing.T) {
 					ClusterName:              "foo",
 					TargetNamespace:          "bar",
 					KubernetesVersion:        "v1.2.3",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
-					WorkerMachineCount:       pointer.Int64Ptr(-1),
+					ControlPlaneMachineCount: pointer.Int64(1),
+					WorkerMachineCount:       pointer.Int64(-1),
 				},
 			},
 			wantErr: true,
@@ -511,7 +527,7 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -531,7 +547,7 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -551,7 +567,7 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "", // empty triggers usage of the current namespace
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -570,7 +586,7 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -591,7 +607,7 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -727,7 +743,7 @@ func Test_clusterctlClient_GetClusterTemplate_onEmptyCluster(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -747,7 +763,7 @@ func Test_clusterctlClient_GetClusterTemplate_onEmptyCluster(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			wantErr: true,
@@ -762,7 +778,7 @@ func Test_clusterctlClient_GetClusterTemplate_onEmptyCluster(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -783,7 +799,7 @@ func Test_clusterctlClient_GetClusterTemplate_onEmptyCluster(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -825,7 +841,7 @@ func newFakeClientWithoutCluster(configClient config.Client) *fakeClient {
 		InjectConfig(fake.configClient),
 		InjectRepositoryFactory(func(input RepositoryClientFactoryInput) (repository.Client, error) {
 			if _, ok := fake.repositories[input.Provider.ManifestLabel()]; !ok {
-				return nil, errors.Errorf("Repository for kubeconfig %q does not exist.", input.Provider.ManifestLabel())
+				return nil, errors.Errorf("repository for kubeconfig %q does not exist", input.Provider.ManifestLabel())
 			}
 			return fake.repositories[input.Provider.ManifestLabel()], nil
 		}),
@@ -878,7 +894,7 @@ func Test_clusterctlClient_GetClusterTemplate_withoutCluster(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			want: templateValues{
@@ -898,7 +914,7 @@ func Test_clusterctlClient_GetClusterTemplate_withoutCluster(t *testing.T) {
 					},
 					ClusterName:              "test",
 					TargetNamespace:          "ns1",
-					ControlPlaneMachineCount: pointer.Int64Ptr(1),
+					ControlPlaneMachineCount: pointer.Int64(1),
 				},
 			},
 			wantErr: true,
@@ -1030,6 +1046,6 @@ v3: default3`,
 // errReader returns a non-EOF error on the first read.
 type errReader struct{}
 
-func (e *errReader) Read(p []byte) (n int, err error) {
+func (e *errReader) Read(_ []byte) (n int, err error) {
 	return 0, errors.New("read error")
 }

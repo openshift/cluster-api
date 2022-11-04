@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	"github.com/gobuffalo/flect"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -44,6 +43,7 @@ import (
 	"sigs.k8s.io/cluster-api/feature"
 	clustertopologycontroller "sigs.k8s.io/cluster-api/internal/controllers/topology/cluster"
 	"sigs.k8s.io/cluster-api/internal/webhooks"
+	"sigs.k8s.io/cluster-api/util/contract"
 )
 
 const (
@@ -222,6 +222,12 @@ func (t *topologyClient) Plan(in *TopologyPlanInput) (*TopologyPlanOutput, error
 // - no more than 1 cluster in the input.
 // - no more than 1 clusterclass in the input.
 func (t *topologyClient) validateInput(in *TopologyPlanInput) error {
+	// Check if objects of the same Group.Kind are using the same version.
+	// Note: This is because the dryrun client does not guarantee any coversions.
+	if !hasUniqueVersionPerGroupKind(in.Objs) {
+		return fmt.Errorf("objects of the same Group.Kind should use the same apiVersion")
+	}
+
 	// Check all the objects in the input belong to the same namespace.
 	// Note: It is okay if all the objects in the input do not have any namespace.
 	// In such case, the list of unique namespaces will be [""].
@@ -251,9 +257,9 @@ func (t *topologyClient) validateInput(in *TopologyPlanInput) error {
 }
 
 // prepareInput does the following on the input objects:
-// - Set the target namespace on the objects if not set (this operation is generally done by kubectl)
-// - Prepare cluster objects so that the state of the cluster, if modified, correctly represents
-//   the expected changes.
+//   - Set the target namespace on the objects if not set (this operation is generally done by kubectl)
+//   - Prepare cluster objects so that the state of the cluster, if modified, correctly represents
+//     the expected changes.
 func (t *topologyClient) prepareInput(ctx context.Context, in *TopologyPlanInput, apiReader client.Reader) error {
 	if err := t.setMissingNamespaces(in.TargetNamespace, in.Objs); err != nil {
 		return errors.Wrap(err, "failed to set missing namespaces")
@@ -280,8 +286,10 @@ func (t *topologyClient) setMissingNamespaces(currentNamespace string, objs []*u
 		}
 	}
 	// Set namespace on objects that do not have namespace value.
+	// Skip Namespace objects, as they are non-namespaced.
 	for i := range objs {
-		if objs[i].GetNamespace() == "" {
+		isNamespace := objs[i].GroupVersionKind().Kind == namespaceKind
+		if objs[i].GetNamespace() == "" && !isNamespace {
 			objs[i].SetNamespace(currentNamespace)
 		}
 	}
@@ -289,18 +297,20 @@ func (t *topologyClient) setMissingNamespaces(currentNamespace string, objs []*u
 }
 
 // prepareClusters does the following operations on each Cluster in the input.
-// - Check if the Cluster exists in the real apiserver.
-// - If the Cluster exists in the real apiserver we merge the object from the
-//   server with the object from the input. This final object correctly represents the
-//   modified cluster object.
-//   Note: We are using a simple 2-way merge to calculate the final object in this function
-//   to keep the function simple. In reality kubectl does a lot more. This function does not behave exactly
-//   the same way as kubectl does.
+//   - Check if the Cluster exists in the real apiserver.
+//   - If the Cluster exists in the real apiserver we merge the object from the
+//     server with the object from the input. This final object correctly represents the
+//     modified cluster object.
+//     Note: We are using a simple 2-way merge to calculate the final object in this function
+//     to keep the function simple. In reality kubectl does a lot more. This function does not behave exactly
+//     the same way as kubectl does.
+//
 // *Important note*: We do this above operation because the topology reconciler in a
-//   real run takes as input a cluster object from the apiserver that has merged spec of
-//   the changes in the input and the one stored in the server. For example: the cluster
-//   object in the input will not have cluster.spec.infrastructureRef and cluster.spec.controlPlaneRef
-//   but the merged object will have these fields set.
+//
+//	real run takes as input a cluster object from the apiserver that has merged spec of
+//	the changes in the input and the one stored in the server. For example: the cluster
+//	object in the input will not have cluster.spec.infrastructureRef and cluster.spec.controlPlaneRef
+//	but the merged object will have these fields set.
 func (t *topologyClient) prepareClusters(ctx context.Context, clusters []*unstructured.Unstructured, apiReader client.Reader) error {
 	if apiReader == nil {
 		// If there is no backing server there is nothing more to do here.
@@ -499,6 +509,7 @@ func (t *topologyClient) generateCRDs(objs []*unstructured.Unstructured) []*apie
 	crds := []*apiextensionsv1.CustomResourceDefinition{}
 	crdMap := map[string]bool{}
 	var gvk schema.GroupVersionKind
+
 	for _, obj := range objs {
 		gvk = obj.GroupVersionKind()
 		if strings.HasSuffix(gvk.Group, ".cluster.x-k8s.io") && !crdMap[gvk.String()] {
@@ -508,9 +519,10 @@ func (t *topologyClient) generateCRDs(objs []*unstructured.Unstructured) []*apie
 					Kind:       "CustomResourceDefinition",
 				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name: fmt.Sprintf("%s.%s", flect.Pluralize(strings.ToLower(gvk.Kind)), gvk.Group),
+					Name: contract.CalculateCRDName(gvk.Group, gvk.Kind),
 					Labels: map[string]string{
-						clusterv1.GroupVersion.String(): clusterv1.GroupVersion.Version,
+						// Here we assume that all the versions are compatible with the Cluster API contract version.
+						clusterv1.GroupVersion.String(): gvk.Version,
 					},
 				},
 			}
@@ -518,6 +530,7 @@ func (t *topologyClient) generateCRDs(objs []*unstructured.Unstructured) []*apie
 			crdMap[gvk.String()] = true
 		}
 	}
+
 	return crds
 }
 
@@ -618,9 +631,9 @@ func filterObjects(objs []*unstructured.Unstructured, gvks ...schema.GroupVersio
 
 type noOpRecorder struct{}
 
-func (nr *noOpRecorder) Event(_ runtime.Object, _, _, _ string)                       {}
-func (nr *noOpRecorder) Eventf(_ runtime.Object, _, _, _ string, args ...interface{}) {}
-func (nr *noOpRecorder) AnnotatedEventf(_ runtime.Object, _ map[string]string, _, _, _ string, args ...interface{}) {
+func (nr *noOpRecorder) Event(_ runtime.Object, _, _, _ string)                    {}
+func (nr *noOpRecorder) Eventf(_ runtime.Object, _, _, _ string, _ ...interface{}) {}
+func (nr *noOpRecorder) AnnotatedEventf(_ runtime.Object, _ map[string]string, _, _, _ string, _ ...interface{}) {
 }
 
 func objToRef(o *unstructured.Unstructured) *corev1.ObjectReference {
@@ -681,10 +694,31 @@ func clusterClassUsesTemplate(cc *clusterv1.ClusterClass, templateRef *corev1.Ob
 func uniqueNamespaces(objs []*unstructured.Unstructured) []string {
 	ns := sets.NewString()
 	for _, obj := range objs {
+		// Namespace objects do not have metadata.namespace set, but we can add the
+		// name of the obj to the namespace list, as it is another unique namespace.
+		isNamespace := obj.GroupVersionKind().Kind == namespaceKind
+		if isNamespace {
+			ns.Insert(obj.GetName())
+			continue
+		}
+
 		// Note: treat empty namespace (namespace not set) as a unique namespace.
 		// If some have a namespace set and some do not. It is safer to consider them as
 		// objects from different namespaces.
 		ns.Insert(obj.GetNamespace())
 	}
 	return ns.List()
+}
+
+func hasUniqueVersionPerGroupKind(objs []*unstructured.Unstructured) bool {
+	versionMap := map[string]string{}
+	for _, obj := range objs {
+		gvk := obj.GroupVersionKind()
+		gk := gvk.GroupKind().String()
+		if ver, ok := versionMap[gk]; ok && ver != gvk.Version {
+			return false
+		}
+		versionMap[gk] = gvk.Version
+	}
+	return true
 }

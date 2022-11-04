@@ -17,6 +17,7 @@ limitations under the License.
 package builder
 
 import (
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -27,20 +28,179 @@ var (
 	// GenericInfrastructureMachineKind is the Kind for the GenericInfrastructureMachine.
 	GenericInfrastructureMachineKind = "GenericInfrastructureMachine"
 	// GenericInfrastructureMachineCRD is a generic infrastructure machine CRD.
-	GenericInfrastructureMachineCRD = generateCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureMachineKind))
+	GenericInfrastructureMachineCRD = untypedCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureMachineKind))
 
 	// GenericInfrastructureMachineTemplateKind is the Kind for the GenericInfrastructureMachineTemplate.
 	GenericInfrastructureMachineTemplateKind = "GenericInfrastructureMachineTemplate"
 	// GenericInfrastructureMachineTemplateCRD is a generic infrastructure machine template CRD.
-	GenericInfrastructureMachineTemplateCRD = generateCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureMachineTemplateKind))
+	GenericInfrastructureMachineTemplateCRD = untypedCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureMachineTemplateKind))
 
 	// GenericInfrastructureClusterKind is the kind for the GenericInfrastructureCluster type.
 	GenericInfrastructureClusterKind = "GenericInfrastructureCluster"
 	// GenericInfrastructureClusterCRD is a generic infrastructure machine CRD.
-	GenericInfrastructureClusterCRD = generateCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureClusterKind))
+	GenericInfrastructureClusterCRD = untypedCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureClusterKind))
 
 	// GenericInfrastructureClusterTemplateKind is the kind for the GenericInfrastructureClusterTemplate type.
 	GenericInfrastructureClusterTemplateKind = "GenericInfrastructureClusterTemplate"
 	// GenericInfrastructureClusterTemplateCRD is a generic infrastructure machine template CRD.
-	GenericInfrastructureClusterTemplateCRD = generateCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureClusterTemplateKind))
+	GenericInfrastructureClusterTemplateCRD = untypedCRD(InfrastructureGroupVersion.WithKind(GenericInfrastructureClusterTemplateKind))
+
+	// TODO: drop generic CRDs in favour of typed test CRDs.
+
+	// TestInfrastructureClusterTemplateKind is the kind for the TestInfrastructureClusterTemplate type.
+	TestInfrastructureClusterTemplateKind = "TestInfrastructureClusterTemplate"
+	// TestInfrastructureClusterTemplateCRD is a test infrastructure machine template CRD.
+	TestInfrastructureClusterTemplateCRD = testInfrastructureClusterTemplateCRD(InfrastructureGroupVersion.WithKind(TestInfrastructureClusterTemplateKind))
+
+	// TestInfrastructureClusterKind is the kind for the TestInfrastructureCluster type.
+	TestInfrastructureClusterKind = "TestInfrastructureCluster"
+	// TestInfrastructureClusterCRD is a test infrastructure machine CRD.
+	TestInfrastructureClusterCRD = testInfrastructureClusterCRD(InfrastructureGroupVersion.WithKind(TestInfrastructureClusterKind))
+
+	// TestInfrastructureMachineTemplateKind is the kind for the TestInfrastructureMachineTemplate type.
+	TestInfrastructureMachineTemplateKind = "TestInfrastructureMachineTemplate"
+	// TestInfrastructureMachineTemplateCRD is a test infrastructure machine template CRD.
+	TestInfrastructureMachineTemplateCRD = testInfrastructureMachineTemplateCRD(InfrastructureGroupVersion.WithKind(TestInfrastructureMachineTemplateKind))
+
+	// TestInfrastructureMachineKind is the kind for the TestInfrastructureMachine type.
+	TestInfrastructureMachineKind = "TestInfrastructureMachine"
+	// TestInfrastructureMachineCRD is a test infrastructure machine CRD.
+	TestInfrastructureMachineCRD = testInfrastructureMachineCRD(InfrastructureGroupVersion.WithKind(TestInfrastructureMachineKind))
+)
+
+func testInfrastructureClusterTemplateCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefinition {
+	return generateCRD(gvk, map[string]apiextensionsv1.JSONSchemaProps{
+		"metadata": {
+			// NOTE: in CRD there is only a partial definition of metadata schema.
+			// Ref https://github.com/kubernetes-sigs/controller-tools/blob/59485af1c1f6a664655dad49543c474bb4a0d2a2/pkg/crd/gen.go#L185
+			Type: "object",
+		},
+		"spec": {
+			Type: "object",
+			Properties: map[string]apiextensionsv1.JSONSchemaProps{
+				// Mandatory field from the Cluster API contract
+				"template": {
+					Type: "object",
+					Properties: map[string]apiextensionsv1.JSONSchemaProps{
+						"spec": clusterSpecSchema,
+					},
+				},
+			},
+		},
+	})
+}
+
+func testInfrastructureClusterCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefinition {
+	return generateCRD(gvk, map[string]apiextensionsv1.JSONSchemaProps{
+		"metadata": {
+			// NOTE: in CRD there is only a partial definition of metadata schema.
+			// Ref https://github.com/kubernetes-sigs/controller-tools/blob/59485af1c1f6a664655dad49543c474bb4a0d2a2/pkg/crd/gen.go#L185
+			Type: "object",
+		},
+		"spec": clusterSpecSchema,
+		"status": {
+			Type: "object",
+			Properties: map[string]apiextensionsv1.JSONSchemaProps{
+				// mandatory field from the Cluster API contract
+				"ready": {Type: "boolean"},
+				// General purpose fields to be used in different test scenario.
+				"foo": {Type: "string"},
+				"bar": {Type: "string"},
+			},
+			Required: []string{"ready"},
+		},
+	})
+}
+
+func testInfrastructureMachineTemplateCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefinition {
+	return generateCRD(gvk, map[string]apiextensionsv1.JSONSchemaProps{
+		"metadata": {
+			// NOTE: in CRD there is only a partial definition of metadata schema.
+			// Ref https://github.com/kubernetes-sigs/controller-tools/blob/59485af1c1f6a664655dad49543c474bb4a0d2a2/pkg/crd/gen.go#L185
+			Type: "object",
+		},
+		"spec": {
+			Type: "object",
+			Properties: map[string]apiextensionsv1.JSONSchemaProps{
+				// Mandatory field from the Cluster API contract
+				"template": {
+					Type: "object",
+					Properties: map[string]apiextensionsv1.JSONSchemaProps{
+						"metadata": metadataSchema,
+						"spec":     machineSpecSchema,
+					},
+				},
+			},
+		},
+	})
+}
+
+func testInfrastructureMachineCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefinition {
+	return generateCRD(gvk, map[string]apiextensionsv1.JSONSchemaProps{
+		"metadata": {
+			// NOTE: in CRD there is only a partial definition of metadata schema.
+			// Ref https://github.com/kubernetes-sigs/controller-tools/blob/59485af1c1f6a664655dad49543c474bb4a0d2a2/pkg/crd/gen.go#L185
+			Type: "object",
+		},
+		"spec": machineSpecSchema,
+		"status": {
+			Type: "object",
+			Properties: map[string]apiextensionsv1.JSONSchemaProps{
+				// mandatory field from the Cluster API contract
+				"ready": {Type: "boolean"},
+				// General purpose fields to be used in different test scenario.
+				"foo": {Type: "string"},
+				"bar": {Type: "string"},
+			},
+		},
+	})
+}
+
+var (
+	clusterSpecSchema = apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]apiextensionsv1.JSONSchemaProps{
+			// Mandatory field from the Cluster API contract
+			"controlPlaneEndpoint": {
+				Type: "object",
+				Properties: map[string]apiextensionsv1.JSONSchemaProps{
+					"host": {Type: "string"},
+					"port": {Type: "integer"},
+				},
+				Required: []string{"host", "port"},
+			},
+			// General purpose fields to be used in different test scenario.
+			"foo": {Type: "string"},
+			"bar": {Type: "string"},
+			"fooMap": {
+				Type: "object",
+				Properties: map[string]apiextensionsv1.JSONSchemaProps{
+					"foo": {Type: "string"},
+				},
+			},
+			"fooList": {
+				Type: "array",
+				Items: &apiextensionsv1.JSONSchemaPropsOrArray{
+					Schema: &apiextensionsv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]apiextensionsv1.JSONSchemaProps{
+							"foo": {Type: "string"},
+						},
+					},
+				},
+			},
+			// Field for testing
+		},
+	}
+
+	machineSpecSchema = apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]apiextensionsv1.JSONSchemaProps{
+			// Mandatory field from the Cluster API contract
+			"providerID": {Type: "string"},
+			// General purpose fields to be used in different test scenario.
+			"foo": {Type: "string"},
+			"bar": {Type: "string"},
+		},
+	}
 )

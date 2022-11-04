@@ -45,15 +45,14 @@ var _ webhook.Validator = &DockerCluster{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
 func (c *DockerCluster) ValidateCreate() error {
-	allErrs := validateDockerClusterSpec(c.Spec)
-	if len(allErrs) > 0 {
+	if allErrs := validateDockerClusterSpec(c.Spec); len(allErrs) > 0 {
 		return apierrors.NewInvalid(GroupVersion.WithKind("DockerCluster").GroupKind(), c.Name, allErrs)
 	}
 	return nil
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (c *DockerCluster) ValidateUpdate(old runtime.Object) error {
+func (c *DockerCluster) ValidateUpdate(_ runtime.Object) error {
 	return nil
 }
 
@@ -62,8 +61,8 @@ func (c *DockerCluster) ValidateDelete() error {
 	return nil
 }
 
-func defaultDockerClusterSpec(s *DockerClusterSpec) {}
+func defaultDockerClusterSpec(_ *DockerClusterSpec) {}
 
-func validateDockerClusterSpec(s DockerClusterSpec) field.ErrorList {
+func validateDockerClusterSpec(_ DockerClusterSpec) field.ErrorList {
 	return nil
 }

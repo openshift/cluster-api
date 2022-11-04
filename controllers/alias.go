@@ -17,7 +17,8 @@ limitations under the License.
 package controllers
 
 import (
-	"golang.org/x/net/context"
+	"context"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -32,6 +33,7 @@ import (
 	clustertopologycontroller "sigs.k8s.io/cluster-api/internal/controllers/topology/cluster"
 	machinedeploymenttopologycontroller "sigs.k8s.io/cluster-api/internal/controllers/topology/machinedeployment"
 	machinesettopologycontroller "sigs.k8s.io/cluster-api/internal/controllers/topology/machineset"
+	runtimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
 )
 
 // Following types provides access to reconcilers implemented in internal/controllers, thus
@@ -133,6 +135,8 @@ type ClusterTopologyReconciler struct {
 	// race conditions caused by an outdated cache.
 	APIReader client.Reader
 
+	RuntimeClient runtimeclient.Client
+
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
 
@@ -145,6 +149,7 @@ func (r *ClusterTopologyReconciler) SetupWithManager(ctx context.Context, mgr ct
 	return (&clustertopologycontroller.Reconciler{
 		Client:                    r.Client,
 		APIReader:                 r.APIReader,
+		RuntimeClient:             r.RuntimeClient,
 		UnstructuredCachingClient: r.UnstructuredCachingClient,
 		WatchFilterValue:          r.WatchFilterValue,
 	}).SetupWithManager(ctx, mgr, options)

@@ -51,13 +51,13 @@ come up, including gaps in documentation!
 
 If you're a more experienced contributor, looking at unassigned issues in the next release milestone is a good way to find work that has been prioritized. For example, if the latest minor release is `v1.0`, the next release milestone is `v1.1`.
 
-Help and contributions are very welcome in the form of code contributions but also in helping to moderate office hours, triaging issues, fixing/investigating flaky tests, cutting releases, helping new contributors with their questions, reviewing proposals, etc.
+Help and contributions are very welcome in the form of code contributions but also in helping to moderate office hours, triaging issues, fixing/investigating flaky tests, being part of the [release team](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/developer/release-team.md), helping new contributors with their questions, reviewing proposals, etc.
 
 ## Versioning
 
 ### Codebase and Go Modules
 
-> :warning: The project does not follow Go Modules guidelines for compatibility requirements for 1.x semver releases.
+> ⚠ The project does not follow Go Modules guidelines for compatibility requirements for 1.x semver releases.
 
 Cluster API follows upstream Kubernetes semantic versioning. With the v1 release of our codebase, we guarantee the following:
 
@@ -78,7 +78,14 @@ The test module, clusterctl, and experiments do not provide any backward compati
 #### Backporting a patch
 
 We only accept backports of critical bugs, security issues, or bugs without easy workarounds, any
-backport MUST not be breaking for either API or behavioral changes.
+backport MUST not be breaking for either API or behavioral changes. In order to improve user/developer experience
+maintainers can choose to backport:
+- Doc improvements
+- Improvements to CI signal
+- Improvements to the test framework (enabling improvements to provider's test signal)
+- Cert-manager bump (to avoid having branch using cert-manager versions out of support, when possible)
+- Changes required to support new Kubernetes versions, when possible.
+
 We generally do not accept PRs against older release branches.
 
 ### APIs
@@ -111,11 +118,13 @@ this should generally not be the case.
 
 Cluster API maintains the most recent release branch for all supported API and contract versions. Support for this section refers to the ability to backport and release patch versions.
 
-| API Version   | Branch | Supported Until |
-| ------------- | ----------- | ---------- |
-| **v1beta1**   | release-1.0 | current stable |
-| **v1alpha4**  | release-0.4 | 2022-04-06 |
-| **v1alpha3**  | release-0.3 | 2022-02-23 |
+| API Version   | Branch      | Supported Until |
+| ------------- |-------------|-----------------|
+| **v1beta1**   | release-1.2 | current stable  |
+| **v1beta1**   | release-1.1 | 2022-09-15      |
+| **v1beta1**   | release-1.0 | 2022-02-02      |
+| **v1alpha4**  | release-0.4 | 2022-04-06      |
+| **v1alpha3**  | release-0.3 | 2022-02-23      |
 
 - The API version is determined from the GroupVersion defined in the top-level `api/` package.
 - The EOL date is determined from the last release available once a new API version is published.
@@ -133,6 +142,7 @@ Cluster API maintains the most recent release branch for all supported API and c
         - 🐛 (`:bug:`, patch and bugfixes)
         - 📖 (`:book:`, documentation or proposals)
         - 🌱 (`:seedling:`, minor or other)
+1. If your PR has multiple commits, you must [squash them into a single commit](https://kubernetes.io/docs/contribute/new-content/open-a-pr/#squashing-commits) before merging your PR.
 
 Individual commits should not be tagged separately, but will generally be
 assumed to match the PR. For instance, if you have a bugfix in with
@@ -172,14 +182,21 @@ When submitting the PR remember to label it with the 📖 (:book:) icon.
 
 ## Releases
 
-Cluster API uses [GitHub milestones](https://github.com/kubernetes-sigs/cluster-api/milestones) to track releases. Issues in a release milestone have been prioritized and accepted for the release. However, these issues are not committed to the release, unless they are marked as `kind/release-blocking`. Getting them into the release is dependent on someone in the community getting assigned to the issue and completing the work.
-
 - Minor versions CAN be planned and scheduled for each quarter, or sooner if necessary.
   - Each minor version is preceded with one or more planning session.
   - Planning consists of one or more backlog grooming meetings, roadmap amendments,
     and CAEP proposal reviews.
-- Patch versions CAN be planned and scheduled each month for each of the currently supported series (usually N and N-1).
-- Code freeze is in effect 72 hours (3 days) before a release.
+  - Cluster API uses [GitHub milestones](https://github.com/kubernetes-sigs/cluster-api/milestones) to track work
+    for minor releases. 
+  - Adding an issue to a milestone provides forward visibility on what the next release will be, so, as soon as there
+    is the intent to work on an issue for a specific target release, contributors are expected to work with maintainers to 
+    set the milestone on the issue so it will be tracked for the release (note: only major features/bug fixes specifically
+    targeting a release must be tracked; everything else will simply merge when ready without additional toil). 
+  - Before adding an issue to a release milestone, maintainers must ensure that the issue have been triaged and
+    there is an assignee who expressed the intent to complete the work before the release date.
+  - An issue being in the milestone doesn't guarantee inclusion in the release; this depends on the work being
+    completed before the release code freeze target date.
+  - Code freeze is in effect at least 72 hours (3 days) before a major/minor release.
   - Maintainers should communicate the code freeze date at a community meeting preceding the code freeze date.
   - Only critical bug fixes may be merged in between freeze & release.
     - Each bug MUST be associated with an open issue and properly triaged.
@@ -187,18 +204,18 @@ Cluster API uses [GitHub milestones](https://github.com/kubernetes-sigs/cluster-
       - First approver should `/approve` and `/hold`.
       - Second approver should `/approve` and `/hold cancel`.
   - [E2E Test grid](https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi%20e2e%20tests) SHOULD be green before cutting a release.
+- Patch versions CAN be planned and scheduled each month for supported minor releases.
 - Dates in a release are approximations and always subject to change.
-- `Next` milestone is for work that has been triaged, but not prioritized/accepted for any release.
 
 ## Proposal process (CAEP)
 
-The Cluster API Enhacement Proposal is the process this project uses to adopt new features, changes to the APIs, changes to contracts between components, or changes to CLI interfaces.
+The Cluster API Enhancement Proposal is the process this project uses to adopt new features, changes to the APIs, changes to contracts between components, or changes to CLI interfaces.
 
 The [template](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/YYYYMMDD-template.md), and accepted proposals live under [docs/proposals](https://github.com/kubernetes-sigs/cluster-api/tree/main/docs/proposals).
 
-- Proposals or requests for enhacements (RFEs) MUST be associated with an issue.
+- Proposals or requests for enhancements (RFEs) MUST be associated with an issue.
   - Issues can be placed on the roadmap during planning if there is one or more folks
-    that can dedicate time to writing a CAEP and/or implementating it after approval.
+    that can dedicate time to writing a CAEP and/or implementing it after approval.
 - A proposal SHOULD be introduced and discussed during the weekly community meetings or on the
  [Kubernetes SIG Cluster Lifecycle mailing list](https://groups.google.com/forum/#!forum/kubernetes-sig-cluster-lifecycle).
   - Submit and discuss proposals using a collaborative writing platform, preferably Google Docs, share documents with edit permissions with the [Kubernetes SIG Cluster Lifecycle mailing list](https://groups.google.com/forum/#!forum/kubernetes-sig-cluster-lifecycle).
@@ -257,7 +274,16 @@ process.
 
 ## Features and bugs
 
-Open [issues](https://github.com/kubernetes-sigs/cluster-api/issues/new/choose) to report bugs, or minor features.
+Open [issues](https://github.com/kubernetes-sigs/cluster-api/issues/new/choose) to report bugs, or discuss minor feature implementation.
+
+Each new issue will be automatically labeled as `needs-triage`; after being triaged by the maintainers the label 
+will be removed and replaced by one of the following:
+
+- `triage/accepted`: Indicates an issue or PR is ready to be actively worked on.
+- `triage/duplicate`: Indicates an issue is a duplicate of another open issue. 
+- `triage/needs-information`: Indicates an issue needs more information in order to work on it. 
+- `triage/not-reproducible`: Indicates an issue can not be reproduced as described. 
+- `triage/unresolved`: Indicates an issue that can not or will not be resolved. 
 
 For big feature, API and contract amendments, we follow the CAEP process as outlined below.
 
@@ -389,10 +415,16 @@ All our CRD objects should have the following `additionalPrinterColumns` order (
 
 Examples:
 ```bash
-$ kubectl get kubeadmcontrolplane
+kubectl get kubeadmcontrolplane
+```
+```bash
 NAMESPACE            NAME                               INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE     VERSION
 quick-start-d5ufye   quick-start-ntysk0-control-plane   true          true                   1          1       1                       2m44s   v1.23.3
-$ kubectl get machinedeployment
+```
+```bash
+kubectl get machinedeployment
+```
+```bash
 NAMESPACE            NAME                      CLUSTER              REPLICAS   READY   UPDATED   UNAVAILABLE   PHASE       AGE     VERSION
 quick-start-d5ufye   quick-start-ntysk0-md-0   quick-start-ntysk0   1                  1         1             ScalingUp   3m28s   v1.23.3
 ```
@@ -434,11 +466,11 @@ Whenever you meet requisites for taking responsibilities in a subarea, the follo
 3. Get positive feedback and +1s in the PR and wait one week lazy consensus after agreement.
 
 As of today there are following OWNERS files/Owner groups defining sub areas:
-- [Clusterctl](cmd/clusterctl)
-- [kubeadm Bootstrap Provider (CABPK)](bootstrap/kubeadm)
-- [kubeadm Control Plane Provider (KCP)](controlplane/kubeadm)
-- [Cluster Managed topologies, ClusterClass](internal/controllers/topology)
-- [Infrastructure Provider Docker (CAPD)](test/infrastructure/docker)
-- [Test](test)
-- [Test Framework](test/framework)
-- [Docs](docs)
+- [Clusterctl](https://github.com/kubernetes-sigs/cluster-api/tree/main/cmd/clusterctl)
+- [kubeadm Bootstrap Provider (CABPK)](https://github.com/kubernetes-sigs/cluster-api/tree/main/bootstrap/kubeadm)
+- [kubeadm Control Plane Provider (KCP)](https://github.com/kubernetes-sigs/cluster-api/tree/main/controlplane/kubeadm)
+- [Cluster Managed topologies, ClusterClass](https://github.com/kubernetes-sigs/cluster-api/tree/main/internal/controllers/topology)
+- [Infrastructure Provider Docker (CAPD)](https://github.com/kubernetes-sigs/cluster-api/tree/main/test/infrastructure/docker)
+- [Test](https://github.com/kubernetes-sigs/cluster-api/tree/main/test)
+- [Test Framework](https://github.com/kubernetes-sigs/cluster-api/tree/main/test/framework)
+- [Docs](https://github.com/kubernetes-sigs/cluster-api/tree/main/docs)

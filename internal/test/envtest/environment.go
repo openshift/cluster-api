@@ -29,7 +29,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/pkg/errors"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -54,8 +54,13 @@ import (
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
+	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1alpha1"
+	expipamwebhooks "sigs.k8s.io/cluster-api/exp/ipam/webhooks"
+	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
+	runtimewebhooks "sigs.k8s.io/cluster-api/internal/webhooks/runtime"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
+	"sigs.k8s.io/cluster-api/version"
 	"sigs.k8s.io/cluster-api/webhooks"
 )
 
@@ -78,6 +83,8 @@ func init() {
 	utilruntime.Must(addonsv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(controlplanev1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(admissionv1.AddToScheme(scheme.Scheme))
+	utilruntime.Must(runtimev1.AddToScheme(scheme.Scheme))
+	utilruntime.Must(ipamv1.AddToScheme(scheme.Scheme))
 }
 
 // RunInput is the input for Run.
@@ -87,14 +94,18 @@ type RunInput struct {
 	SetupIndexes        func(ctx context.Context, mgr ctrl.Manager)
 	SetupReconcilers    func(ctx context.Context, mgr ctrl.Manager)
 	SetupEnv            func(e *Environment)
+	MinK8sVersion       string
 }
 
 // Run executes the tests of the given testing.M in a test environment.
 // Note: The environment will be created in this func and should not be created before. This func takes a *Environment
-//       because our tests require access to the *Environment. We use this field to make the created Environment available
-//       to the consumer.
+//
+//	because our tests require access to the *Environment. We use this field to make the created Environment available
+//	to the consumer.
+//
 // Note: Test environment creation can be skipped by setting the environment variable `CAPI_DISABLE_TEST_ENV`. This only
-//       makes sense when executing tests which don't require the test environment, e.g. tests using only the fake client.
+//
+//	makes sense when executing tests which don't require the test environment, e.g. tests using only the fake client.
 func Run(ctx context.Context, input RunInput) int {
 	if os.Getenv("CAPI_DISABLE_TEST_ENV") != "" {
 		return input.M.Run()
@@ -112,6 +123,16 @@ func Run(ctx context.Context, input RunInput) int {
 
 	// Start the environment.
 	env.start(ctx)
+
+	if input.MinK8sVersion != "" {
+		if err := version.CheckKubernetesVersion(env.Config, input.MinK8sVersion); err != nil {
+			fmt.Printf("[IMPORTANT] skipping tests after failing version check: %v\n", err)
+			if err := env.stop(); err != nil {
+				fmt.Println("[WARNING] Failed to stop the test environment")
+			}
+			return 0
+		}
+	}
 
 	// Expose the environment.
 	input.SetupEnv(env)
@@ -173,6 +194,14 @@ func newEnvironment(uncachedObjs ...client.Object) *Environment {
 			builder.GenericInfrastructureClusterTemplateCRD.DeepCopy(),
 			builder.GenericRemediationCRD.DeepCopy(),
 			builder.GenericRemediationTemplateCRD.DeepCopy(),
+			builder.TestInfrastructureClusterTemplateCRD.DeepCopy(),
+			builder.TestInfrastructureClusterCRD.DeepCopy(),
+			builder.TestInfrastructureMachineTemplateCRD.DeepCopy(),
+			builder.TestInfrastructureMachineCRD.DeepCopy(),
+			builder.TestBootstrapConfigTemplateCRD.DeepCopy(),
+			builder.TestBootstrapConfigCRD.DeepCopy(),
+			builder.TestControlPlaneTemplateCRD.DeepCopy(),
+			builder.TestControlPlaneCRD.DeepCopy(),
 		},
 		// initialize webhook here to be able to test the envtest install via webhookOptions
 		// This should set LocalServingCertDir and LocalServingPort that are used below.
@@ -253,6 +282,15 @@ func newEnvironment(uncachedObjs ...client.Object) *Environment {
 	if err := (&expv1.MachinePool{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for machinepool: %+v", err)
 	}
+	if err := (&runtimewebhooks.ExtensionConfig{}).SetupWebhookWithManager(mgr); err != nil {
+		klog.Fatalf("unable to create webhook for extensionconfig: %+v", err)
+	}
+	if err := (&expipamwebhooks.IPAddress{}).SetupWebhookWithManager(mgr); err != nil {
+		klog.Fatalf("unable to create webhook for ipaddress: %v", err)
+	}
+	if err := (&expipamwebhooks.IPAddressClaim{}).SetupWebhookWithManager(mgr); err != nil {
+		klog.Fatalf("unable to create webhook for ipaddressclaim: %v", err)
+	}
 
 	return &Environment{
 		Manager: mgr,
@@ -274,7 +312,7 @@ func (e *Environment) start(ctx context.Context) {
 		}
 	}()
 	<-e.Manager.Elected()
-	e.WaitForWebhooks()
+	e.waitForWebhooks()
 }
 
 // stop stops the test environment.
@@ -284,8 +322,8 @@ func (e *Environment) stop() error {
 	return e.env.Stop()
 }
 
-// WaitForWebhooks waits for the webhook server to be available.
-func (e *Environment) WaitForWebhooks() {
+// waitForWebhooks waits for the webhook server to be available.
+func (e *Environment) waitForWebhooks() {
 	port := e.env.WebhookInstallOptions.LocalServingPort
 
 	klog.V(2).Infof("Waiting for webhook port %d to be open prior to running tests", port)
@@ -380,6 +418,44 @@ func (e *Environment) CreateAndWait(ctx context.Context, obj client.Object, opts
 			return true, nil
 		}); err != nil {
 		return errors.Wrapf(err, "object %s, %s is not being added to the testenv client cache", obj.GetObjectKind().GroupVersionKind().String(), key)
+	}
+	return nil
+}
+
+// PatchAndWait creates or updates the given object using server-side apply and waits for the cache to be updated accordingly.
+//
+// NOTE: Waiting for the cache to be updated helps in preventing test flakes due to the cache sync delays.
+func (e *Environment) PatchAndWait(ctx context.Context, obj client.Object, opts ...client.PatchOption) error {
+	key := client.ObjectKeyFromObject(obj)
+	objCopy := obj.DeepCopyObject().(client.Object)
+	if err := e.GetAPIReader().Get(ctx, key, objCopy); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	// Store old resource version, empty string if not found.
+	oldResourceVersion := objCopy.GetResourceVersion()
+
+	if err := e.Client.Patch(ctx, obj, client.Apply, opts...); err != nil {
+		return err
+	}
+
+	// Makes sure the cache is updated with the new object
+	if err := wait.ExponentialBackoff(
+		cacheSyncBackoff,
+		func() (done bool, err error) {
+			if err := e.Get(ctx, key, objCopy); err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, err
+			}
+			if objCopy.GetResourceVersion() == oldResourceVersion {
+				return false, nil
+			}
+			return true, nil
+		}); err != nil {
+		return errors.Wrapf(err, "object %s, %s is not being added to or did not get updated in the testenv client cache", obj.GetObjectKind().GroupVersionKind().String(), key)
 	}
 	return nil
 }

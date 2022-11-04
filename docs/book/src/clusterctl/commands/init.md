@@ -62,6 +62,10 @@ for each selected provider.
 
 You can specify the provider version by appending a version tag to the provider name, e.g. `aws:v0.4.1`.
 
+Pinning the version provides better control over what clusterctl chooses to install
+(usually required in an enterprise environment). Version pinning should always be used when using [image overrides](../configuration.md#image-overrides), or when relying on internal repositories with a separated
+software supply chain, or a custom versioning schema.
+
 </aside>
 
 <aside class="note">
@@ -117,7 +121,7 @@ See [clusterctl configuration](../configuration.md) for more info about provider
 If, for any reasons, the user wants to replace the assets available on a provider repository with a locally available asset,
 the user is required to save the file under `$HOME/.cluster-api/overrides/<provider-label>/<version>/<file-name.yaml>`.
 
-```
+```bash
 $HOME/.cluster-api/overrides/infrastructure-aws/v0.5.2/infrastructure-components.yaml
 ```
 
@@ -139,10 +143,10 @@ The user should ensure the variables required by a provider are set in advance.
 
 <aside class="note">
 
-<h1> How can I known which variables a provider requires? </h1>
+<h1> How can I know which variables a provider requires? </h1>
 
 Users can refer to the provider documentation for the list of variables to be set or use the
-`clusterctl generate provider <provider-name> --describe` command to get a list of expected variable names.
+`clusterctl generate provider --<provider-type> <provider-name> --describe` command to get a list of expected variable names.
 
 </aside>
 
@@ -177,8 +181,8 @@ If this happens, there are no guarantees about the proper functioning of `cluste
 
 Cluster API providers require a cert-manager version supporting the `cert-manager.io/v1` API to be installed in the cluster.
 
-While doing init, clusterctl checks if there is a version of cert-manager already installed. If not, clusterctl will 
-install a default version (currently cert-manager v1.5.3). See [clusterctl configuration](../configuration.md) for
+While doing init, clusterctl checks if there is a version of cert-manager already installed. If not, clusterctl will
+install a default version (currently cert-manager v1.10.0). See [clusterctl configuration](../configuration.md) for
 available options to customize this operation.
 
 <aside class="note warning">
@@ -186,8 +190,11 @@ available options to customize this operation.
 <h1>Warning</h1>
 
 Please note that, if clusterctl installs cert-manager, it will take care of its lifecycle, eventually upgrading it
-during clusterctl upgrade. Instead, if cert-manager is provided by the users, the user is responsible for 
+during clusterctl upgrade. Instead, if cert-manager is provided by the users, the user is responsible for
 upgrading this component when required.
 
 </aside>
 
+## Avoiding GitHub rate limiting
+
+Follow [this](../overview.md#avoiding-github-rate-limiting)

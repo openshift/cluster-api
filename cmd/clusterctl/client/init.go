@@ -38,20 +38,26 @@ type InitOptions struct {
 	// default rules for kubeconfig discovery will be used.
 	Kubeconfig Kubeconfig
 
-	// CoreProvider version (e.g. cluster-api:v0.3.0) to add to the management cluster. If unspecified, the
+	// CoreProvider version (e.g. cluster-api:v1.1.5) to add to the management cluster. If unspecified, the
 	// cluster-api core provider's latest release is used.
 	CoreProvider string
 
-	// BootstrapProviders and versions (e.g. kubeadm:v0.3.0) to add to the management cluster.
+	// BootstrapProviders and versions (e.g. kubeadm:v1.1.5) to add to the management cluster.
 	// If unspecified, the kubeadm bootstrap provider's latest release is used.
 	BootstrapProviders []string
 
 	// InfrastructureProviders and versions (e.g. aws:v0.5.0) to add to the management cluster.
 	InfrastructureProviders []string
 
-	// ControlPlaneProviders and versions (e.g. kubeadm:v0.3.0) to add to the management cluster.
+	// ControlPlaneProviders and versions (e.g. kubeadm:v1.1.5) to add to the management cluster.
 	// If unspecified, the kubeadm control plane provider latest release is used.
 	ControlPlaneProviders []string
+
+	// IPAMProviders and versions (e.g. infoblox:v0.0.1) to add to the management cluster.
+	IPAMProviders []string
+
+	// RuntimeExtensionProviders and versions (e.g. test:v0.0.1) to add to the management cluster.
+	RuntimeExtensionProviders []string
 
 	// TargetNamespace defines the namespace where the providers should be deployed. If unspecified, each provider
 	// will be installed in a provider's default namespace.
@@ -69,6 +75,10 @@ type InitOptions struct {
 	// SkipTemplateProcess allows for skipping the call to the template processor, including also variable replacement in the component YAML.
 	// NOTE this works only if the rawYaml is a valid yaml by itself, like e.g when using envsubst/the simple processor.
 	skipTemplateProcess bool
+
+	// IgnoreValidationErrors allows for skipping the validation of provider installs.
+	// NOTE this should only be used for development
+	IgnoreValidationErrors bool
 }
 
 // Init initializes a management cluster by adding the requested list of providers.
@@ -108,7 +118,10 @@ func (c *clusterctlClient) Init(options InitOptions) ([]Components, error) {
 	// - There should be only one instance of the same provider.
 	// - All the providers must support the same API Version of Cluster API (contract)
 	if err := installer.Validate(); err != nil {
-		return nil, err
+		if !options.IgnoreValidationErrors {
+			return nil, err
+		}
+		log.Error(err, "Ignoring validation errors")
 	}
 
 	// Before installing the providers, ensure the cert-manager Webhook is in place.
@@ -190,10 +203,16 @@ func (c *clusterctlClient) InitImages(options InitOptions) ([]string, error) {
 func (c *clusterctlClient) setupInstaller(cluster cluster.Client, options InitOptions) (cluster.ProviderInstaller, error) {
 	installer := cluster.ProviderInstaller()
 
+	providerList, err := cluster.ProviderInventory().List()
+	if err != nil {
+		return nil, err
+	}
+
 	addOptions := addToInstallerOptions{
 		installer:           installer,
 		targetNamespace:     options.TargetNamespace,
 		skipTemplateProcess: options.skipTemplateProcess,
+		providerList:        providerList,
 	}
 
 	if options.CoreProvider != "" {
@@ -211,6 +230,14 @@ func (c *clusterctlClient) setupInstaller(cluster cluster.Client, options InitOp
 	}
 
 	if err := c.addToInstaller(addOptions, clusterctlv1.InfrastructureProviderType, options.InfrastructureProviders...); err != nil {
+		return nil, err
+	}
+
+	if err := c.addToInstaller(addOptions, clusterctlv1.IPAMProviderType, options.IPAMProviders...); err != nil {
+		return nil, err
+	}
+
+	if err := c.addToInstaller(addOptions, clusterctlv1.RuntimeExtensionProviderType, options.RuntimeExtensionProviders...); err != nil {
 		return nil, err
 	}
 
@@ -245,6 +272,7 @@ type addToInstallerOptions struct {
 	installer           cluster.ProviderInstaller
 	targetNamespace     string
 	skipTemplateProcess bool
+	providerList        *clusterctlv1.ProviderList
 }
 
 // addToInstaller adds the components to the install queue and checks that the actual provider type match the target group.
@@ -268,6 +296,17 @@ func (c *clusterctlClient) addToInstaller(options addToInstallerOptions, provide
 
 		if components.Type() != providerType {
 			return errors.Errorf("can't use %q provider as an %q, it is a %q", provider, providerType, components.Type())
+		}
+
+		// If a provider of the same name, type and version already exists in the Cluster skip adding it to the installer.
+		matchingProviders := options.providerList.FilterByProviderNameNamespaceTypeVersion(
+			components.Name(),
+			components.TargetNamespace(),
+			components.Type(),
+			components.Version(),
+		)
+		if len(matchingProviders) != 0 {
+			continue
 		}
 
 		options.installer.Add(components)
