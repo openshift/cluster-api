@@ -18,29 +18,31 @@ package patches
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	. "github.com/onsi/gomega"
-	"github.com/pkg/errors"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/pointer"
+	. "sigs.k8s.io/controller-runtime/pkg/envtest/komega"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/patches/api"
+	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/scope"
+	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
-	. "sigs.k8s.io/cluster-api/internal/test/matchers"
 )
 
 func TestApply(t *testing.T) {
-	type patch struct {
-		name    string
-		patches []api.GenerateResponsePatch
-	}
+	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
 	type expectedFields struct {
 		infrastructureCluster                          map[string]interface{}
 		controlPlane                                   map[string]interface{}
@@ -50,9 +52,11 @@ func TestApply(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		patches        []patch
-		expectedFields expectedFields
+		name                   string
+		patches                []clusterv1.ClusterClassPatch
+		externalPatchResponses map[string]runtimehooksv1.ResponseObject
+		expectedFields         expectedFields
+		wantErr                bool
 	}{
 		{
 			name: "Should preserve desired state, if there are no patches",
@@ -61,45 +65,61 @@ func TestApply(t *testing.T) {
 		},
 		{
 			name: "Should apply JSON patches to InfraCluster, ControlPlane and ControlPlaneInfrastructureMachineTemplate",
-			patches: []patch{
+			patches: []clusterv1.ClusterClassPatch{
 				{
-					name: "fake-patch1",
-					patches: []api.GenerateResponsePatch{
+					Name: "fake-patch1",
+					Definitions: []clusterv1.PatchDefinition{
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureClusterTemplateKind,
-								TemplateType: api.InfrastructureClusterTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.InfrastructureGroupVersion.String(),
+								Kind:       builder.GenericInfrastructureClusterTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									InfrastructureCluster: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"infraCluster"}]
-							`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/resource",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"infraCluster"`)},
+								},
+							},
 						},
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.ControlPlaneGroupVersion.String(),
-								Kind:         builder.GenericControlPlaneTemplateKind,
-								TemplateType: api.ControlPlaneTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.ControlPlaneGroupVersion.String(),
+								Kind:       builder.GenericControlPlaneTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									ControlPlane: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"controlPlane"}]
-							`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/resource",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"controlPlane"`)},
+								},
+							},
 						},
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureMachineTemplateKind,
-								TemplateType: api.ControlPlaneInfrastructureMachineTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.InfrastructureGroupVersion.String(),
+								Kind:       builder.GenericInfrastructureMachineTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									ControlPlane: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"controlPlaneInfrastructureMachineTemplate"}]
-							`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/resource",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"controlPlaneInfrastructureMachineTemplate"`)},
+								},
+							},
 						},
 					},
-				}},
+				},
+			},
 			expectedFields: expectedFields{
 				infrastructureCluster: map[string]interface{}{
 					"spec.resource": "infraCluster",
@@ -114,163 +134,107 @@ func TestApply(t *testing.T) {
 		},
 		{
 			name: "Should apply JSON patches to MachineDeployment templates",
-			patches: []patch{
+			patches: []clusterv1.ClusterClassPatch{
 				{
-					name: "fake-patch1",
-					patches: []api.GenerateResponsePatch{
-						{ // Set /spec/template/spec/resource=topo1-infra in InfrastructureMachineTemplate of default-worker-topo1.
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureMachineTemplateKind,
-								TemplateType: api.MachineDeploymentInfrastructureMachineTemplateType,
-								MachineDeploymentRef: api.MachineDeploymentRef{
-									TopologyName: "default-worker-topo1",
-									Class:        "default-worker",
+					Name: "fake-patch1",
+					Definitions: []clusterv1.PatchDefinition{
+						{
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.InfrastructureGroupVersion.String(),
+								Kind:       builder.GenericInfrastructureMachineTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									MachineDeploymentClass: &clusterv1.PatchSelectorMatchMachineDeploymentClass{
+										Names: []string{"default-worker"},
+									},
 								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"topo1-infra"}]
-							`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/resource",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"default-worker-infra"`)},
+								},
+							},
 						},
-						{ // Set /spec/template/spec/resource=topo1-bootstrap in BootstrapTemplate of default-worker-topo1.
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.BootstrapGroupVersion.String(),
-								Kind:         builder.GenericBootstrapConfigTemplateKind,
-								TemplateType: api.MachineDeploymentBootstrapConfigTemplateType,
-								MachineDeploymentRef: api.MachineDeploymentRef{
-									TopologyName: "default-worker-topo1",
-									Class:        "default-worker",
+						{
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.BootstrapGroupVersion.String(),
+								Kind:       builder.GenericBootstrapConfigTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									MachineDeploymentClass: &clusterv1.PatchSelectorMatchMachineDeploymentClass{
+										Names: []string{"default-worker"},
+									},
 								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"topo1-bootstrap"}]
-							`)},
-							PatchType: api.JSONPatchType,
-						},
-						{ // Set /spec/template/spec/resource=topo2-infra in InfrastructureMachineTemplate of default-worker-topo2.
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureMachineTemplateKind,
-								TemplateType: api.MachineDeploymentInfrastructureMachineTemplateType,
-								MachineDeploymentRef: api.MachineDeploymentRef{
-									TopologyName: "default-worker-topo2",
-									Class:        "default-worker",
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/resource",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"default-worker-bootstrap"`)},
 								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"topo2-infra"}]
-							`)},
-							PatchType: api.JSONPatchType,
-						},
-						{ // Set /spec/template/spec/resource=topo2-bootstrap in BootstrapTemplate of default-worker-topo2.
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.BootstrapGroupVersion.String(),
-								Kind:         builder.GenericBootstrapConfigTemplateKind,
-								TemplateType: api.MachineDeploymentBootstrapConfigTemplateType,
-								MachineDeploymentRef: api.MachineDeploymentRef{
-									TopologyName: "default-worker-topo2",
-									Class:        "default-worker",
-								},
-							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"topo2-bootstrap"}]
-							`)},
-							PatchType: api.JSONPatchType,
 						},
 					},
 				},
 			},
 			expectedFields: expectedFields{
 				machineDeploymentBootstrapTemplate: map[string]map[string]interface{}{
-					"default-worker-topo1": {"spec.template.spec.resource": "topo1-bootstrap"},
-					"default-worker-topo2": {"spec.template.spec.resource": "topo2-bootstrap"},
+					"default-worker-topo1": {"spec.template.spec.resource": "default-worker-bootstrap"},
+					"default-worker-topo2": {"spec.template.spec.resource": "default-worker-bootstrap"},
 				},
 				machineDeploymentInfrastructureMachineTemplate: map[string]map[string]interface{}{
-					"default-worker-topo1": {"spec.template.spec.resource": "topo1-infra"},
-					"default-worker-topo2": {"spec.template.spec.resource": "topo2-infra"},
-				},
-			},
-		},
-		{
-			name: "Should apply same JSON patches to MachineDeployment templates",
-			patches: []patch{
-				{
-					name: "fake-patch1",
-					patches: []api.GenerateResponsePatch{
-						{ // Set /spec/template/spec/resource=infra in InfrastructureMachineTemplate of default-worker-topo1.
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureMachineTemplateKind,
-								TemplateType: api.MachineDeploymentInfrastructureMachineTemplateType,
-								MachineDeploymentRef: api.MachineDeploymentRef{
-									TopologyName: "default-worker-topo1",
-									Class:        "default-worker",
-								},
-							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"infra"}]
-							`)},
-							PatchType: api.JSONPatchType,
-						},
-						{ // Set /spec/template/spec/resource=infra in InfrastructureMachineTemplate of default-worker-topo2.
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureMachineTemplateKind,
-								TemplateType: api.MachineDeploymentInfrastructureMachineTemplateType,
-								MachineDeploymentRef: api.MachineDeploymentRef{
-									TopologyName: "default-worker-topo2",
-									Class:        "default-worker",
-								},
-							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/resource","value":"infra"}]
-							`)},
-							PatchType: api.JSONPatchType,
-						},
-					},
-				},
-			},
-			expectedFields: expectedFields{
-				machineDeploymentInfrastructureMachineTemplate: map[string]map[string]interface{}{
-					"default-worker-topo1": {"spec.template.spec.resource": "infra"},
-					"default-worker-topo2": {"spec.template.spec.resource": "infra"},
+					"default-worker-topo1": {"spec.template.spec.resource": "default-worker-infra"},
+					"default-worker-topo2": {"spec.template.spec.resource": "default-worker-infra"},
 				},
 			},
 		},
 		{
 			name: "Should apply JSON patches in the correct order",
-			patches: []patch{
+			patches: []clusterv1.ClusterClassPatch{
 				{
-					name: "fake-patch1",
-					patches: []api.GenerateResponsePatch{
+					Name: "fake-patch1",
+					Definitions: []clusterv1.PatchDefinition{
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.ControlPlaneGroupVersion.String(),
-								Kind:         builder.GenericControlPlaneTemplateKind,
-								TemplateType: api.ControlPlaneTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.ControlPlaneGroupVersion.String(),
+								Kind:       builder.GenericControlPlaneTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									ControlPlane: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/clusterName","value":"cluster1"},
-{"op":"add","path":"/spec/template/spec/files","value":[{"key1":"value1"}]}]
-							`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/clusterName",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"cluster1"`)},
+								},
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/files",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`[{"key1":"value1"}]`)},
+								},
+							},
 						},
 					},
 				},
 				{
-					name: "fake-patch2",
-					patches: []api.GenerateResponsePatch{
+					Name: "fake-patch2",
+					Definitions: []clusterv1.PatchDefinition{
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.ControlPlaneGroupVersion.String(),
-								Kind:         builder.GenericControlPlaneTemplateKind,
-								TemplateType: api.ControlPlaneTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.ControlPlaneGroupVersion.String(),
+								Kind:       builder.GenericControlPlaneTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									ControlPlane: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"replace","path":"/spec/template/spec/clusterName","value":"cluster1-overwritten"}]
-`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "replace",
+									Path:  "/spec/template/spec/clusterName",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"cluster1-overwritten"`)},
+								},
+							},
 						},
 					},
 				},
@@ -288,22 +252,35 @@ func TestApply(t *testing.T) {
 		},
 		{
 			name: "Should apply JSON patches and preserve ControlPlane fields",
-			patches: []patch{
+			patches: []clusterv1.ClusterClassPatch{
 				{
-					name: "fake-patch1",
-					patches: []api.GenerateResponsePatch{
+					Name: "fake-patch1",
+					Definitions: []clusterv1.PatchDefinition{
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.ControlPlaneGroupVersion.String(),
-								Kind:         builder.GenericControlPlaneTemplateKind,
-								TemplateType: api.ControlPlaneTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.ControlPlaneGroupVersion.String(),
+								Kind:       builder.GenericControlPlaneTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									ControlPlane: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/replicas","value":1},
-{"op":"add","path":"/spec/template/spec/version","value":"v1.15.0"},
-{"op":"add","path":"/spec/template/spec/machineTemplate/infrastructureRef","value":{"apiVersion":"invalid","kind":"invalid","namespace":"invalid","name":"invalid"}}]
-							`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/replicas",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`1`)},
+								},
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/version",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"v1.15.0"`)},
+								},
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/machineTemplate/infrastructureRef",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`{"apiVersion":"invalid","kind":"invalid","namespace":"invalid","name":"invalid"}`)},
+								},
+							},
 						},
 					},
 				},
@@ -311,21 +288,30 @@ func TestApply(t *testing.T) {
 		},
 		{
 			name: "Should apply JSON patches without metadata",
-			patches: []patch{
+			patches: []clusterv1.ClusterClassPatch{
 				{
-					name: "fake-patch1",
-					patches: []api.GenerateResponsePatch{
+					Name: "fake-patch1",
+					Definitions: []clusterv1.PatchDefinition{
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureClusterTemplateKind,
-								TemplateType: api.InfrastructureClusterTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.InfrastructureGroupVersion.String(),
+								Kind:       builder.GenericInfrastructureClusterTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									InfrastructureCluster: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-[{"op":"add","path":"/spec/template/spec/clusterName","value":"cluster1"},
-{"op":"replace","path":"/metadata/name","value": "overwrittenName"}]
-							`)},
-							PatchType: api.JSONPatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/clusterName",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"cluster1"`)},
+								},
+								{
+									Op:    "replace",
+									Path:  "/metadata/name",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"overwrittenName"`)},
+								},
+							},
 						},
 					},
 				},
@@ -338,20 +324,25 @@ func TestApply(t *testing.T) {
 		},
 		{
 			name: "Should apply JSON merge patches",
-			patches: []patch{
+			patches: []clusterv1.ClusterClassPatch{
 				{
-					name: "fake-patch1",
-					patches: []api.GenerateResponsePatch{
+					Name: "fake-patch1",
+					Definitions: []clusterv1.PatchDefinition{
 						{
-							TemplateRef: api.TemplateRef{
-								APIVersion:   builder.InfrastructureGroupVersion.String(),
-								Kind:         builder.GenericInfrastructureClusterTemplateKind,
-								TemplateType: api.InfrastructureClusterTemplateType,
+							Selector: clusterv1.PatchSelector{
+								APIVersion: builder.InfrastructureGroupVersion.String(),
+								Kind:       builder.GenericInfrastructureClusterTemplateKind,
+								MatchResources: clusterv1.PatchSelectorMatch{
+									InfrastructureCluster: true,
+								},
 							},
-							Patch: apiextensionsv1.JSON{Raw: []byte(`
-{"spec": {"template": {"spec": {"resource": "infraCluster"}}}}
-							`)},
-							PatchType: api.JSONMergePatchType,
+							JSONPatches: []clusterv1.JSONPatch{
+								{
+									Op:    "add",
+									Path:  "/spec/template/spec/resource",
+									Value: &apiextensionsv1.JSON{Raw: []byte(`"infraCluster"`)},
+								},
+							},
 						},
 					},
 				},
@@ -359,6 +350,132 @@ func TestApply(t *testing.T) {
 			expectedFields: expectedFields{
 				infrastructureCluster: map[string]interface{}{
 					"spec.resource": "infraCluster",
+				},
+			},
+		},
+		{
+			name: "Successfully apply external jsonPatch with generate and validate",
+			patches: []clusterv1.ClusterClassPatch{
+				{
+					Name: "fake-patch1",
+					External: &clusterv1.ExternalPatchDefinition{
+						GenerateExtension: pointer.String("patch-infrastructureCluster"),
+						ValidateExtension: pointer.String("validate-infrastructureCluster"),
+					},
+				},
+			},
+			externalPatchResponses: map[string]runtimehooksv1.ResponseObject{
+				"patch-infrastructureCluster": &runtimehooksv1.GeneratePatchesResponse{
+					Items: []runtimehooksv1.GeneratePatchesResponseItem{
+						{
+							UID:       "1",
+							PatchType: runtimehooksv1.JSONPatchType,
+							Patch: bytesPatch([]jsonPatchRFC6902{{
+								Op:    "add",
+								Path:  "/spec/template/spec/resource",
+								Value: &apiextensionsv1.JSON{Raw: []byte(`"infraCluster"`)}}}),
+						},
+					},
+				},
+				"validate-infrastructureCluster": &runtimehooksv1.ValidateTopologyResponse{
+					CommonResponse: runtimehooksv1.CommonResponse{
+						Status: runtimehooksv1.ResponseStatusSuccess,
+					},
+				},
+			},
+			expectedFields: expectedFields{
+				infrastructureCluster: map[string]interface{}{
+					"spec.resource": "infraCluster",
+				},
+			},
+		},
+		{
+			name: "error on failed validation with external jsonPatch",
+			patches: []clusterv1.ClusterClassPatch{
+				{
+					Name: "fake-patch1",
+					External: &clusterv1.ExternalPatchDefinition{
+						GenerateExtension: pointer.String("patch-infrastructureCluster"),
+						ValidateExtension: pointer.String("validate-infrastructureCluster"),
+					},
+				},
+			},
+			externalPatchResponses: map[string]runtimehooksv1.ResponseObject{
+				"patch-infrastructureCluster": &runtimehooksv1.GeneratePatchesResponse{
+					Items: []runtimehooksv1.GeneratePatchesResponseItem{
+						{
+							UID:       "1",
+							PatchType: runtimehooksv1.JSONPatchType,
+							Patch: bytesPatch([]jsonPatchRFC6902{{
+								Op:    "add",
+								Path:  "/spec/template/spec/resource",
+								Value: &apiextensionsv1.JSON{Raw: []byte(`"invalid-infraCluster"`)}}}),
+						},
+					},
+				},
+				"validate-infrastructureCluster": &runtimehooksv1.ValidateTopologyResponse{
+					CommonResponse: runtimehooksv1.CommonResponse{
+						Status:  runtimehooksv1.ResponseStatusFailure,
+						Message: "not a valid infrastructureCluster",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Successfully apply multiple external jsonPatch",
+			patches: []clusterv1.ClusterClassPatch{
+				{
+					Name: "fake-patch1",
+					External: &clusterv1.ExternalPatchDefinition{
+						GenerateExtension: pointer.String("patch-infrastructureCluster"),
+					},
+				},
+				{
+					Name: "fake-patch2",
+					External: &clusterv1.ExternalPatchDefinition{
+						GenerateExtension: pointer.String("patch-controlPlane"),
+					},
+				},
+			},
+
+			externalPatchResponses: map[string]runtimehooksv1.ResponseObject{
+				"patch-infrastructureCluster": &runtimehooksv1.GeneratePatchesResponse{
+					Items: []runtimehooksv1.GeneratePatchesResponseItem{
+						{
+							UID:       "1",
+							PatchType: runtimehooksv1.JSONPatchType,
+							Patch: bytesPatch([]jsonPatchRFC6902{{
+								Op:    "add",
+								Path:  "/spec/template/spec/resource",
+								Value: &apiextensionsv1.JSON{Raw: []byte(`"infraCluster"`)}}}),
+						},
+						{
+							UID:       "1",
+							PatchType: runtimehooksv1.JSONPatchType,
+							Patch: bytesPatch([]jsonPatchRFC6902{{
+								Op:    "add",
+								Path:  "/spec/template/spec/another",
+								Value: &apiextensionsv1.JSON{Raw: []byte(`"resource"`)}}}),
+						},
+					},
+				},
+				"patch-controlPlane": &runtimehooksv1.GeneratePatchesResponse{
+					Items: []runtimehooksv1.GeneratePatchesResponseItem{
+						{
+							UID:       "2",
+							PatchType: runtimehooksv1.JSONMergePatchType,
+							Patch:     []byte(`{"spec":{"template":{"spec":{"resource": "controlPlane"}}}}`)},
+					},
+				},
+			},
+			expectedFields: expectedFields{
+				infrastructureCluster: map[string]interface{}{
+					"spec.resource": "infraCluster",
+					"spec.another":  "resource",
+				},
+				controlPlane: map[string]interface{}{
+					"spec.resource": "controlPlane",
 				},
 			},
 		},
@@ -380,21 +497,29 @@ func TestApply(t *testing.T) {
 			blueprint, desired := setupTestObjects()
 
 			// If there are patches, set up patch generators.
-			patchEngine := &engine{}
-			if len(tt.patches) > 0 {
-				for _, patch := range tt.patches {
-					// Add the patches to ensure the patch generator is called.
-					blueprint.ClusterClass.Spec.Patches = append(blueprint.ClusterClass.Spec.Patches, clusterv1.ClusterClassPatch{Name: patch.name})
-				}
+			cat := runtimecatalog.New()
+			g.Expect(runtimehooksv1.AddToCatalog(cat)).To(Succeed())
 
-				patchEngine.createPatchGenerator = func(patch *clusterv1.ClusterClassPatch) (api.Generator, error) {
-					for _, p := range tt.patches {
-						if p.name == patch.Name {
-							return &fakePatchGenerator{patches: p.patches}, nil
-						}
-					}
-					return nil, errors.Errorf("could not find patch generator for patch %q", patch.Name)
+			runtimeClient := fakeruntimeclient.NewRuntimeClientBuilder().WithCatalog(cat).Build()
+
+			if tt.externalPatchResponses != nil {
+				// replace the package variable uuidGenerator with one that returns an incremented integer.
+				// each patch will have a new uuid in the order in which they're defined and called.
+				var uuid int32
+				uuidGenerator = func() types.UID {
+					uuid++
+					return types.UID(fmt.Sprintf("%d", uuid))
 				}
+				runtimeClient = fakeruntimeclient.NewRuntimeClientBuilder().
+					WithCallExtensionResponses(tt.externalPatchResponses).
+					WithCatalog(cat).
+					Build()
+			}
+			patchEngine := NewEngine(runtimeClient)
+
+			if len(tt.patches) > 0 {
+				// Add the patches.
+				blueprint.ClusterClass.Spec.Patches = tt.patches
 			}
 
 			// Copy the desired objects before applying patches.
@@ -427,7 +552,12 @@ func TestApply(t *testing.T) {
 			}
 
 			// Apply patches.
-			g.Expect(patchEngine.Apply(context.Background(), blueprint, desired)).To(Succeed())
+			if err := patchEngine.Apply(context.Background(), blueprint, desired); err != nil {
+				if !tt.wantErr {
+					t.Fatal(err)
+				}
+				return
+			}
 
 			// Compare the patched desired objects with the expected desired objects.
 			g.Expect(desired.Cluster).To(EqualObject(expectedCluster))
@@ -470,12 +600,31 @@ func setupTestObjects() (*scope.ClusterBlueprint, *scope.ClusterState) {
 		WithWorkerMachineDeploymentClasses(*mdClass1).
 		Build()
 
+	// Note: we depend on TypeMeta being set to calculate HolderReferences correctly.
+	// We also set TypeMeta explicitly in the topology/cluster/cluster_controller.go.
 	cluster := &clusterv1.Cluster{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Cluster",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cluster1",
 			Namespace: metav1.NamespaceDefault,
 		},
 		Spec: clusterv1.ClusterSpec{
+			Paused: false,
+			ClusterNetwork: &clusterv1.ClusterNetwork{
+				APIServerPort: pointer.Int32(8),
+				Services: &clusterv1.NetworkRanges{
+					CIDRBlocks: []string{"10.10.10.1/24"},
+				},
+				Pods: &clusterv1.NetworkRanges{
+					CIDRBlocks: []string{"11.10.10.1/24"},
+				},
+				ServiceDomain: "lark",
+			},
+			ControlPlaneRef:   nil,
+			InfrastructureRef: nil,
 			Topology: &clusterv1.Topology{
 				Version: "v1.21.2",
 				Class:   clusterClass.Name,
@@ -568,17 +717,6 @@ func setupTestObjects() (*scope.ClusterBlueprint, *scope.ClusterState) {
 	return blueprint, desired
 }
 
-// fakePatchGenerator is an api.Generator which just returns the provided patches.
-type fakePatchGenerator struct {
-	patches []api.GenerateResponsePatch
-}
-
-func (g *fakePatchGenerator) Generate(_ context.Context, _ *api.GenerateRequest) (*api.GenerateResponse, error) {
-	return &api.GenerateResponse{
-		Items: g.patches,
-	}, nil
-}
-
 // setSpecFields sets fields on an unstructured object from a map.
 func setSpecFields(obj *unstructured.Unstructured, fields map[string]interface{}) {
 	for k, v := range fields {
@@ -593,4 +731,19 @@ func setSpecFields(obj *unstructured.Unstructured, fields map[string]interface{}
 			panic(err)
 		}
 	}
+}
+
+// jsonPatchRFC6902 represents a jsonPatch.
+type jsonPatchRFC6902 struct {
+	Op    string                `json:"op"`
+	Path  string                `json:"path"`
+	Value *apiextensionsv1.JSON `json:"value,omitempty"`
+}
+
+func bytesPatch(patch []jsonPatchRFC6902) []byte {
+	out, err := json.Marshal(patch)
+	if err != nil {
+		panic(err)
+	}
+	return out
 }

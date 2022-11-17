@@ -69,7 +69,7 @@ func MatchesTemplateClonedFrom(infraConfigs map[string]*unstructured.Unstructure
 			return false
 		}
 
-		// Check if the machine template metadata matches with the infrastructure object.
+		// Check if the machine template metadata matches with the infrastructure object.
 		if !matchMachineTemplateMetadata(kcp, infraObj) {
 			return false
 		}
@@ -103,7 +103,7 @@ func MatchesKubeadmBootstrapConfig(machineConfigs map[string]*bootstrapv1.Kubead
 			return true
 		}
 
-		// Check if the machine template metadata matches with the infrastructure object.
+		// Check if the machine template metadata matches with the infrastructure object.
 		if !matchMachineTemplateMetadata(kcp, machineConfig) {
 			return false
 		}
@@ -162,6 +162,13 @@ func matchInitOrJoinConfiguration(machineConfig *bootstrapv1.KubeadmConfig, kcp 
 	// to allow a comparison with the KubeadmConfig referenced from the machine.
 	kcpConfig := getAdjustedKcpConfig(kcp, machineConfig)
 
+	// Default both KubeadmConfigSpecs before comparison.
+	// *Note* This assumes that newly added default values never
+	// introduce a semantic difference to the unset value.
+	// But that is something that is ensured by our API guarantees.
+	bootstrapv1.DefaultKubeadmConfigSpec(kcpConfig)
+	bootstrapv1.DefaultKubeadmConfigSpec(&machineConfig.Spec)
+
 	// cleanups all the fields that are not relevant for the comparison.
 	cleanupConfigFields(kcpConfig, machineConfig)
 
@@ -195,15 +202,6 @@ func cleanupConfigFields(kcpConfig *bootstrapv1.KubeadmConfigSpec, machineConfig
 	// we are cleaning up from the reflect.DeepEqual comparison.
 	kcpConfig.ClusterConfiguration = nil
 	machineConfig.Spec.ClusterConfiguration = nil
-
-	// We have to treat the "empty" and CloudConfig format the same
-	// otherwise defaulting on KCP will trigger a machine rollout.
-	if kcpConfig.Format == "" {
-		kcpConfig.Format = bootstrapv1.CloudConfig
-	}
-	if machineConfig.Spec.Format == "" {
-		machineConfig.Spec.Format = bootstrapv1.CloudConfig
-	}
 
 	// If KCP JoinConfiguration is not present, set machine JoinConfiguration to nil (nothing can trigger rollout here).
 	// NOTE: this is required because CABPK applies an empty joinConfiguration in case no one is provided.

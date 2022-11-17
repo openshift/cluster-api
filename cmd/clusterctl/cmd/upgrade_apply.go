@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"time"
+
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
@@ -24,13 +26,17 @@ import (
 )
 
 type upgradeApplyOptions struct {
-	kubeconfig              string
-	kubeconfigContext       string
-	contract                string
-	coreProvider            string
-	bootstrapProviders      []string
-	controlPlaneProviders   []string
-	infrastructureProviders []string
+	kubeconfig                string
+	kubeconfigContext         string
+	contract                  string
+	coreProvider              string
+	bootstrapProviders        []string
+	controlPlaneProviders     []string
+	infrastructureProviders   []string
+	ipamProviders             []string
+	runtimeExtensionProviders []string
+	waitProviders             bool
+	waitProviderTimeout       int
 }
 
 var ua = &upgradeApplyOptions{}
@@ -66,13 +72,21 @@ func init() {
 		"The API Version of Cluster API (contract, e.g. v1alpha4) the management cluster should upgrade to")
 
 	upgradeApplyCmd.Flags().StringVar(&ua.coreProvider, "core", "",
-		"Core provider instance version (e.g. capi-system/cluster-api:v0.3.0) to upgrade to. This flag can be used as alternative to --contract.")
+		"Core provider instance version (e.g. capi-system/cluster-api:v1.1.5) to upgrade to. This flag can be used as alternative to --contract.")
 	upgradeApplyCmd.Flags().StringSliceVarP(&ua.infrastructureProviders, "infrastructure", "i", nil,
 		"Infrastructure providers instance and versions (e.g. capa-system/aws:v0.5.0) to upgrade to. This flag can be used as alternative to --contract.")
 	upgradeApplyCmd.Flags().StringSliceVarP(&ua.bootstrapProviders, "bootstrap", "b", nil,
-		"Bootstrap providers instance and versions (e.g. capi-kubeadm-bootstrap-system/kubeadm:v0.3.0) to upgrade to. This flag can be used as alternative to --contract.")
+		"Bootstrap providers instance and versions (e.g. capi-kubeadm-bootstrap-system/kubeadm:v1.1.5) to upgrade to. This flag can be used as alternative to --contract.")
 	upgradeApplyCmd.Flags().StringSliceVarP(&ua.controlPlaneProviders, "control-plane", "c", nil,
-		"ControlPlane providers instance and versions (e.g. capi-kubeadm-control-plane-system/kubeadm:v0.3.0) to upgrade to. This flag can be used as alternative to --contract.")
+		"ControlPlane providers instance and versions (e.g. capi-kubeadm-control-plane-system/kubeadm:v1.1.5) to upgrade to. This flag can be used as alternative to --contract.")
+	upgradeApplyCmd.Flags().StringSliceVar(&ua.ipamProviders, "ipam", nil,
+		"IPAM providers and versions (e.g. infoblox:v0.0.1) to upgrade to. This flag can be used as alternative to --contract.")
+	upgradeApplyCmd.Flags().StringSliceVar(&ua.runtimeExtensionProviders, "runtime-extension", nil,
+		"Runtime extension providers and versions (e.g. test:v0.0.1) to upgrade to. This flag can be used as alternative to --contract.")
+	upgradeApplyCmd.Flags().BoolVar(&ua.waitProviders, "wait-providers", false,
+		"Wait for providers to be upgraded.")
+	upgradeApplyCmd.Flags().IntVar(&ua.waitProviderTimeout, "wait-provider-timeout", 5*60,
+		"Wait timeout per provider upgrade in seconds. This value is ignored if --wait-providers is false")
 }
 
 func runUpgradeApply() error {
@@ -84,21 +98,27 @@ func runUpgradeApply() error {
 	hasProviderNames := (ua.coreProvider != "") ||
 		(len(ua.bootstrapProviders) > 0) ||
 		(len(ua.controlPlaneProviders) > 0) ||
-		(len(ua.infrastructureProviders) > 0)
+		(len(ua.infrastructureProviders) > 0) ||
+		(len(ua.ipamProviders) > 0) ||
+		(len(ua.runtimeExtensionProviders) > 0)
 
 	if ua.contract == "" && !hasProviderNames {
-		return errors.New("Either the --contract flag or at least one of the following flags has to be set: --core, --bootstrap, --control-plane, --infrastructure")
+		return errors.New("Either the --contract flag or at least one of the following flags has to be set: --core, --bootstrap, --control-plane, --infrastructure, --ipam, --extension")
 	}
 	if ua.contract != "" && hasProviderNames {
-		return errors.New("The --contract flag can't be used in combination with --core, --bootstrap, --control-plane, --infrastructure")
+		return errors.New("The --contract flag can't be used in combination with --core, --bootstrap, --control-plane, --infrastructure, --ipam, --extension")
 	}
 
 	return c.ApplyUpgrade(client.ApplyUpgradeOptions{
-		Kubeconfig:              client.Kubeconfig{Path: ua.kubeconfig, Context: ua.kubeconfigContext},
-		Contract:                ua.contract,
-		CoreProvider:            ua.coreProvider,
-		BootstrapProviders:      ua.bootstrapProviders,
-		ControlPlaneProviders:   ua.controlPlaneProviders,
-		InfrastructureProviders: ua.infrastructureProviders,
+		Kubeconfig:                client.Kubeconfig{Path: ua.kubeconfig, Context: ua.kubeconfigContext},
+		Contract:                  ua.contract,
+		CoreProvider:              ua.coreProvider,
+		BootstrapProviders:        ua.bootstrapProviders,
+		ControlPlaneProviders:     ua.controlPlaneProviders,
+		InfrastructureProviders:   ua.infrastructureProviders,
+		IPAMProviders:             ua.ipamProviders,
+		RuntimeExtensionProviders: ua.runtimeExtensionProviders,
+		WaitProviders:             ua.waitProviders,
+		WaitProviderTimeout:       time.Duration(ua.waitProviderTimeout) * time.Second,
 	})
 }

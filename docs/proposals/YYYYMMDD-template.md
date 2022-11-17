@@ -23,7 +23,7 @@ superseded-by:
 <!-- BEGIN Remove before PR -->
 To get started with this template:
 1. **Make a copy of this template.**
-  Copy this template into `docs/enhacements` and name it `YYYYMMDD-my-title.md`, where `YYYYMMDD` is the date the proposal was first drafted.
+  Copy this template into `docs/enhancements` and name it `YYYYMMDD-my-title.md`, where `YYYYMMDD` is the date the proposal was first drafted.
 1. **Fill out the required sections.**
 1. **Create a PR.**
   Aim for single topic PRs to keep discussions focused.
@@ -249,4 +249,4 @@ Consider the following in developing a version skew strategy for this enhancemen
 - [ ] MM/DD/YYYY: Open proposal PR
 
 <!-- Links -->
-[community meeting]: https://docs.google.com/document/d/1Ys-DOR5UsgbMEeciuG0HOgDQc8kZsaWIWJeKJ1-UfbY
+[community meeting]: https://docs.google.com/document/d/1ushaVqAKYnZ2VN_aa3GyKlS4kEd6bSug13xaXOakAQI/edit#heading=h.pxsq37pzkbdq

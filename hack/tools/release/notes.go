@@ -17,6 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// main is the main package for the release notes generator.
 package main
 
 import (
@@ -25,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -57,6 +59,8 @@ var (
 	}
 
 	fromTag = flag.String("from", "", "The tag or commit to start from.")
+
+	tagRegex = regexp.MustCompile(`^\[release-[\w-\.]*\]`)
 )
 
 func main() {
@@ -122,7 +126,7 @@ func run() int {
 	}
 
 	for _, c := range commits {
-		body := strings.TrimSpace(c.body)
+		body := trimTitle(c.body)
 		var key, prNumber, fork string
 		switch {
 		case strings.HasPrefix(body, ":sparkles:"), strings.HasPrefix(body, "✨"):
@@ -194,6 +198,13 @@ func run() int {
 	fmt.Println("_Thanks to all our contributors!_ 😊")
 
 	return 0
+}
+
+func trimTitle(title string) string {
+	// Remove a tag prefix if found.
+	title = tagRegex.ReplaceAllString(title, "")
+
+	return strings.TrimSpace(title)
 }
 
 type commit struct {

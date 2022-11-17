@@ -10,12 +10,16 @@ These may be physical or virtual instances, and they represent the infrastructur
 A machine infrastructure provider must define an API type for "infrastructure machine" resources. The type:
 
 1. Must belong to an API group served by the Kubernetes apiserver
-2. May be implemented as a CustomResourceDefinition, or as part of an aggregated apiserver
+2. Must be implemented as a CustomResourceDefinition.
+    1. The CRD name must have the format produced by `sigs.k8s.io/cluster-api/util/contract.CalculateCRDName(Group, Kind)`.
 3. Must be namespace-scoped
 4. Must have the standard Kubernetes "type metadata" and "object metadata"
 5. Must have a `spec` field with the following:
     1. Required fields:
-        1. `providerID` (string): the identifier for the provider's machine instance
+        1. `providerID` (string): the identifier for the provider's machine instance. This field is expected to match the value set by the KCM cloud provider in the Nodes.
+           The Machine controller bubbles it up to the Machine CR, and it's used to find the matching Node.
+           Any other consumers can use the providerID as the source of truth to match both Machines and Nodes.
+            
     2. Optional fields:
         1. `failureDomain` (string): the string identifier of the failure domain the instance is running in for the
            purposes of backwards compatibility and migrating to the v1alpha3 FailureDomain support (where FailureDomain
@@ -33,11 +37,13 @@ A machine infrastructure provider must define an API type for "infrastructure ma
             meant to be suitable for programmatic interpretation
         2. `failureMessage` (string): indicates there is a fatal problem reconciling the provider's infrastructure;
             meant to be a more descriptive value than `failureReason`
-        3. `addresses` (`MachineAddress`): a list of the host names, external IP addresses, internal IP addresses,
+        3. `addresses` (`MachineAddresses`): a list of the host names, external IP addresses, internal IP addresses,
             external DNS names, and/or internal DNS names for the provider's machine instance. `MachineAddress` is
             defined as:
-                - `type` (string): one of `Hostname`, `ExternalIP`, `InternalIP`, `ExternalDNS`, `InternalDNS`
-                - `address` (string)
+            - `type` (string): one of `Hostname`, `ExternalIP`, `InternalIP`, `ExternalDNS`, `InternalDNS`
+            - `address` (string)
+7. Should have a conditions field with the following:
+   1. A Ready condition to represent the overall operational state of the component. It can be based on the summary of more detailed conditions existing on the same object, e.g. instanceReady, SecurityGroupsReady conditions.
 
 
 ### InfraMachineTemplate Resources
@@ -70,6 +76,9 @@ type InfraMachineTemplateResource struct {
 	Spec InfraMachineSpec `json:"spec"`
 }
 ```
+
+The CRD name of the template must also have the format produced by `sigs.k8s.io/cluster-api/util/contract.CalculateCRDName(Group, Kind)`.
+
 ### List Resources
 
 For any resource, also add list resources, e.g.
@@ -113,6 +122,8 @@ The following diagram shows the typical logic for a machine infrastructure provi
 1. If the `Cluster` to which this resource belongs cannot be found, exit the reconciliation
 1. Add the provider-specific finalizer, if needed
 1. If the associated `Cluster`'s `status.infrastructureReady` is `false`, exit the reconciliation
+    1. **Note**: This check should not be blocking any further delete reconciliation flows.
+    1. **Note**: This check should only be performed after appropriate owner references (if any) are updated.
 1. If the associated `Machine`'s `spec.bootstrap.dataSecretName` is `nil`, exit the reconciliation
 1. Reconcile provider-specific machine infrastructure
     1. If any errors are encountered:

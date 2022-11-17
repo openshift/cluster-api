@@ -23,14 +23,24 @@ import (
 
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilfeature "k8s.io/component-base/featuregate/testing"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
+	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
+	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/scope"
+	"sigs.k8s.io/cluster-api/internal/hooks"
+	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -67,7 +77,7 @@ func TestClusterReconciler_reconcileNewlyCreatedCluster(t *testing.T) {
 	g.Eventually(func(g Gomega) error {
 		// Get the cluster object.
 		actualCluster := &clusterv1.Cluster{}
-		if err := env.Get(ctx, client.ObjectKey{Name: clusterName1, Namespace: ns.Name}, actualCluster); err != nil {
+		if err := env.GetAPIReader().Get(ctx, client.ObjectKey{Name: clusterName1, Namespace: ns.Name}, actualCluster); err != nil {
 			return err
 		}
 
@@ -383,6 +393,157 @@ func TestClusterReconciler_reconcileClusterClassRebase(t *testing.T) {
 	}, timeout).Should(Succeed())
 }
 
+func TestClusterReconciler_reconcileDelete(t *testing.T) {
+	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+
+	catalog := runtimecatalog.New()
+	_ = runtimehooksv1.AddToCatalog(catalog)
+
+	beforeClusterDeleteGVH, err := catalog.GroupVersionHook(runtimehooksv1.BeforeClusterDelete)
+	if err != nil {
+		panic(err)
+	}
+
+	blockingResponse := &runtimehooksv1.BeforeClusterDeleteResponse{
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			RetryAfterSeconds: int32(10),
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusSuccess,
+			},
+		},
+	}
+	nonBlockingResponse := &runtimehooksv1.BeforeClusterDeleteResponse{
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			RetryAfterSeconds: int32(0),
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusSuccess,
+			},
+		},
+	}
+	failureResponse := &runtimehooksv1.BeforeClusterDeleteResponse{
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusFailure,
+			},
+		},
+	}
+
+	tests := []struct {
+		name               string
+		cluster            *clusterv1.Cluster
+		hookResponse       *runtimehooksv1.BeforeClusterDeleteResponse
+		wantHookToBeCalled bool
+		wantResult         ctrl.Result
+		wantOkToDelete     bool
+		wantErr            bool
+	}{
+		{
+			name: "should apply the ok-to-delete annotation if the BeforeClusterDelete hook returns a non-blocking response",
+			cluster: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "test-ns",
+				},
+				Spec: clusterv1.ClusterSpec{
+					Topology: &clusterv1.Topology{},
+				},
+			},
+			hookResponse:       nonBlockingResponse,
+			wantResult:         ctrl.Result{},
+			wantHookToBeCalled: true,
+			wantOkToDelete:     true,
+			wantErr:            false,
+		},
+		{
+			name: "should requeue if the BeforeClusterDelete hook returns a blocking response",
+			cluster: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "test-ns",
+				},
+				Spec: clusterv1.ClusterSpec{
+					Topology: &clusterv1.Topology{},
+				},
+			},
+			hookResponse:       blockingResponse,
+			wantResult:         ctrl.Result{RequeueAfter: time.Duration(10) * time.Second},
+			wantHookToBeCalled: true,
+			wantOkToDelete:     false,
+			wantErr:            false,
+		},
+		{
+			name: "should fail if the BeforeClusterDelete hook returns a failure response",
+			cluster: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "test-ns",
+				},
+				Spec: clusterv1.ClusterSpec{
+					Topology: &clusterv1.Topology{},
+				},
+			},
+			hookResponse:       failureResponse,
+			wantResult:         ctrl.Result{},
+			wantHookToBeCalled: true,
+			wantOkToDelete:     false,
+			wantErr:            true,
+		},
+		{
+			name: "should succeed if the ok-to-delete annotation is already present",
+			cluster: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "test-ns",
+					Annotations: map[string]string{
+						// If the hook is already marked the hook should not be called during cluster delete.
+						runtimev1.OkToDeleteAnnotation: "",
+					},
+				},
+				Spec: clusterv1.ClusterSpec{
+					Topology: &clusterv1.Topology{},
+				},
+			},
+			// Using a blocking response here should not matter as the hook should never be called.
+			// Using a blocking response to enforce the point.
+			hookResponse:       blockingResponse,
+			wantResult:         ctrl.Result{},
+			wantHookToBeCalled: false,
+			wantOkToDelete:     true,
+			wantErr:            false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			fakeClient := fake.NewClientBuilder().WithObjects(tt.cluster).Build()
+			fakeRuntimeClient := fakeruntimeclient.NewRuntimeClientBuilder().
+				WithCallAllExtensionResponses(map[runtimecatalog.GroupVersionHook]runtimehooksv1.ResponseObject{
+					beforeClusterDeleteGVH: tt.hookResponse,
+				}).
+				WithCatalog(catalog).
+				Build()
+
+			r := &Reconciler{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				RuntimeClient: fakeRuntimeClient,
+			}
+
+			res, err := r.reconcileDelete(ctx, tt.cluster)
+			if tt.wantErr {
+				g.Expect(err).NotTo(BeNil())
+			} else {
+				g.Expect(err).To(BeNil())
+				g.Expect(res).To(Equal(tt.wantResult))
+				g.Expect(hooks.IsOkToDelete(tt.cluster)).To(Equal(tt.wantOkToDelete))
+				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.BeforeClusterDelete) == 1).To(Equal(tt.wantHookToBeCalled))
+			}
+		})
+	}
+}
+
 // TestClusterReconciler_deleteClusterClass tests the correct deletion behaviour for a ClusterClass with references in existing Clusters.
 // In this case deletion of the ClusterClass should be blocked by the webhook.
 func TestClusterReconciler_deleteClusterClass(t *testing.T) {
@@ -436,6 +597,95 @@ func TestClusterReconciler_deleteClusterClass(t *testing.T) {
 	g.Expect(env.Delete(ctx, clusterClass)).NotTo(Succeed())
 }
 
+func TestReconciler_callBeforeClusterCreateHook(t *testing.T) {
+	catalog := runtimecatalog.New()
+	_ = runtimehooksv1.AddToCatalog(catalog)
+	gvh, err := catalog.GroupVersionHook(runtimehooksv1.BeforeClusterCreate)
+	if err != nil {
+		panic(err)
+	}
+
+	blockingResponse := &runtimehooksv1.BeforeClusterCreateResponse{
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusSuccess,
+			},
+			RetryAfterSeconds: int32(10),
+		},
+	}
+	nonBlockingResponse := &runtimehooksv1.BeforeClusterCreateResponse{
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusSuccess,
+			},
+			RetryAfterSeconds: int32(0),
+		},
+	}
+	failingResponse := &runtimehooksv1.BeforeClusterCreateResponse{
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusFailure,
+			},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		hookResponse *runtimehooksv1.BeforeClusterCreateResponse
+		wantResult   reconcile.Result
+		wantErr      bool
+	}{
+		{
+			name:         "should return a requeue response when the BeforeClusterCreate hook is blocking",
+			hookResponse: blockingResponse,
+			wantResult:   ctrl.Result{RequeueAfter: time.Duration(10) * time.Second},
+			wantErr:      false,
+		},
+		{
+			name:         "should return an empty response when the BeforeClusterCreate hook is not blocking",
+			hookResponse: nonBlockingResponse,
+			wantResult:   ctrl.Result{},
+			wantErr:      false,
+		},
+		{
+			name:         "should error when the BeforeClusterCreate hook returns a failure response",
+			hookResponse: failingResponse,
+			wantResult:   ctrl.Result{},
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			runtimeClient := fakeruntimeclient.NewRuntimeClientBuilder().
+				WithCatalog(catalog).
+				WithCallAllExtensionResponses(map[runtimecatalog.GroupVersionHook]runtimehooksv1.ResponseObject{
+					gvh: tt.hookResponse,
+				}).
+				Build()
+
+			r := &Reconciler{
+				RuntimeClient: runtimeClient,
+			}
+			s := &scope.Scope{
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{},
+				},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+			}
+			res, err := r.callBeforeClusterCreateHook(ctx, s)
+			if tt.wantErr {
+				g.Expect(err).NotTo(BeNil())
+			} else {
+				g.Expect(err).To(BeNil())
+				g.Expect(res).To(Equal(tt.wantResult))
+			}
+		})
+	}
+}
+
 // setupTestEnvForIntegrationTests builds and then creates in the envtest API server all objects required at init time for each of the
 // integration tests in this file. This includes:
 // - a first clusterClass with all the related templates
@@ -452,19 +702,19 @@ func setupTestEnvForIntegrationTests(ns *corev1.Namespace) (func() error, error)
 	// Cluster given a skeletal Cluster object and a ClusterClass. The objects include:
 
 	// 1) Templates for Machine, Cluster, ControlPlane and Bootstrap.
-	infrastructureMachineTemplate1 := builder.InfrastructureMachineTemplate(ns.Name, infrastructureMachineTemplateName1).Build()
-	infrastructureMachineTemplate2 := builder.InfrastructureMachineTemplate(ns.Name, infrastructureMachineTemplateName2).
+	infrastructureMachineTemplate1 := builder.TestInfrastructureMachineTemplate(ns.Name, infrastructureMachineTemplateName1).Build()
+	infrastructureMachineTemplate2 := builder.TestInfrastructureMachineTemplate(ns.Name, infrastructureMachineTemplateName2).
 		WithSpecFields(map[string]interface{}{"spec.template.spec.fakeSetting": true}).
 		Build()
-	infrastructureClusterTemplate1 := builder.InfrastructureClusterTemplate(ns.Name, "infraclustertemplate1").
+	infrastructureClusterTemplate1 := builder.TestInfrastructureClusterTemplate(ns.Name, "infraclustertemplate1").
 		Build()
-	infrastructureClusterTemplate2 := builder.InfrastructureClusterTemplate(ns.Name, "infraclustertemplate2").
+	infrastructureClusterTemplate2 := builder.TestInfrastructureClusterTemplate(ns.Name, "infraclustertemplate2").
 		WithSpecFields(map[string]interface{}{"spec.template.spec.alteredSetting": true}).
 		Build()
-	controlPlaneTemplate := builder.ControlPlaneTemplate(ns.Name, "cp1").
+	controlPlaneTemplate := builder.TestControlPlaneTemplate(ns.Name, "cp1").
 		WithInfrastructureMachineTemplate(infrastructureMachineTemplate1).
 		Build()
-	bootstrapTemplate := builder.BootstrapTemplate(ns.Name, "bootstraptemplate").Build()
+	bootstrapTemplate := builder.TestBootstrapTemplate(ns.Name, "bootstraptemplate").Build()
 
 	// 2) ClusterClass definitions including definitions of MachineDeploymentClasses used inside the ClusterClass.
 	machineDeploymentClass1 := builder.MachineDeploymentClass(workerClassName1).
@@ -581,14 +831,14 @@ func assertClusterReconcile(cluster *clusterv1.Cluster) error {
 
 	// Check if InfrastructureRef exists and is of the expected Kind and APIVersion.
 	if err := referenceExistsWithCorrectKindAndAPIVersion(cluster.Spec.InfrastructureRef,
-		builder.GenericInfrastructureClusterKind,
+		builder.TestInfrastructureClusterKind,
 		builder.InfrastructureGroupVersion); err != nil {
 		return err
 	}
 
 	// Check if ControlPlaneRef exists is of the expected Kind and APIVersion.
 	if err := referenceExistsWithCorrectKindAndAPIVersion(cluster.Spec.ControlPlaneRef,
-		builder.GenericControlPlaneKind,
+		builder.TestControlPlaneKind,
 		builder.ControlPlaneGroupVersion); err != nil {
 		return err
 	}
@@ -604,11 +854,11 @@ func assertInfrastructureClusterReconcile(cluster *clusterv1.Cluster) error {
 }
 
 // assertControlPlaneReconcile checks if the ControlPlane object:
-// 1) Is created.
-// 2) Has the correct labels and annotations.
-// 3) If it requires ControlPlane Infrastructure and if so:
-//		i) That the infrastructureMachineTemplate is created correctly.
-//      ii) That the infrastructureMachineTemplate has the correct labels and annotations
+//  1. Is created.
+//  2. Has the correct labels and annotations.
+//  3. If it requires ControlPlane Infrastructure and if so:
+//     i) That the infrastructureMachineTemplate is created correctly.
+//     ii) That the infrastructureMachineTemplate has the correct labels and annotations
 func assertControlPlaneReconcile(cluster *clusterv1.Cluster) error {
 	cp, err := getAndAssertLabelsAndAnnotations(*cluster.Spec.ControlPlaneRef, cluster.Name)
 	if err != nil {
@@ -647,7 +897,7 @@ func assertControlPlaneReconcile(cluster *clusterv1.Cluster) error {
 			return err
 		}
 		if err := referenceExistsWithCorrectKindAndAPIVersion(cpInfra,
-			builder.GenericInfrastructureMachineTemplateKind,
+			builder.TestInfrastructureMachineTemplateKind,
 			builder.InfrastructureGroupVersion); err != nil {
 			return err
 		}
@@ -729,7 +979,7 @@ func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 
 			// Check if the InfrastructureReference exists.
 			if err := referenceExistsWithCorrectKindAndAPIVersion(&md.Spec.Template.Spec.InfrastructureRef,
-				builder.GenericInfrastructureMachineTemplateKind,
+				builder.TestInfrastructureMachineTemplateKind,
 				builder.InfrastructureGroupVersion); err != nil {
 				return err
 			}
@@ -741,7 +991,7 @@ func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 
 			// Check if the Bootstrap reference has the expected Kind and APIVersion.
 			if err := referenceExistsWithCorrectKindAndAPIVersion(md.Spec.Template.Spec.Bootstrap.ConfigRef,
-				builder.GenericBootstrapConfigTemplateKind,
+				builder.TestBootstrapConfigTemplateKind,
 				builder.BootstrapGroupVersion); err != nil {
 				return err
 			}

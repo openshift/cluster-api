@@ -12,7 +12,7 @@ This document describes how to use `clusterctl` during the development workflow.
 
 From the root of the local copy of Cluster API, you can build the `clusterctl` binary by running:
 
-```shell
+```bash
 make clusterctl
 ```
 
@@ -33,16 +33,10 @@ If you want to create a local artifact, follow these instructions:
 
 ### Build artifacts locally
 
-In order to build artifacts for the CAPI core provider, the kubeadm bootstrap provider and the kubeadm control plane provider:
+In order to build artifacts for the CAPI core provider, the kubeadm bootstrap provider, the kubeadm control plane provider and the docker infrastructure provider:
 
-```
+```bash
 make docker-build REGISTRY=gcr.io/k8s-staging-cluster-api PULL_POLICY=IfNotPresent
-```
-
-In order to build docker provider artifacts
-
-```
-make -C test/infrastructure/docker docker-build REGISTRY=gcr.io/k8s-staging-cluster-api PULL_POLICY=IfNotPresent
 ```
 
 ### Create a clusterctl-settings.json file
@@ -67,7 +61,7 @@ a `clusterctl-settings.json` file describing how to build the provider assets.
 
 Run the create-local-repository hack from the root of the local copy of Cluster API:
 
-```shell
+```bash
 cmd/clusterctl/hack/create-local-repository.py
 ```
 
@@ -76,7 +70,7 @@ and places them in a local repository folder located under `$HOME/.cluster-api/d
 Additionally, the command output provides you the `clusterctl init` command with all the necessary flags.
 The output should be similar to:
 
-```shell
+```bash
 clusterctl local overrides generated from local repositories for the cluster-api, bootstrap-kubeadm, control-plane-kubeadm, infrastructure-docker, infrastructure-aws providers.
 in order to use them, please run:
 
@@ -87,7 +81,6 @@ clusterctl init \
    --infrastructure aws:v0.5.0 \
    --infrastructure docker:v0.3.8 \
    --config ~/.cluster-api/dev-repository/config.yaml
-
 ```
 
 As you might notice, the command is using the `$HOME/.cluster-api/dev-repository/config.yaml` config file,
@@ -138,9 +131,9 @@ See [Install and/or configure a kubernetes cluster] for more information.
 *Before* running clusterctl init, you must ensure all the required images are available in the kind cluster.
 
 This is always the case for images published in some image repository like docker hub or gcr.io, but it can't be
-the case for images built locally; in this case, you can use `kind load` to move the images built locally. e.g
+the case for images built locally; in this case, you can use `kind load` to move the images built locally. e.g.
 
-```
+```bash
 kind load docker-image gcr.io/k8s-staging-cluster-api/cluster-api-controller-amd64:dev
 kind load docker-image gcr.io/k8s-staging-cluster-api/kubeadm-bootstrap-controller-amd64:dev
 kind load docker-image gcr.io/k8s-staging-cluster-api/kubeadm-control-plane-controller-amd64:dev
@@ -157,9 +150,12 @@ Optionally, you may want to check if the components are running properly. The
 exact components are dependent on which providers you have initialized. Below
 is an example output with the docker provider being installed.
 
-```
+```bash
 kubectl get deploy -A | grep  "cap\|cert"
-capd-system                         capd-controller-manager                         1/1     1            1           25m
+capd-system
+```
+```bash
+capd-controller-manager                         1/1     1            1           25m
 capi-kubeadm-bootstrap-system       capi-kubeadm-bootstrap-controller-manager       1/1     1            1           25m
 capi-kubeadm-control-plane-system   capi-kubeadm-control-plane-controller-manager   1/1     1            1           25m
 capi-system                         capi-controller-manager                         1/1     1            1           25m
@@ -179,19 +175,27 @@ For example, assuming that on [docker hub][kind-docker-hub] there is no
 image for version `vX.Y.Z`, therefore creating a CAPD workload cluster with
 `--kubernetes-version=vX.Y.Z` will fail. See [issue 3795] for more details.
 
-### Get the kubeconfig for the workload cluster
+### Get the kubeconfig for the workload cluster when using Docker Desktop
 
-The command for getting the kubeconfig file for connecting to a workload cluster is the following:
+For Docker Desktop on macOS, Linux or Windows use kind to retrieve the kubeconfig.
+
+```bash
+kind get kubeconfig --name capi-quickstart > capi-quickstart.kubeconfig
+````
+
+Docker Engine for Linux works with the default clusterctl approach.
+```bash
+clusterctl get kubeconfig capi-quickstart > capi-quickstart.kubeconfig
+```
+
+### Fix kubeconfig when using Docker Desktop and clusterctl
+When retrieving the kubeconfig using `clusterctl` with Docker Desktop on macOS or Windows or Docker Desktop (Docker Engine works fine) on Linux, you'll need to take a few extra steps to get the kubeconfig for a workload cluster created with the Docker provider.
 
 ```bash
 clusterctl get kubeconfig capi-quickstart > capi-quickstart.kubeconfig
 ```
 
-### Fix kubeconfig (when using docker on MacOS)
-
-When using docker on MacOS, you will need to do a couple of additional
-steps to get the correct kubeconfig for a workload cluster created with the Docker provider:
-
+To fix the kubeconfig run:
 ```bash
 # Point the kubeconfig to the exposed port of the load balancer, rather than the inaccessible container IP.
 sed -i -e "s/server:.*/server: https:\/\/$(docker port capi-quickstart-lb 6443/tcp | sed "s/0.0.0.0/127.0.0.1/")/g" ./capi-quickstart.kubeconfig

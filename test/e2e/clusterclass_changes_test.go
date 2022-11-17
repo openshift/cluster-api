@@ -20,10 +20,10 @@ limitations under the License.
 package e2e
 
 import (
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 )
 
-var _ = Describe("When testing ClusterClass changes", func() {
+var _ = Describe("When testing ClusterClass changes [ClusterClass]", func() {
 	ClusterClassChangesSpec(ctx, func() ClusterClassChangesSpecInput {
 		return ClusterClassChangesSpecInput{
 			E2EConfig:             e2eConfig,
@@ -43,6 +43,23 @@ var _ = Describe("When testing ClusterClass changes", func() {
 			// The test verifies that these fields are rolled out to the MachineDeployments.
 			ModifyMachineDeploymentBootstrapConfigTemplateFields: map[string]interface{}{
 				"spec.template.spec.verbosity": int64(4),
+			},
+			// ModifyMachineDeploymentInfrastructureMachineTemplateFields are the fields which will be set on the
+			// InfrastructureMachineTemplate of all MachineDeploymentClasses of the ClusterClass after the initial Cluster creation.
+			// The test verifies that these fields are rolled out to the MachineDeployments.
+			ModifyMachineDeploymentInfrastructureMachineTemplateFields: map[string]interface{}{
+				"spec.template.spec.extraMounts": []interface{}{
+					map[string]interface{}{
+						"containerPath": "/var/run/docker.sock",
+						"hostPath":      "/var/run/docker.sock",
+					},
+					map[string]interface{}{
+						// /tmp cannot be used as containerPath as
+						// it already exists.
+						"containerPath": "/test",
+						"hostPath":      "/tmp",
+					},
+				},
 			},
 		}
 	})

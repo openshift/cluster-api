@@ -1,6 +1,6 @@
 # Experimental Feature: Ignition Bootstrap Config (alpha)
 
-The default configuration engine for bootstrapping workload cluster machines is [cloud-init](https://cloudinit.readthedocs.io/). **Ignition** is an alternative engine used by Linux distributions such as [Flatcar Container Linux](https://www.flatcar-linux.org/docs/latest/provisioning/ignition/) and [Fedora CoreOS](https://docs.fedoraproject.org/en-US/fedora-coreos/producing-ign/) and therefore should be used when choosing an Ignition-based distribution as the underlying OS for workload clusters.
+The default configuration engine for bootstrapping workload cluster machines is [cloud-init](https://cloudinit.readthedocs.io/). **Ignition** is an alternative engine used by Linux distributions such as [Flatcar Container Linux](https://www.flatcar.org/docs/latest/provisioning/ignition/) and [Fedora CoreOS](https://docs.fedoraproject.org/en-US/fedora-coreos/producing-ign/) and therefore should be used when choosing an Ignition-based distribution as the underlying OS for workload clusters.
 
 <aside class="note warning">
 
@@ -16,7 +16,7 @@ This guide explains how to deploy an AWS workload cluster using Ignition.
 
 - [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) installed locally
 - [clusterawsadm](https://cluster-api-aws.sigs.k8s.io/introduction.html#clusterawsadm) installed locally - download from the [releases](https://github.com/kubernetes-sigs/cluster-api-provider-aws/releases) page of the AWS provider
-- [Kind](https://kind.sigs.k8s.io/) and [Docker](https://www.docker.com/) installed locally (when using Kind to create a management cluster)
+- [kind](https://kind.sigs.k8s.io/) and [Docker](https://www.docker.com/) installed locally (when using kind to create a management cluster)
 
 ## Configure a management cluster
 
@@ -93,7 +93,7 @@ kubectl get kubeadmcontrolplane ignition-cluster-control-plane
 
 This could take a while. When the control plane is initialized, the `INITIALIZED` field should be `true`:
 
-```
+```bash
 NAME                             CLUSTER            INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE    VERSION
 ignition-cluster-control-plane   ignition-cluster   true                                 1                  1         1             7m7s   v1.22.2
 ```
@@ -120,7 +120,7 @@ kubectl cluster-info
 
 Sample output:
 
-```
+```bash
 Kubernetes control plane is running at https://ignition-cluster-apiserver-284992524.us-east-1.elb.amazonaws.com:6443
 CoreDNS is running at https://ignition-cluster-apiserver-284992524.us-east-1.elb.amazonaws.com:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
 
@@ -143,7 +143,7 @@ kubectl get nodes
 
 Sample output:
 
-```
+```bash
 NAME                                            STATUS   ROLES                  AGE   VERSION
 ip-10-0-122-154.us-east-1.compute.internal   Ready    control-plane,master   14m   v1.22.2
 ip-10-0-127-59.us-east-1.compute.internal    Ready    <none>                 13m   v1.22.2

@@ -27,8 +27,6 @@ source "${REPO_ROOT}/scripts/ci-e2e-lib.sh"
 source "${REPO_ROOT}/hack/ensure-go.sh"
 # shellcheck source=./hack/ensure-kubectl.sh
 source "${REPO_ROOT}/hack/ensure-kubectl.sh"
-# shellcheck source=./hack/ensure-kustomize.sh
-source "${REPO_ROOT}/hack/ensure-kustomize.sh"
 # shellcheck source=./hack/ensure-kind.sh
 source "${REPO_ROOT}/hack/ensure-kind.sh"
 
@@ -55,7 +53,7 @@ kind:prepullAdditionalImages
 # Configure e2e tests
 export GINKGO_NODES=3
 export GINKGO_NOCOLOR=true
-export GINKGO_ARGS="--failFast" # Other ginkgo args that need to be appended to the command.
+export GINKGO_ARGS="--fail-fast" # Other ginkgo args that need to be appended to the command.
 export E2E_CONF_FILE="${REPO_ROOT}/test/e2e/config/docker.yaml"
 export ARTIFACTS="${ARTIFACTS:-${REPO_ROOT}/_artifacts}"
 export SKIP_RESOURCE_CLEANUP=false
@@ -97,4 +95,4 @@ ctr -n moby events > "${ARTIFACTS_LOCAL}/containerd-events.txt" 2>&1 &
 # Run e2e tests
 mkdir -p "$ARTIFACTS"
 echo "+ run tests!"
-make -C test/e2e/ run
+make test-e2e

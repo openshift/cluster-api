@@ -17,6 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// main is the main package for mdbook-embed.
 package main
 
 import (
@@ -56,7 +57,7 @@ func (l Embed) Process(input *plugin.Input) error {
 			Path:   path.Join("/", repository, branch, filePath),
 		}
 
-		resp, err := http.Get(rawURL.String())
+		resp, err := http.Get(rawURL.String()) //nolint:noctx // NB: as we're just implementing an external interface we won't be able to get a context here.
 		if err != nil {
 			return "", err
 		}

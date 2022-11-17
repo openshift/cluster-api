@@ -236,135 +236,6 @@ func Test_ValidateClusterVariables(t *testing.T) {
 	}
 }
 
-func Test_ValidateTopLevelClusterVariablesExist(t *testing.T) {
-	tests := []struct {
-		name                      string
-		clusterVariablesOverrides []clusterv1.ClusterVariable
-		clusterVariables          []clusterv1.ClusterVariable
-		wantErr                   bool
-	}{
-		{
-			name: "Pass if all variable overrides have corresponding top-level variables.",
-			clusterVariablesOverrides: []clusterv1.ClusterVariable{
-				{
-					Name: "cpu",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`1`),
-					},
-				},
-				{
-					Name: "zone",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`"longerThanOneCharacter"`),
-					},
-				},
-			},
-			clusterVariables: []clusterv1.ClusterVariable{
-				{
-					Name: "cpu",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`1`),
-					},
-				},
-				{
-					Name: "zone",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`"longerThanOneCharacter"`),
-					},
-				},
-			},
-		},
-		{
-			name:                      "Pass if there are no variable overrides and no top-level variables.",
-			clusterVariablesOverrides: []clusterv1.ClusterVariable{},
-			clusterVariables:          []clusterv1.ClusterVariable{},
-		},
-		{
-			name:                      "Pass if there are no variable overrides.",
-			clusterVariablesOverrides: []clusterv1.ClusterVariable{},
-			clusterVariables: []clusterv1.ClusterVariable{
-				{
-					Name: "cpu",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`1`),
-					},
-				},
-				{
-					Name: "zone",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`"longerThanOneCharacter"`),
-					},
-				},
-			},
-		},
-		{
-			name: "Error if a variable override is missing the corresponding top-level variables.",
-			clusterVariablesOverrides: []clusterv1.ClusterVariable{
-				{
-					Name: "cpu",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`1`),
-					},
-				},
-				{
-					Name: "zone",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`"longerThanOneCharacter"`),
-					},
-				},
-			},
-			clusterVariables: []clusterv1.ClusterVariable{
-				{
-					Name: "zone",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`"longerThanOneCharacter"`),
-					},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "Pass if not every top-level variable has an override.",
-			clusterVariablesOverrides: []clusterv1.ClusterVariable{
-				{
-					Name: "zone",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`"longerThanOneCharacter"`),
-					},
-				},
-			},
-			clusterVariables: []clusterv1.ClusterVariable{
-				{
-					Name: "cpu",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`1`),
-					},
-				},
-				{
-					Name: "zone",
-					Value: apiextensionsv1.JSON{
-						Raw: []byte(`"longerThanOneCharacter"`),
-					},
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-
-			errList := ValidateTopLevelClusterVariablesExist(tt.clusterVariablesOverrides, tt.clusterVariables,
-				field.NewPath("spec", "topology", "workers", "machineDeployments").Index(0).Child("variables", "overrides"))
-
-			if tt.wantErr {
-				g.Expect(errList).NotTo(BeEmpty())
-				return
-			}
-			g.Expect(errList).To(BeEmpty())
-		})
-	}
-}
-
 func Test_ValidateClusterVariable(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -802,6 +673,63 @@ func Test_ValidateClusterVariable(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "Valid map",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "httpProxy",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						AdditionalProperties: &clusterv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"enabled": {
+									Type: "boolean",
+								},
+							},
+						},
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "httpProxy",
+				Value: apiextensionsv1.JSON{
+					Raw: []byte(`{"proxy":{"enabled":false}}`),
+				},
+			},
+		},
+		{
+			name: "Error if map is missing a required field",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "httpProxy",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						AdditionalProperties: &clusterv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"enabled": {
+									Type: "boolean",
+								},
+								"url": {
+									Type: "string",
+								},
+							},
+							Required: []string{"url"},
+						},
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "httpProxy",
+				Value: apiextensionsv1.JSON{
+					Raw: []byte(`{"proxy":{"enabled":false}}`),
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "Valid array",
 			clusterClassVariable: &clusterv1.ClusterClassVariable{
 				Name:     "testArray",
@@ -971,6 +899,223 @@ func Test_ValidateClusterVariable(t *testing.T) {
 				},
 			},
 			wantErr: true,
+		},
+		{
+			name: "Valid object with x-kubernetes-preserve-unknown-fields",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"knownProperty": {
+								Type: "boolean",
+							},
+						},
+						// Preserves fields for the current object (in this case unknownProperty).
+						XPreserveUnknownFields: true,
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					Raw: []byte(`{"knownProperty":false,"unknownProperty":true}`),
+				},
+			},
+		},
+		{
+			name: "Error if undefined field",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"knownProperty": {
+								Type: "boolean",
+							},
+						},
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					// unknownProperty is not defined in the schema.
+					Raw: []byte(`{"knownProperty":false,"unknownProperty":true}`),
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Error if undefined field with different casing",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"knownProperty": {
+								Type: "boolean",
+							},
+						},
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					// KnownProperty is only defined with lower case in the schema.
+					Raw: []byte(`{"KnownProperty":false}`),
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid nested object with x-kubernetes-preserve-unknown-fields",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						// XPreserveUnknownFields preservers recursively if the object has nested fields
+						// as no nested Properties are defined.
+						XPreserveUnknownFields: true,
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					Raw: []byte(`{"test": {"unknownProperty":false}}`),
+				},
+			},
+		},
+		{
+			name: "Valid object with nested fields and x-kubernetes-preserve-unknown-fields",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"test": {
+								Type: "object",
+								Properties: map[string]clusterv1.JSONSchemaProps{
+									"knownProperty": {
+										Type: "boolean",
+									},
+								},
+								// Preserves fields on the current level (in this case unknownProperty).
+								XPreserveUnknownFields: true,
+							},
+						},
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					Raw: []byte(`{"test": {"knownProperty":false,"unknownProperty":true}}`),
+				},
+			},
+		},
+		{
+			name: "Error if undefined field nested",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"test": {
+								Type: "object",
+								Properties: map[string]clusterv1.JSONSchemaProps{
+									"knownProperty": {
+										Type: "boolean",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					// unknownProperty is not defined in the schema.
+					Raw: []byte(`{"test": {"knownProperty":false,"unknownProperty":true}}`),
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Error if undefined field nested and x-kubernetes-preserve-unknown-fields one level above",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"test": {
+								Type: "object",
+								Properties: map[string]clusterv1.JSONSchemaProps{
+									"knownProperty": {
+										Type: "boolean",
+									},
+								},
+							},
+						},
+						// Preserves only on the current level as nested Properties are defined.
+						XPreserveUnknownFields: true,
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					Raw: []byte(`{"test": {"knownProperty":false,"unknownProperty":true}}`),
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid object with mid-level unknown fields",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "testObject",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"test": {
+								Type: "object",
+								Properties: map[string]clusterv1.JSONSchemaProps{
+									"knownProperty": {
+										Type: "boolean",
+									},
+								},
+							},
+						},
+						// Preserves only on the current level as nested Properties are defined.
+						XPreserveUnknownFields: true,
+					},
+				},
+			},
+			clusterVariable: &clusterv1.ClusterVariable{
+				Name: "testObject",
+				Value: apiextensionsv1.JSON{
+					Raw: []byte(`{"test": {"knownProperty":false},"unknownProperty":true}`),
+				},
+			},
 		},
 	}
 	for _, tt := range tests {

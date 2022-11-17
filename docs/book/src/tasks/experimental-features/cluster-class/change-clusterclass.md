@@ -114,7 +114,7 @@ potentially dangerous changes on those objects.
 
 </aside>
 
-For additional info see [compatibility rules](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/202105256-cluster-class-and-managed-topologies.md#clusterclass-compatibility)
+For additional info see [compatibility rules](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20210526-cluster-class-and-managed-topologies.md#clusterclass-compatibility)
 defined in the ClusterClass proposal.
 
 ## Planning ClusterClass changes
@@ -151,7 +151,12 @@ See [reference](#reference) for more details.
 
 ### Effects on the Clusters
 
-The following table documents the effects each ClusterClass change can have on a Cluster.
+The following table documents the effects each ClusterClass change can have on a Cluster;
+Similar considerations apply to changes introduced by changes in `Cluster.Topology` or by
+changes introduced by patches.
+
+NOTE: for people used to operating Cluster API without Cluster Class, it could also help to keep in mind that the 
+underlying objects like control plane and MachineDeployment act in the same way with and without a ClusterClass.
 
 | Changed field                                   | Effects on Clusters                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 |-------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -169,22 +174,19 @@ The following table documents the effects each ClusterClass change can have on a
 The topology reconciler enforces values defined in the ClusterClass templates into the topology
 owned objects in a Cluster.
 
-A simple way to understand this is to `kubectl get -o json` templates referenced in a ClusterClass;
-then you can consider the topology reconciler to be authoritative on all the values
-under `spec`. Being authoritative means that the user cannot manually change those values in
-the object derived from the template in a specific Cluster (and if they do so the value gets reconciled
-to the value defined in the ClusterClass).
+More specifically, the topology controller uses [Server Side Apply](https://kubernetes.io/docs/reference/using-api/server-side-apply/)
+to write/patch topology owned objects; using SSA allows other controllers to co-author the generated objects, 
+like e.g. adding info for subnets in CAPA.
 
 <aside class="note">
 <h1>What about patches?</h1>
 
 The considerations above apply also when using patches, the only difference being that the
-authoritative fields should be determined by applying patches on top of the `kubectl get -o json` output. 
+set of fields that are enforced should be determined by applying patches on top of the templates. 
 
 </aside>
 
-A corollary of the behaviour described above is that it is technically possible to change non-authoritative
-fields in the object derived from the template in a specific Cluster, but we advise against using the possibility
+A corollary of the behaviour described above is that it is technically possible to change fields in the object 
+which are not derived from the templates and patches, but we advise against using the possibility
 or making ad-hoc changes in generated objects unless otherwise needed for a workaround. It is always
 preferable to improve ClusterClasses by supporting new Cluster variants in a reusable way.
-

@@ -25,12 +25,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilfeature "k8s.io/component-base/featuregate/testing"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/internal/webhooks/util"
 )
 
 func TestClusterDefaultNamespaces(t *testing.T) {
@@ -46,7 +48,8 @@ func TestClusterDefaultNamespaces(t *testing.T) {
 		},
 	}
 	webhook := &Cluster{}
-	t.Run("for Cluster", customDefaultValidateTest(ctx, c, webhook))
+	t.Run("for Cluster", util.CustomDefaultValidateTest(ctx, c, webhook))
+
 	g.Expect(webhook.Default(ctx, c)).To(Succeed())
 
 	g.Expect(c.Spec.InfrastructureRef.Namespace).To(Equal(c.Namespace))
@@ -315,7 +318,7 @@ func TestClusterDefaultVariables(t *testing.T) {
 
 		t.Run(tt.name, func(t *testing.T) {
 			// Test if defaulting works in combination with validation.
-			customDefaultValidateTest(ctx, cluster, webhook)(t)
+			util.CustomDefaultValidateTest(ctx, cluster, webhook)(t)
 			// Test defaulting.
 			t.Run("default", func(t *testing.T) {
 				g := NewWithT(t)
@@ -348,8 +351,8 @@ func TestClusterDefaultTopologyVersion(t *testing.T) {
 
 	// Create the webhook and add the fakeClient as its client.
 	webhook := &Cluster{Client: fakeClient}
+	t.Run("for Cluster", util.CustomDefaultValidateTest(ctx, c, webhook))
 
-	t.Run("for Cluster", customDefaultValidateTest(ctx, c, webhook))
 	g.Expect(webhook.Default(ctx, c)).To(Succeed())
 
 	g.Expect(c.Spec.Topology.Version).To(HavePrefix("v"))
@@ -404,6 +407,115 @@ func TestClusterValidation(t *testing.T) {
 					WithControlPlane(
 						builder.ControlPlane("fooNamespace", "cp1").Build()).
 					WithTopology(&clusterv1.Topology{}).
+					Build(),
+			},
+			{
+				name:      "pass with undefined CIDR ranges",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{}},
+						Pods: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{}},
+					}).
+					Build(),
+			},
+			{
+				name:      "pass with nil CIDR ranges",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							CIDRBlocks: nil},
+						Pods: &clusterv1.NetworkRanges{
+							CIDRBlocks: nil},
+					}).
+					Build(),
+			},
+			{
+				name:      "pass with valid IPv4 CIDR ranges",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"10.10.10.10/24"}},
+						Pods: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"10.10.10.10/24"}},
+					}).
+					Build(),
+			},
+			{
+				name:      "pass with valid IPv6 CIDR ranges",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64"}},
+						Pods: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64"}},
+					}).
+					Build(),
+			},
+			{
+				name:      "pass with valid dualstack CIDR ranges",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64", "10.10.10.10/24"}},
+						Pods: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64", "10.10.10.10/24"}},
+					}).
+					Build(),
+			},
+			{
+				name:      "pass if multiple CIDR ranges of IPv4 are passed",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"10.10.10.10/24", "11.11.11.11/24"}},
+					}).
+					Build(),
+			},
+			{
+				name:      "pass if multiple CIDR ranges of IPv6 are passed",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"2002::1234:abcd:ffff:c0a8:101/64", "2004::1234:abcd:ffff:c0a8:101/64"}},
+					}).
+					Build(),
+			},
+			{
+				name:      "pass if too many cidr ranges are specified in the clusterNetwork pods field",
+				expectErr: false,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Pods: &clusterv1.NetworkRanges{
+							CIDRBlocks: []string{"10.10.10.10/24", "11.11.11.11/24", "12.12.12.12/24"}}}).
+					Build(),
+			},
+			{
+				name:      "fails if service cidr ranges are not valid",
+				expectErr: true,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Services: &clusterv1.NetworkRanges{
+							// Invalid ranges: missing network suffix
+							CIDRBlocks: []string{"10.10.10.10", "11.11.11.11"}}}).
+					Build(),
+			},
+			{
+				name:      "fails if pod cidr ranges are not valid",
+				expectErr: true,
+				in: builder.Cluster("fooNamespace", "cluster1").
+					WithClusterNetwork(&clusterv1.ClusterNetwork{
+						Pods: &clusterv1.NetworkRanges{
+							// Invalid ranges: missing network suffix
+							CIDRBlocks: []string{"10.10.10.10", "11.11.11.11"}}}).
 					Build(),
 			},
 		}
@@ -754,7 +866,7 @@ func TestClusterTopologyValidation(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "should fail when variable override is missing the corresponding top-level variable",
+			name: "should pass even when variable override is missing the corresponding top-level variable",
 			clusterClassVariables: []clusterv1.ClusterClassVariable{
 				{
 					Name:     "cpu",
@@ -779,7 +891,7 @@ func TestClusterTopologyValidation(t *testing.T) {
 						Build()).
 					Build()).
 				Build(),
-			expectErr: true,
+			expectErr: false,
 		},
 	}
 
@@ -851,6 +963,222 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
 				Build(),
 			wantErr: true,
+		},
+		{
+			name: "Reject a cluster that has MHC enabled for control plane but is missing MHC definition in cluster topology and clusterclass",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+							Enable: pointer.Bool(true),
+						}).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "Reject a cluster that MHC override defined for control plane but is missing unhealthy conditions",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+							MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
+								UnhealthyConditions: []clusterv1.UnhealthyCondition{},
+							},
+						}).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "Reject a cluster that MHC override defined for control plane but is set when control plane is missing machineInfrastructure",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+							MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
+								UnhealthyConditions: []clusterv1.UnhealthyCondition{
+									{
+										Type:   corev1.NodeReady,
+										Status: corev1.ConditionFalse,
+									},
+								},
+							},
+						}).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "Accept a cluster that has MHC enabled for control plane with control plane MHC defined in ClusterClass",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+							Enable: pointer.Bool(true),
+						}).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckClass{}).
+				Build(),
+			wantErr: false,
+		},
+		{
+			name: "Accept a cluster that has MHC enabled for control plane with control plane MHC defined in cluster topology",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+							Enable: pointer.Bool(true),
+							MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
+								UnhealthyConditions: []clusterv1.UnhealthyCondition{
+									{
+										Type:   corev1.NodeReady,
+										Status: corev1.ConditionFalse,
+									},
+								},
+							},
+						}).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				WithControlPlaneInfrastructureMachineTemplate(&unstructured.Unstructured{}).
+				Build(),
+			wantErr: false,
+		},
+		{
+			name: "Reject a cluster that has MHC enabled for machine deployment but is missing MHC definition in cluster topology and ClusterClass",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithMachineDeployment(
+							builder.MachineDeploymentTopology("md1").
+								WithClass("worker-class").
+								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+									Enable: pointer.Bool(true),
+								}).
+								Build(),
+						).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("worker-class").Build(),
+				).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "Reject a cluster that has MHC override defined for machine deployment but is missing unhealthy conditions",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithMachineDeployment(
+							builder.MachineDeploymentTopology("md1").
+								WithClass("worker-class").
+								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+									MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
+										UnhealthyConditions: []clusterv1.UnhealthyCondition{},
+									},
+								}).
+								Build(),
+						).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("worker-class").Build(),
+				).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "Accept a cluster that has MHC enabled for machine deployment with machine deployment MHC defined in ClusterClass",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithMachineDeployment(
+							builder.MachineDeploymentTopology("md1").
+								WithClass("worker-class").
+								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+									Enable: pointer.Bool(true),
+								}).
+								Build(),
+						).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("worker-class").
+						WithMachineHealthCheckClass(&clusterv1.MachineHealthCheckClass{}).
+						Build(),
+				).
+				Build(),
+			wantErr: false,
+		},
+		{
+			name: "Accept a cluster that has MHC enabled for machine deployment with machine deployment MHC defined in cluster topology",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithTopology(
+					builder.ClusterTopology().
+						WithClass("clusterclass").
+						WithVersion("v1.22.2").
+						WithControlPlaneReplicas(3).
+						WithMachineDeployment(
+							builder.MachineDeploymentTopology("md1").
+								WithClass("worker-class").
+								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
+									Enable: pointer.Bool(true),
+									MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
+										UnhealthyConditions: []clusterv1.UnhealthyCondition{
+											{
+												Type:   corev1.NodeReady,
+												Status: corev1.ConditionFalse,
+											},
+										},
+									},
+								}).
+								Build(),
+						).
+						Build()).
+				Build(),
+			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("worker-class").Build(),
+				).
+				Build(),
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
@@ -1325,6 +1653,24 @@ func TestMovingBetweenManagedAndUnmanaged(t *testing.T) {
 				WithControlPlaneReplicas(3).
 				Build(),
 			wantErr: true,
+		},
+		{
+			name: "Allow cluster moving from Unmanaged to Managed i.e. adding the spec.topology.class field on update " +
+				"if and only if ClusterTopologyUnsafeUpdateClassNameAnnotation is set",
+			cluster: builder.Cluster(metav1.NamespaceDefault, "cluster1").
+				WithAnnotations(map[string]string{clusterv1.ClusterTopologyUnsafeUpdateClassNameAnnotation: ""}).
+				Build(),
+			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				Build(),
+			updatedTopology: builder.ClusterTopology().
+				WithClass("class1").
+				WithVersion("v1.22.2").
+				WithControlPlaneReplicas(3).
+				Build(),
+			wantErr: false,
 		},
 		{
 			name: "Reject cluster moving from Managed to Unmanaged i.e. removing the spec.topology.class field on update",

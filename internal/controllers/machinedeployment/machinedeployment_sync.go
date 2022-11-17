@@ -29,6 +29,7 @@ import (
 	apirand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -68,10 +69,10 @@ func (r *Reconciler) sync(ctx context.Context, d *clusterv1.MachineDeployment, m
 // msList should come from getMachineSetsForDeployment(d).
 // machineMap should come from getMachineMapForDeployment(d, msList).
 //
-// 1. Get all old MSes this deployment targets, and calculate the max revision number among them (maxOldV).
-// 2. Get new MS this deployment targets (whose machine template matches deployment's), and update new MS's revision number to (maxOldV + 1),
-//    only if its revision number is smaller than (maxOldV + 1). If this step failed, we'll update it in the next deployment sync loop.
-// 3. Copy new MS's revision number to deployment (update deployment's revision). If this step failed, we'll update it in the next deployment sync loop.
+//  1. Get all old MSes this deployment targets, and calculate the max revision number among them (maxOldV).
+//  2. Get new MS this deployment targets (whose machine template matches deployment's), and update new MS's revision number to (maxOldV + 1),
+//     only if its revision number is smaller than (maxOldV + 1). If this step failed, we'll update it in the next deployment sync loop.
+//  3. Copy new MS's revision number to deployment (update deployment's revision). If this step failed, we'll update it in the next deployment sync loop.
 //
 // Note that currently the deployment controller is using caches to avoid querying the server for reads.
 // This may lead to stale reads of machine sets, thus incorrect deployment status.
@@ -236,13 +237,13 @@ func (r *Reconciler) getNewMachineSet(ctx context.Context, d *clusterv1.MachineD
 
 		return nil, err
 	case err != nil:
-		log.Error(err, "Failed to create new machine set", "machineset", newMS.Name)
+		log.Error(err, "Failed to create new MachineSet", "MachineSet", klog.KObj(&newMS))
 		r.recorder.Eventf(d, corev1.EventTypeWarning, "FailedCreate", "Failed to create MachineSet %q: %v", newMS.Name, err)
 		return nil, err
 	}
 
 	if !alreadyExists {
-		log.V(4).Info("Created new machine set", "machineset", createdMS.Name)
+		log.V(4).Info("Created new MachineSet", "MachineSet", klog.KObj(createdMS))
 		r.recorder.Eventf(d, corev1.EventTypeNormal, "SuccessfulCreate", "Created MachineSet %q", newMS.Name)
 	}
 
@@ -328,7 +329,7 @@ func (r *Reconciler) scale(ctx context.Context, deployment *clusterv1.MachineDep
 		for i := range allMSs {
 			ms := allMSs[i]
 			if ms.Spec.Replicas == nil {
-				log.Info("Spec.Replicas for machine set is nil, this is unexpected.", "machineset", ms.Name)
+				log.Info("Spec.Replicas for machine set is nil, this is unexpected.", "MachineSet", ms.Name)
 				continue
 			}
 

@@ -18,17 +18,17 @@ package cluster
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
-	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -53,13 +53,13 @@ type Proxy interface {
 	// CurrentNamespace returns the namespace from the current context in the kubeconfig file.
 	CurrentNamespace() (string, error)
 
-	// ValidateKubernetesVersion returns an error if management cluster version less than minimumKubernetesVersion.
+	// ValidateKubernetesVersion returns an error if management cluster version less than MinimumKubernetesVersion.
 	ValidateKubernetesVersion() error
 
 	// NewClient returns a new controller runtime Client object for working on the management cluster.
 	NewClient() (client.Client, error)
 
-	// CheckClusterAvailable checks if a a cluster is available and reachable.
+	// CheckClusterAvailable checks if a cluster is available and reachable.
 	CheckClusterAvailable() error
 
 	// ListResources lists namespaced and cluster-wide resources for a component matching the labels. Namespaced resources are only listed
@@ -120,22 +120,12 @@ func (k *proxy) ValidateKubernetesVersion() error {
 		return err
 	}
 
-	client := discovery.NewDiscoveryClientForConfigOrDie(config)
-	serverVersion, err := client.ServerVersion()
-	if err != nil {
-		return errors.Wrap(err, "failed to retrieve server version")
+	minVer := version.MinimumKubernetesVersion
+	if clusterTopologyFeatureGate, _ := strconv.ParseBool(os.Getenv("CLUSTER_TOPOLOGY")); clusterTopologyFeatureGate {
+		minVer = version.MinimumKubernetesVersionClusterTopology
 	}
 
-	compver, err := utilversion.MustParseGeneric(serverVersion.String()).Compare(minimumKubernetesVersion)
-	if err != nil {
-		return errors.Wrap(err, "failed to parse and compare server version")
-	}
-
-	if compver == -1 {
-		return errors.Errorf("unsupported management cluster server version: %s - minimum required version is %s", serverVersion.String(), minimumKubernetesVersion)
-	}
-
-	return nil
+	return version.CheckKubernetesVersion(config, minVer)
 }
 
 // GetConfig returns the config for a kubernetes client.
@@ -216,12 +206,12 @@ func (k *proxy) CheckClusterAvailable() error {
 // This is done to avoid errors when listing resources of providers which have already been deleted/scaled down to 0 replicas/with
 // malfunctioning webhooks.
 // For example:
-// * The AWS provider has already been deleted, but there are still cluster-wide resources of AWSClusterControllerIdentity.
-// * The AWSClusterControllerIdentity resources are still stored in an older version (e.g. v1alpha4, when the preferred
-//   version is v1beta1)
-// * If we now want to delete e.g. the kubeadm bootstrap provider, we cannot list AWSClusterControllerIdentity resources
-//   as the conversion would fail, because the AWS controller hosting the conversion webhook has already been deleted.
-// * Thus we exclude resources of other providers if we detect that ListResources is called to list resources of a provider.
+//   - The AWS provider has already been deleted, but there are still cluster-wide resources of AWSClusterControllerIdentity.
+//   - The AWSClusterControllerIdentity resources are still stored in an older version (e.g. v1alpha4, when the preferred
+//     version is v1beta1)
+//   - If we now want to delete e.g. the kubeadm bootstrap provider, we cannot list AWSClusterControllerIdentity resources
+//     as the conversion would fail, because the AWS controller hosting the conversion webhook has already been deleted.
+//   - Thus we exclude resources of other providers if we detect that ListResources is called to list resources of a provider.
 func (k *proxy) ListResources(labels map[string]string, namespaces ...string) ([]unstructured.Unstructured, error) {
 	cs, err := k.newClientSet()
 	if err != nil {
@@ -359,11 +349,13 @@ func listObjByGVK(c client.Client, groupVersion, kind string, options []client.L
 	objList.SetAPIVersion(groupVersion)
 	objList.SetKind(kind)
 
-	if err := c.List(ctx, objList, options...); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return nil, errors.Wrapf(err, "failed to list objects for the %q GroupVersionKind", objList.GroupVersionKind())
-		}
+	resourceListBackoff := newReadBackoff()
+	if err := retryWithExponentialBackoff(resourceListBackoff, func() error {
+		return c.List(ctx, objList, options...)
+	}); err != nil {
+		return nil, errors.Wrapf(err, "failed to list objects for the %q GroupVersionKind", objList.GroupVersionKind())
 	}
+
 	return objList, nil
 }
 

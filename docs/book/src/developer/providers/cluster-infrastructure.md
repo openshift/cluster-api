@@ -12,7 +12,8 @@ Examples might include networking, load balancers, firewall rules, and so on.
 A cluster infrastructure provider must define an API type for "infrastructure cluster" resources. The type:
 
 1. Must belong to an API group served by the Kubernetes apiserver
-2. May be implemented as a CustomResourceDefinition, or as part of an aggregated apiserver
+2. Must be implemented as a CustomResourceDefinition.
+    1. The CRD name must have the format produced by `sigs.k8s.io/cluster-api/util/contract.CalculateCRDName(Group, Kind)`.
 3. Must be namespace-scoped
 4. Must have the standard Kubernetes "type metadata" and "object metadata"
 5. Must have a `spec` field with the following:
@@ -29,7 +30,7 @@ A cluster infrastructure provider must define an API type for "infrastructure cl
             meant to be suitable for programmatic interpretation
         2. `failureMessage` (string): indicates there is a fatal problem reconciling the provider's infrastructure;
             meant to be a more descriptive value than `failureReason`
-        3. `failureDomains` (`failureDomains`): the failure domains that machines should be placed in. `failureDomains`
+        3. `failureDomains` (`FailureDomains`): the failure domains that machines should be placed in. `FailureDomains`
             is a map, defined as `map[string]FailureDomainSpec`. A unique key must be used for each `FailureDomainSpec`.
             `FailureDomainSpec` is defined as:
             - `controlPlane` (bool): indicates if failure domain is appropriate for running control plane instances.
@@ -65,6 +66,8 @@ type InfraClusterTemplateResource struct {
 	Spec InfraClusterSpec `json:"spec"`
 }
 ```
+
+The CRD name of the template must also have the format produced by `sigs.k8s.io/cluster-api/util/contract.CalculateCRDName(Group, Kind)`.
 
 ### List Resources
 

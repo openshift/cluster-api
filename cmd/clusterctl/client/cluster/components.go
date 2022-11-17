@@ -181,7 +181,7 @@ func (p *providerComponents) Delete(options DeleteOptions) error {
 		// If the resource is a cluster resource, skip it if the resource name does not start with the instance prefix.
 		// This is required because there are cluster resources like e.g. ClusterRoles and ClusterRoleBinding, which are instance specific;
 		// During the installation, clusterctl adds the instance namespace prefix to such resources (see fixRBAC), and so we can rely
-		// on that for deleting only the global resources belonging the the instance we are processing.
+		// on that for deleting only the global resources belonging the instance we are processing.
 		// NOTE: namespace and CRD are special case managed above; webhook instead goes hand by hand with the controller they
 		// should always be deleted.
 		isWebhook := obj.GroupVersionKind().Kind == validatingWebhookConfigurationKind || obj.GroupVersionKind().Kind == mutatingWebhookConfigurationKind
@@ -212,12 +212,18 @@ func (p *providerComponents) Delete(options DeleteOptions) error {
 
 		// Otherwise delete the object
 		log.V(5).Info("Deleting", logf.UnstructuredToValues(obj)...)
-		if err := cs.Delete(ctx, &obj); err != nil {
-			if apierrors.IsNotFound(err) {
-				// Tolerate IsNotFound error that might happen because we are not enforcing a deletion order
-				// that considers relation across objects (e.g. Deployments -> ReplicaSets -> Pods)
-				continue
+		deleteBackoff := newWriteBackoff()
+		if err := retryWithExponentialBackoff(deleteBackoff, func() error {
+			if err := cs.Delete(ctx, &obj); err != nil {
+				if apierrors.IsNotFound(err) {
+					// Tolerate IsNotFound error that might happen because we are not enforcing a deletion order
+					// that considers relation across objects (e.g. Deployments -> ReplicaSets -> Pods)
+					return nil
+				}
+				return err
 			}
+			return nil
+		}); err != nil {
 			errList = append(errList, errors.Wrapf(err, "Error deleting object %s, %s/%s", obj.GroupVersionKind(), obj.GetNamespace(), obj.GetName()))
 		}
 	}

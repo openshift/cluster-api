@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -74,7 +74,7 @@ var (
 	// with the providers specified in the configPath.
 	clusterctlConfigPath string
 
-	// bootstrapClusterProvider manages provisioning of the the bootstrap cluster to be used for the e2e tests.
+	// bootstrapClusterProvider manages provisioning of the bootstrap cluster to be used for the e2e tests.
 	// Please note that provisioning will be skipped if e2e.use-existing-cluster is provided.
 	bootstrapClusterProvider bootstrap.ClusterProvider
 
@@ -92,21 +92,25 @@ func init() {
 }
 
 func TestE2E(t *testing.T) {
+	g := NewWithT(t)
+
 	// If running in prow, make sure to use the artifacts folder that will be reported in test grid (ignoring the value provided by flag).
 	if prowArtifactFolder, exists := os.LookupEnv("ARTIFACTS"); exists {
 		artifactFolder = prowArtifactFolder
 	}
 
+	// ensure the artifacts folder exists
+	g.Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder) //nolint:gosec
+
 	RegisterFailHandler(Fail)
 
 	if alsoLogToFile {
 		w, err := ginkgoextensions.EnableFileLogging(filepath.Join(artifactFolder, "ginkgo-log.txt"))
-		Expect(err).ToNot(HaveOccurred())
+		g.Expect(err).ToNot(HaveOccurred())
 		defer w.Close()
 	}
 
-	junitReporter := framework.CreateJUnitReporterForProw(artifactFolder)
-	RunSpecsWithDefaultAndCustomReporters(t, "capi-e2e", []Reporter{junitReporter})
+	RunSpecs(t, "capi-e2e")
 }
 
 // Using a SynchronizedBeforeSuite for controlling how to create resources shared across ParallelNodes (~ginkgo threads).
@@ -115,7 +119,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Before all ParallelNodes.
 
 	Expect(configPath).To(BeAnExistingFile(), "Invalid test suite argument. e2e.config should be an existing file.")
-	Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder) //nolint:gosec
 
 	By("Initializing a runtime.Scheme with all the GVK relevant for this test")
 	scheme := initScheme()
@@ -212,6 +215,7 @@ func setupBootstrapCluster(config *clusterctl.E2EConfig, scheme *runtime.Scheme,
 	var clusterProvider bootstrap.ClusterProvider
 	kubeconfigPath := ""
 	if !useExistingCluster {
+		By("Creating the bootstrap cluster")
 		clusterProvider = bootstrap.CreateKindBootstrapClusterAndLoadImages(ctx, bootstrap.CreateKindBootstrapClusterAndLoadImagesInput{
 			Name:               config.ManagementClusterName,
 			KubernetesVersion:  config.GetVariable(KubernetesVersionManagement),
@@ -224,6 +228,8 @@ func setupBootstrapCluster(config *clusterctl.E2EConfig, scheme *runtime.Scheme,
 
 		kubeconfigPath = clusterProvider.GetKubeconfigPath()
 		Expect(kubeconfigPath).To(BeAnExistingFile(), "Failed to get the kubeconfig file for the bootstrap cluster")
+	} else {
+		By("Using an existing bootstrap cluster")
 	}
 
 	clusterProxy := framework.NewClusterProxy("bootstrap", kubeconfigPath, scheme)
@@ -234,10 +240,12 @@ func setupBootstrapCluster(config *clusterctl.E2EConfig, scheme *runtime.Scheme,
 
 func initBootstrapCluster(bootstrapClusterProxy framework.ClusterProxy, config *clusterctl.E2EConfig, clusterctlConfig, artifactFolder string) {
 	clusterctl.InitManagementClusterAndWatchControllerLogs(ctx, clusterctl.InitManagementClusterAndWatchControllerLogsInput{
-		ClusterProxy:            bootstrapClusterProxy,
-		ClusterctlConfigPath:    clusterctlConfig,
-		InfrastructureProviders: config.InfrastructureProviders(),
-		LogFolder:               filepath.Join(artifactFolder, "clusters", bootstrapClusterProxy.GetName()),
+		ClusterProxy:              bootstrapClusterProxy,
+		ClusterctlConfigPath:      clusterctlConfig,
+		InfrastructureProviders:   config.InfrastructureProviders(),
+		IPAMProviders:             config.IPAMProviders(),
+		RuntimeExtensionProviders: config.RuntimeExtensionProviders(),
+		LogFolder:                 filepath.Join(artifactFolder, "clusters", bootstrapClusterProxy.GetName()),
 	}, config.GetIntervals(bootstrapClusterProxy.GetName(), "wait-controllers")...)
 }
 

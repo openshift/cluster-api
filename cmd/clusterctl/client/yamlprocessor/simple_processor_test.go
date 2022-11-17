@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package yamlprocessor
 
 import (
@@ -185,7 +186,7 @@ func TestSimpleProcessor_Process(t *testing.T) {
 				configVariablesClient: test.NewFakeVariableClient().
 					WithVar("BAR", "bar"),
 			},
-			want:    []byte("foo bar, bar, bar"),
+			want:    []byte("foo bar, bar, bar"), //nolint:dupword
 			wantErr: false,
 		},
 		{
@@ -195,7 +196,7 @@ func TestSimpleProcessor_Process(t *testing.T) {
 				configVariablesClient: test.NewFakeVariableClient().
 					WithVar("BAR", "bar"),
 			},
-			want:    []byte(`\\ foo bar, bar, bar`),
+			want:    []byte(`\\ foo bar, bar, bar`), //nolint:dupword
 			wantErr: false,
 		},
 		{

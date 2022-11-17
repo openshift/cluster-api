@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.8.0
+    controller-gen.kubebuilder.io/version: v0.10.0
   creationTimestamp: null
   name: machinesets.cluster.x-k8s.io
 spec:
@@ -125,10 +125,11 @@ spec:
                       are ANDed.
                     type: object
                 type: object
+                x-kubernetes-map-type: atomic
               template:
                 description: Template is the object that describes the machine that
                   will be created if insufficient replicas are detected. Object references
-                  to custom resources resources are treated as templates.
+                  to custom resources are treated as templates.
                 properties:
                   metadata:
                     description: 'Standard object''s metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
@@ -210,7 +211,10 @@ spec:
                             blockOwnerDeletion:
                               description: If true, AND if the owner has the "foregroundDeletion"
                                 finalizer, then the owner cannot be deleted from the
-                                key-value store until this reference is removed. Defaults
+                                key-value store until this reference is removed. See
+                                https://kubernetes.io/docs/concepts/architecture/garbage-collection/#foreground-deletion
+                                for how the garbage collector interacts with this
+                                field and enforces the foreground deletion. Defaults
                                 to false. To set this field, a user needs "delete"
                                 permission of the owner, otherwise 422 (Unprocessable
                                 Entity) will be returned.
@@ -234,6 +238,7 @@ spec:
                           - name
                           - uid
                           type: object
+                          x-kubernetes-map-type: atomic
                         type: array
                     type: object
                   spec:
@@ -287,6 +292,7 @@ spec:
                                 description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                 type: string
                             type: object
+                            x-kubernetes-map-type: atomic
                           data:
                             description: "Data contains the bootstrap data, such as
                               cloud-init details scripts. If nil, the Machine should
@@ -347,6 +353,7 @@ spec:
                             description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                             type: string
                         type: object
+                        x-kubernetes-map-type: atomic
                       nodeDrainTimeout:
                         description: 'NodeDrainTimeout is the total amount of time
                           that the controller will spend on draining a node. The default
@@ -564,10 +571,11 @@ spec:
                       are ANDed.
                     type: object
                 type: object
+                x-kubernetes-map-type: atomic
               template:
                 description: Template is the object that describes the machine that
                   will be created if insufficient replicas are detected. Object references
-                  to custom resources resources are treated as templates.
+                  to custom resources are treated as templates.
                 properties:
                   metadata:
                     description: 'Standard object''s metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
@@ -641,6 +649,7 @@ spec:
                                 description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                 type: string
                             type: object
+                            x-kubernetes-map-type: atomic
                           dataSecretName:
                             description: DataSecretName is the name of the secret
                               that stores the bootstrap data script. If nil, the Machine
@@ -695,6 +704,7 @@ spec:
                             description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                             type: string
                         type: object
+                        x-kubernetes-map-type: atomic
                       nodeDrainTimeout:
                         description: 'NodeDrainTimeout is the total amount of time
                           that the controller will spend on draining a node. The default
@@ -846,6 +856,11 @@ spec:
       jsonPath: .spec.clusterName
       name: Cluster
       type: string
+    - description: Total number of machines desired by this machineset
+      jsonPath: .spec.replicas
+      name: Desired
+      priority: 10
+      type: integer
     - description: Total number of non-terminated machines targeted by this machineset
       jsonPath: .status.replicas
       name: Replicas
@@ -960,10 +975,11 @@ spec:
                       are ANDed.
                     type: object
                 type: object
+                x-kubernetes-map-type: atomic
               template:
                 description: Template is the object that describes the machine that
                   will be created if insufficient replicas are detected. Object references
-                  to custom resources resources are treated as templates.
+                  to custom resources are treated as templates.
                 properties:
                   metadata:
                     description: 'Standard object''s metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
@@ -1037,6 +1053,7 @@ spec:
                                 description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                                 type: string
                             type: object
+                            x-kubernetes-map-type: atomic
                           dataSecretName:
                             description: DataSecretName is the name of the secret
                               that stores the bootstrap data script. If nil, the Machine
@@ -1091,12 +1108,25 @@ spec:
                             description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                             type: string
                         type: object
+                        x-kubernetes-map-type: atomic
+                      nodeDeletionTimeout:
+                        description: NodeDeletionTimeout defines how long the controller
+                          will attempt to delete the Node that the Machine hosts after
+                          the Machine is marked for deletion. A duration of 0 will
+                          retry deletion indefinitely. Defaults to 10 seconds.
+                        type: string
                       nodeDrainTimeout:
                         description: 'NodeDrainTimeout is the total amount of time
                           that the controller will spend on draining a node. The default
                           value is 0, meaning that the node can be drained without
                           any time limitations. NOTE: NodeDrainTimeout is different
                           from `kubectl drain --timeout`'
+                        type: string
+                      nodeVolumeDetachTimeout:
+                        description: NodeVolumeDetachTimeout is the total amount of
+                          time that the controller will spend on waiting for all volumes
+                          to be detached. The default value is 0, meaning that the
+                          volumes can be detached without any time limitations.
                         type: string
                       providerID:
                         description: ProviderID is the identification ID of the machine
@@ -1238,9 +1268,3 @@ spec:
         specReplicasPath: .spec.replicas
         statusReplicasPath: .status.replicas
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

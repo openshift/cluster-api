@@ -557,7 +557,7 @@ var moveTests = []struct {
 		},
 		wantMoveGroups: [][]string{
 			{ // group1
-				"external.cluster.x-k8s.io/v1beta1, Kind=GenericClusterExternalObject, /externalObject1",
+				"external.cluster.x-k8s.io/v1beta1, Kind=GenericClusterExternalObject, externalObject1",
 			},
 		},
 		wantErr: false,
@@ -591,7 +591,7 @@ var moveTests = []struct {
 		},
 		wantMoveGroups: [][]string{
 			{ // group 1
-				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericClusterInfrastructureIdentity, /infra1-identity",
+				"infrastructure.cluster.x-k8s.io/v1beta1, Kind=GenericClusterInfrastructureIdentity, infra1-identity",
 			},
 			{ // group 2 (objects with ownerReferences in group 1)
 				// owned by Clusters
@@ -704,9 +704,9 @@ func Test_objectMover_backupTargetObject(t *testing.T) {
 				g.Expect(string(fileContents)).To(Equal(expectedFileContents))
 
 				// Add delay so we ensure the file ModTime of updated files is different from old ones in the original files
-				time.Sleep(time.Millisecond * 5)
+				time.Sleep(time.Millisecond * 50)
 
-				// Running backupTargetObject should override any existing files since it represents a new backup
+				// Running backupTargetObject should override any existing files since it represents a new toDirectory
 				err = mover.backupTargetObject(node, dir)
 				if tt.wantErr {
 					g.Expect(err).To(HaveOccurred())
@@ -855,7 +855,7 @@ func Test_objectMover_backup(t *testing.T) {
 			// trigger discovery the content of the source cluster
 			g.Expect(graph.Discovery("")).To(Succeed())
 
-			// Run backup
+			// Run toDirectory
 			mover := objectMover{
 				fromProxy: graph.proxy,
 			}
@@ -866,7 +866,7 @@ func Test_objectMover_backup(t *testing.T) {
 			}
 			defer os.RemoveAll(dir)
 
-			err = mover.backup(graph, dir)
+			err = mover.toDirectory(graph, dir)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -929,7 +929,7 @@ func Test_objectMover_filesToObjs(t *testing.T) {
 
 			for _, fileName := range tt.files {
 				path := filepath.Join(dir, fileName)
-				file, err := os.Create(path)
+				file, err := os.Create(path) //nolint:gosec // No security issue: unit test.
 				if err != nil {
 					return
 				}
@@ -996,7 +996,7 @@ func Test_objectMover_restore(t *testing.T) {
 			// gets a fakeProxy to an empty cluster with all the required CRDs
 			toProxy := getFakeProxyWithCRDs()
 
-			// Run restore
+			// Run fromDirectory
 			mover := objectMover{
 				fromProxy: graph.proxy,
 			}
@@ -1018,14 +1018,14 @@ func Test_objectMover_restore(t *testing.T) {
 				g.Expect(graph.addRestoredObj(&objs[i])).NotTo(HaveOccurred())
 			}
 
-			// restore works on the target cluster which does not yet have objs to discover
+			// fromDirectory works on the target cluster which does not yet have objs to discover
 			// instead set the owners and tenants correctly on object graph like how ObjectMover.Restore does
 			// https://github.com/kubernetes-sigs/cluster-api/blob/main/cmd/clusterctl/client/cluster/mover.go#L129-L132
 			graph.setSoftOwnership()
 			graph.setTenants()
 			graph.checkVirtualNode()
 
-			err = mover.restore(graph, toProxy)
+			err = mover.fromDirectory(graph, toProxy)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -1791,7 +1791,7 @@ func Test_createTargetObject(t *testing.T) {
 								APIVersion: "cluster.x-k8s.io/v1beta1",
 							},
 						}: {
-							Controller: pointer.BoolPtr(true),
+							Controller: pointer.Bool(true),
 						},
 					},
 				},
@@ -1804,7 +1804,7 @@ func Test_createTargetObject(t *testing.T) {
 				}
 				g.Expect(toClient.Get(ctx, key, c)).ToNot(HaveOccurred())
 				g.Expect(c.OwnerReferences).To(HaveLen(1))
-				g.Expect(c.OwnerReferences[0].Controller).To(Equal(pointer.BoolPtr(true)))
+				g.Expect(c.OwnerReferences[0].Controller).To(Equal(pointer.Bool(true)))
 			},
 		},
 		{

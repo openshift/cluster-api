@@ -80,6 +80,49 @@ func Test_clusterctlClient_Move(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "returns an error if both move ToDirectory and FromDirectory is set",
+			fields: fields{
+				client: fakeClientForMove(),
+			},
+			args: args{
+				options: MoveOptions{
+					ToDirectory:   "/var/cache/toDirectory",
+					FromDirectory: "/var/cache/fromDirectory",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "returns an error if neither FromDirectory, ToDirectory, or ToKubeconfig is set",
+			fields: fields{
+				client: fakeClientForMove(),
+			},
+			args: args{
+				options: MoveOptions{
+					FromKubeconfig: Kubeconfig{Path: "kubeconfig", Context: "mgmt-context"},
+					FromDirectory:  "",
+					ToDirectory:    "",
+					ToKubeconfig:   Kubeconfig{},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "does not return an error if dryRun but neither FromDirectory, ToDirectory, or ToKubeconfig is set",
+			fields: fields{
+				client: fakeClientForMove(),
+			},
+			args: args{
+				options: MoveOptions{
+					FromKubeconfig: Kubeconfig{Path: "kubeconfig", Context: "mgmt-context"},
+					FromDirectory:  "",
+					ToKubeconfig:   Kubeconfig{},
+					DryRun:         true,
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -250,19 +293,27 @@ func fakeClientForMove() *fakeClient {
 }
 
 type fakeObjectMover struct {
-	moveErr    error
-	backupErr  error
-	restoerErr error
+	moveErr          error
+	toDirectoryErr   error
+	fromDirectoryErr error
 }
 
-func (f *fakeObjectMover) Move(namespace string, toCluster cluster.Client, dryRun bool) error {
+func (f *fakeObjectMover) Move(_ string, _ cluster.Client, _ bool) error {
 	return f.moveErr
 }
 
-func (f *fakeObjectMover) Backup(namespace string, directory string) error {
-	return f.backupErr
+func (f *fakeObjectMover) ToDirectory(_ string, _ string) error {
+	return f.toDirectoryErr
 }
 
-func (f *fakeObjectMover) Restore(toCluster cluster.Client, directory string) error {
-	return f.restoerErr
+func (f *fakeObjectMover) Backup(_ string, _ string) error {
+	return f.toDirectoryErr
+}
+
+func (f *fakeObjectMover) FromDirectory(_ cluster.Client, _ string) error {
+	return f.fromDirectoryErr
+}
+
+func (f *fakeObjectMover) Restore(_ cluster.Client, _ string) error {
+	return f.fromDirectoryErr
 }
