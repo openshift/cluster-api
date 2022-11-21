@@ -17,7 +17,7 @@ corresponding provider in the source cluster.
 
 You can use:
 
-```shell
+```bash
 clusterctl move --to-kubeconfig="path-to-target-kubeconfig.yaml"
 ```
 
@@ -33,6 +33,28 @@ the controllers from reconciling the workload cluster _in the source management 
 
 The `Cluster` object created in the target management cluster instead will be actively reconciled as soon as the move
 process completes.
+
+</aside>
+
+<aside class="note warning">
+
+<h1> Warning </h1>
+
+`clusterctl move` has been designed and developed around the bootstrap use case described below, and currently this is the only
+use case verified by Cluster API E2E tests.
+
+If someone intends to use `clusterctl move` outside of this scenario, it's recommended to set up a custom validation pipeline of
+it before using the command on a production environment.
+
+Also, it is important to notice that move has not been designed for being used as a backup/restore solution and it has 
+several limitation for this scenario, like e.g. the implementation assumes the cluster must be stable
+while doing the move operation, and possible race conditions happening while the cluster is upgrading, scaling up, 
+remediating etc. has never been investigated nor addressed.
+
+In order to avoid further confusion about this point, `clusterctl backup` and `clusterctl restore` commands have been
+deprecated because they were built on top of `clusterctl move` logic and they were sharing he same limitations. 
+User can use `clusterctl move --to-directory` and `clusterctl move --from-directory` instead; this will hopefully
+make it clear those operation have the same limitations of the move command.
 
 </aside>
 
@@ -53,7 +75,7 @@ used to provision a target Management cluster.
 
 This can now be achieved with the following procedure:
 
-1. Create a temporary bootstrap cluster, e.g. using Kind or Minikube
+1. Create a temporary bootstrap cluster, e.g. using kind or minikube
 2. Use `clusterctl init` to install the provider components
 3. Use `clusterctl generate cluster ... | kubectl apply -f -` to provision a target management cluster
 4. Wait for the target management cluster to be up and running

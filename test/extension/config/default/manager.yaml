@@ -1,0 +1,27 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manager
+spec:
+  selector:
+    matchLabels:
+      app: test-extension-manager
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: test-extension-manager
+    spec:
+      containers:
+      - command:
+        - /manager
+        image: controller:latest
+        name: manager
+      terminationGracePeriodSeconds: 10
+      serviceAccountName: manager
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane

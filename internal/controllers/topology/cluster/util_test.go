@@ -25,10 +25,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	. "sigs.k8s.io/controller-runtime/pkg/envtest/komega"
 
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
-	. "sigs.k8s.io/cluster-api/internal/test/matchers"
 )
 
 func TestGetReference(t *testing.T) {
@@ -76,13 +76,12 @@ func TestGetReference(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "Get object and update the ref",
+			name: "Get object fails: object does not exist with this apiVersion",
 			ref:  contract.ObjToRef(controlPlaneTemplate),
 			objects: []client.Object{
 				controlPlaneTemplatev99,
 			},
-			want:    controlPlaneTemplatev99,
-			wantRef: contract.ObjToRef(controlPlaneTemplatev99),
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -101,6 +100,7 @@ func TestGetReference(t *testing.T) {
 			r := &Reconciler{
 				Client:                    fakeClient,
 				UnstructuredCachingClient: fakeClient,
+				patchHelperFactory:        dryRunPatchHelperFactory(fakeClient),
 			}
 			got, err := r.getReference(ctx, tt.ref)
 			if tt.wantErr {

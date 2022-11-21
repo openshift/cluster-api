@@ -19,7 +19,6 @@ package internal
 import (
 	"context"
 
-	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -27,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/storage/names"
-	"k8s.io/klog/v2/klogr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -38,9 +36,6 @@ import (
 	"sigs.k8s.io/cluster-api/util/failuredomains"
 	"sigs.k8s.io/cluster-api/util/patch"
 )
-
-// Log is the global logger for the internal package.
-var Log = klogr.New()
 
 // ControlPlane holds business logic around control planes.
 // It should never need to connect to a service, that responsibility lies outside of this struct.
@@ -88,11 +83,6 @@ func NewControlPlane(ctx context.Context, client client.Client, cluster *cluster
 		infraResources:       infraObjects,
 		reconciliationTime:   metav1.Now(),
 	}, nil
-}
-
-// Logger returns a logger with useful context.
-func (c *ControlPlane) Logger() logr.Logger {
-	return Log.WithValues("namespace", c.KCP.Namespace, "name", c.KCP.Name, "cluster-name", c.Cluster.Name)
 }
 
 // FailureDomains returns a slice of failure domain objects synced from the infrastructure provider into Cluster.Status.
@@ -254,6 +244,12 @@ func (c *ControlPlane) HasDeletingMachine() bool {
 	return len(c.Machines.Filter(collections.HasDeletionTimestamp)) > 0
 }
 
+// GetKubeadmConfig returns the KubeadmConfig of a given machine.
+func (c *ControlPlane) GetKubeadmConfig(machineName string) (*bootstrapv1.KubeadmConfig, bool) {
+	kubeadmConfig, ok := c.kubeadmConfigs[machineName]
+	return kubeadmConfig, ok
+}
+
 // MachinesNeedingRollout return a list of machines that need to be rolled out.
 func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 	// Ignore machines to be deleted.
@@ -261,6 +257,8 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 
 	// Return machines if they are scheduled for rollout or if with an outdated configuration.
 	return machines.AnyFilter(
+		// Machines whose certificates are about to expire.
+		collections.ShouldRolloutBefore(&c.reconciliationTime, c.KCP.Spec.RolloutBefore),
 		// Machines that are scheduled for rollout (KCP.Spec.RolloutAfter set, the RolloutAfter deadline is expired, and the machine was created before the deadline).
 		collections.ShouldRolloutAfter(&c.reconciliationTime, c.KCP.Spec.RolloutAfter),
 		// Machines that do not match with KCP config.
@@ -272,6 +270,8 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 // plane's configuration and therefore do not require rollout.
 func (c *ControlPlane) UpToDateMachines() collections.Machines {
 	return c.Machines.Filter(
+		// Machines that shouldn't be rollout out if their certificates are not about to expire.
+		collections.Not(collections.ShouldRolloutBefore(&c.reconciliationTime, c.KCP.Spec.RolloutBefore)),
 		// Machines that shouldn't be rolled out after the deadline has expired.
 		collections.Not(collections.ShouldRolloutAfter(&c.reconciliationTime, c.KCP.Spec.RolloutAfter)),
 		// Machines that match with KCP config.

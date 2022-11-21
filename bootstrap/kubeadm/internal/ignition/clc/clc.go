@@ -42,9 +42,9 @@ import (
 	"strings"
 	"text/template"
 
-	clct "github.com/flatcar-linux/container-linux-config-transpiler/config"
-	ignition "github.com/flatcar-linux/ignition/config/v2_3"
-	ignitionTypes "github.com/flatcar-linux/ignition/config/v2_3/types"
+	clct "github.com/flatcar/container-linux-config-transpiler/config"
+	ignition "github.com/flatcar/ignition/config/v2_3"
+	ignitionTypes "github.com/flatcar/ignition/config/v2_3/types"
 	"github.com/pkg/errors"
 
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
@@ -184,20 +184,25 @@ storage:
     {{- end }}
     {{- range .WriteFiles }}
     - path: {{ .Path }}
+      {{- $owner := ParseOwner .Owner }}
+      {{ if $owner.User -}}
+      user:
+        name: {{ $owner.User }}
+      {{- end }}
+      {{ if $owner.Group -}}
+      group:
+        name: {{ $owner.Group }}
+      {{- end }}
       # Owner
-      #
-      # If Encoding == gzip+base64 || Encoding == gzip
-      # compression: true
-      #
-      # If Encoding == gzip+base64 || Encoding == "base64"
-      # Put "!!binary" notation before the content to let YAML decoder treat data as
-      # base64 data.
-      #
       {{ if ne .Permissions "" -}}
       mode: {{ .Permissions }}
       {{ end -}}
       contents:
+        {{ if eq .Encoding "base64" -}}
+        inline: !!binary |
+        {{- else -}}
         inline: |
+        {{- end }}
           {{ .Content | Indent 10 }}
     {{- end }}
     - path: /etc/kubeadm.sh
@@ -263,6 +268,7 @@ func defaultTemplateFuncMap() template.FuncMap {
 		"Split":          strings.Split,
 		"Join":           strings.Join,
 		"MountpointName": mountpointName,
+		"ParseOwner":     parseOwner,
 	}
 }
 
@@ -274,6 +280,40 @@ func templateYAMLIndent(i int, input string) string {
 	split := strings.Split(input, "\n")
 	ident := "\n" + strings.Repeat(" ", i)
 	return strings.Join(split, ident)
+}
+
+type owner struct {
+	User  *string
+	Group *string
+}
+
+func parseOwner(ownerRaw string) owner {
+	if ownerRaw == "" {
+		return owner{}
+	}
+
+	ownerSlice := strings.Split(ownerRaw, ":")
+
+	parseEntity := func(entity string) *string {
+		if entity == "" {
+			return nil
+		}
+
+		entityTrimmed := strings.TrimSpace(entity)
+
+		return &entityTrimmed
+	}
+
+	if len(ownerSlice) == 1 {
+		return owner{
+			User: parseEntity(ownerSlice[0]),
+		}
+	}
+
+	return owner{
+		User:  parseEntity(ownerSlice[0]),
+		Group: parseEntity(ownerSlice[1]),
+	}
 }
 
 func renderCLC(input *cloudinit.BaseUserData, kubeadmConfig string) ([]byte, error) {

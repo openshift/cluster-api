@@ -24,23 +24,25 @@ import (
 
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/patches/api"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	patchvariables "sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/patches/variables"
 )
 
 func TestGenerate(t *testing.T) {
 	tests := []struct {
-		name    string
-		patch   *clusterv1.ClusterClassPatch
-		req     *api.GenerateRequest
-		want    *api.GenerateResponse
-		wantErr bool
+		name  string
+		patch *clusterv1.ClusterClassPatch
+		req   *runtimehooksv1.GeneratePatchesRequest
+		want  *runtimehooksv1.GeneratePatchesResponse
 	}{
 		{
-			name: "Should generate JSON Patches with correct variable values",
+			name: "Should generate JSON Results with correct variable values",
 			patch: &clusterv1.ClusterClassPatch{
 				Name: "clusterName",
 				Definitions: []clusterv1.PatchDefinition{
@@ -67,12 +69,12 @@ func TestGenerate(t *testing.T) {
 									Variable: pointer.String("variableA"),
 								},
 							},
-							// .valueFrom.template
+							// .valueFrom.template using sprig functions
 							{
 								Op:   "replace",
 								Path: "/spec/valueFrom/template",
 								ValueFrom: &clusterv1.JSONPatchValue{
-									Template: pointer.String(`template {{ .variableB }}`),
+									Template: pointer.String(`template {{ .variableB | lower | repeat 5 }}`),
 								},
 							},
 							// template-specific variable takes precedent, if the same variable exists
@@ -102,54 +104,94 @@ func TestGenerate(t *testing.T) {
 									Variable: pointer.String("builtin.controlPlane.replicas"),
 								},
 							},
+							// test .builtin.controlPlane.machineTemplate.InfrastructureRef.name var.
+							{
+								Op:   "replace",
+								Path: "/spec/template/spec/files",
+								ValueFrom: &clusterv1.JSONPatchValue{
+									Template: pointer.String(`[{"contentFrom":{"secret":{"key":"control-plane-azure.json","name":"{{ .builtin.controlPlane.machineTemplate.infrastructureRef.name }}-azure-json"}}}]`),
+								},
+							},
 						},
 					},
 				},
 			},
-			req: &api.GenerateRequest{
-				Variables: map[string]apiextensionsv1.JSON{
-					"builtin":   {Raw: []byte(`{"cluster":{"name":"cluster-name","namespace":"default","topology":{"class":"clusterClass1","version":"v1.21.1"}}}`)},
-					"variableA": {Raw: []byte(`"A"`)},
-					"variableB": {Raw: []byte(`"B"`)},
-					"variableC": {Raw: []byte(`"C"`)},
-				},
-				Items: []*api.GenerateRequestTemplate{
+			req: &runtimehooksv1.GeneratePatchesRequest{
+				Variables: []runtimehooksv1.Variable{
 					{
-						TemplateRef: api.TemplateRef{
-							APIVersion:   "controlplane.cluster.x-k8s.io/v1beta1",
-							Kind:         "ControlPlaneTemplate",
-							TemplateType: api.ControlPlaneTemplateType,
+						Name:  "builtin",
+						Value: apiextensionsv1.JSON{Raw: []byte(`{"cluster":{"name":"cluster-name","namespace":"default","topology":{"class":"clusterClass1","version":"v1.21.1"}}}`)},
+					},
+					{
+						Name:  "variableA",
+						Value: apiextensionsv1.JSON{Raw: []byte(`"A"`)},
+					},
+					{
+						Name:  "variableB",
+						Value: apiextensionsv1.JSON{Raw: []byte(`"B"`)},
+					},
+					{
+						Name:  "variableC",
+						Value: apiextensionsv1.JSON{Raw: []byte(`"C"`)},
+					},
+				},
+				Items: []runtimehooksv1.GeneratePatchesRequestItem{
+					{
+						UID: "1",
+						HolderReference: runtimehooksv1.HolderReference{
+							APIVersion: clusterv1.GroupVersion.String(),
+							Kind:       "Cluster",
+							Name:       "my-cluster",
+							Namespace:  "default",
+							FieldPath:  "spec.controlPlaneRef",
 						},
-						Variables: map[string]apiextensionsv1.JSON{
-							"builtin":   {Raw: []byte(`{"controlPlane":{"replicas":3}}`)},
-							"variableC": {Raw: []byte(`"C-template"`)},
+						Variables: []runtimehooksv1.Variable{
+							{
+								Name:  "builtin",
+								Value: apiextensionsv1.JSON{Raw: []byte(`{"controlPlane":{"replicas":3,"machineTemplate":{"infrastructureRef":{"name":"controlPlaneInfrastructureMachineTemplate1"}}}}`)},
+							},
+							{
+								Name:  "variableC",
+								Value: apiextensionsv1.JSON{Raw: []byte(`"C-template"`)},
+							},
+						},
+						Object: runtime.RawExtension{
+							Object: &unstructured.Unstructured{
+								Object: map[string]interface{}{
+									"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
+									"kind":       "ControlPlaneTemplate",
+								},
+							},
 						},
 					},
 				},
 			},
-			want: &api.GenerateResponse{
-				Items: []api.GenerateResponsePatch{
+			want: &runtimehooksv1.GeneratePatchesResponse{
+				Items: []runtimehooksv1.GeneratePatchesResponseItem{
 					{
-						TemplateRef: api.TemplateRef{
-							APIVersion:   "controlplane.cluster.x-k8s.io/v1beta1",
-							Kind:         "ControlPlaneTemplate",
-							TemplateType: api.ControlPlaneTemplateType,
-						},
+						UID: "1",
 						Patch: toJSONCompact(`[
 {"op":"replace","path":"/spec/value","value":1},
 {"op":"replace","path":"/spec/valueFrom/variable","value":"A"},
-{"op":"replace","path":"/spec/valueFrom/template","value":"template B"},
+{"op":"replace","path":"/spec/valueFrom/template","value":"template bbbbb"},
 {"op":"replace","path":"/spec/templatePrecedent","value":"C-template"},
 {"op":"replace","path":"/spec/builtinClusterName","value":"cluster-name"},
-{"op":"replace","path":"/spec/builtinControlPlaneReplicas","value":3}
-]`),
-						PatchType: api.JSONPatchType,
+{"op":"replace","path":"/spec/builtinControlPlaneReplicas","value":3},
+{"op":"replace","path":"/spec/template/spec/files","value":[{
+  "contentFrom":{
+    "secret":{
+      "key":"control-plane-azure.json",
+      "name":"controlPlaneInfrastructureMachineTemplate1-azure-json"
+    }
+  }
+}]}]`),
+						PatchType: runtimehooksv1.JSONPatchType,
 					},
 				},
 			},
 		},
 		{
-			name: "Should generate JSON Patches (multiple PatchDefinitions)",
+			name: "Should generate JSON Results (multiple PatchDefinitions)",
 			patch: &clusterv1.ClusterClassPatch{
 				Name: "clusterName",
 				Definitions: []clusterv1.PatchDefinition{
@@ -219,58 +261,75 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 			},
-			req: &api.GenerateRequest{
-				Variables: map[string]apiextensionsv1.JSON{
-					"builtin": {Raw: []byte(`{"cluster":{"name":"cluster-name","namespace":"default","topology":{"class":"clusterClass1","version":"v1.21.1"}}}`)},
-				},
-				Items: []*api.GenerateRequestTemplate{
+			req: &runtimehooksv1.GeneratePatchesRequest{
+				Variables: []runtimehooksv1.Variable{
 					{
-						TemplateRef: api.TemplateRef{
-							APIVersion:   "controlplane.cluster.x-k8s.io/v1beta1",
-							Kind:         "ControlPlaneTemplate",
-							TemplateType: api.ControlPlaneTemplateType,
+						Name:  "builtin",
+						Value: apiextensionsv1.JSON{Raw: []byte(`{"cluster":{"name":"cluster-name","namespace":"default","topology":{"class":"clusterClass1","version":"v1.21.1"}}}`)},
+					},
+				},
+				Items: []runtimehooksv1.GeneratePatchesRequestItem{
+					{
+						UID: "1",
+						HolderReference: runtimehooksv1.HolderReference{
+							APIVersion: clusterv1.GroupVersion.String(),
+							Kind:       "Cluster",
+							Name:       "my-cluster",
+							Namespace:  "default",
+							FieldPath:  "spec.controlPlaneRef",
+						},
+						Object: runtime.RawExtension{
+							Object: &unstructured.Unstructured{
+								Object: map[string]interface{}{
+									"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
+									"kind":       "ControlPlaneTemplate",
+								},
+							},
 						},
 					},
 					{
-						TemplateRef: api.TemplateRef{
-							APIVersion:   "bootstrap.cluster.x-k8s.io/v1beta1",
-							Kind:         "BootstrapTemplate",
-							TemplateType: api.MachineDeploymentBootstrapConfigTemplateType,
-							MachineDeploymentRef: api.MachineDeploymentRef{
-								Class: "default-worker",
+						UID: "2",
+						HolderReference: runtimehooksv1.HolderReference{
+							APIVersion: clusterv1.GroupVersion.String(),
+							Kind:       "MachineDeployment",
+							Name:       "my-md-0",
+							Namespace:  "default",
+							FieldPath:  "spec.template.spec.bootstrap.configRef",
+						},
+						Variables: []runtimehooksv1.Variable{
+							{
+								Name:  "builtin",
+								Value: apiextensionsv1.JSON{Raw: []byte(`{"machineDeployment":{"class":"default-worker"}}`)},
+							},
+						},
+						Object: runtime.RawExtension{
+							Object: &unstructured.Unstructured{
+								Object: map[string]interface{}{
+									"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+									"kind":       "BootstrapTemplate",
+								},
 							},
 						},
 					},
 				},
 			},
-			want: &api.GenerateResponse{
-				Items: []api.GenerateResponsePatch{
+			want: &runtimehooksv1.GeneratePatchesResponse{
+				Items: []runtimehooksv1.GeneratePatchesResponseItem{
 					{
-						TemplateRef: api.TemplateRef{
-							APIVersion:   "controlplane.cluster.x-k8s.io/v1beta1",
-							Kind:         "ControlPlaneTemplate",
-							TemplateType: api.ControlPlaneTemplateType,
-						},
+						UID: "1",
 						Patch: toJSONCompact(`[
 {"op":"replace","path":"/spec/template/spec/kubeadmConfigSpec/clusterConfiguration/controllerManager/extraArgs/cluster-name","value":"cluster-name"},
 {"op":"replace","path":"/spec/template/spec/kubeadmConfigSpec/files","value":[{"contentFrom":{"secret":{"key":"control-plane-azure.json","name":"cluster-name-control-plane-azure-json"}},"owner":"root:root"}]},
 {"op":"remove","path":"/spec/template/spec/kubeadmConfigSpec/clusterConfiguration/apiServer/extraArgs"}
 ]`),
-						PatchType: api.JSONPatchType,
+						PatchType: runtimehooksv1.JSONPatchType,
 					},
 					{
-						TemplateRef: api.TemplateRef{
-							APIVersion:   "bootstrap.cluster.x-k8s.io/v1beta1",
-							Kind:         "BootstrapTemplate",
-							TemplateType: api.MachineDeploymentBootstrapConfigTemplateType,
-							MachineDeploymentRef: api.MachineDeploymentRef{
-								Class: "default-worker",
-							},
-						},
+						UID: "2",
 						Patch: toJSONCompact(`[
 {"op":"replace","path":"/spec/template/spec/kubeadmConfigSpec/clusterConfiguration/controllerManager/extraArgs/cluster-name","value":[{"contentFrom":{"secret":{"key":"worker-node-azure.json","name":"cluster-name-md-0-azure-json"}},"owner":"root:root"}]}
 ]`),
-						PatchType: api.JSONPatchType,
+						PatchType: runtimehooksv1.JSONPatchType,
 					},
 				},
 			},
@@ -281,30 +340,33 @@ func TestGenerate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			got, err := New(tt.patch).Generate(context.Background(), tt.req)
-			if tt.wantErr {
-				g.Expect(err).To(HaveOccurred())
-				return
-			}
-			g.Expect(err).ToNot(HaveOccurred())
+			got, err := NewGenerator(tt.patch).Generate(context.Background(), &clusterv1.Cluster{ObjectMeta: metav1.ObjectMeta{Namespace: "default"}}, tt.req)
 
 			g.Expect(got).To(Equal(tt.want))
+			g.Expect(err).ToNot(HaveOccurred())
 		})
 	}
 }
 
-func TestTemplateMatchesSelector(t *testing.T) {
+func TestMatchesSelector(t *testing.T) {
 	tests := []struct {
-		name        string
-		templateRef *api.TemplateRef
-		selector    clusterv1.PatchSelector
-		match       bool
+		name              string
+		req               *runtimehooksv1.GeneratePatchesRequestItem
+		templateVariables map[string]apiextensionsv1.JSON
+		selector          clusterv1.PatchSelector
+		match             bool
 	}{
 		{
 			name: "Don't match: apiVersion mismatch",
-			templateRef: &api.TemplateRef{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "AzureMachineTemplate",
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+							"kind":       "AzureMachineTemplate",
+						},
+					},
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha4",
@@ -314,9 +376,15 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Don't match: kind mismatch",
-			templateRef: &api.TemplateRef{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "AzureMachineTemplate",
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+							"kind":       "AzureMachineTemplate",
+						},
+					},
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
@@ -326,10 +394,22 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Match InfrastructureClusterTemplate",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:         "AzureClusterTemplate",
-				TemplateType: api.InfrastructureClusterTemplateType,
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+							"kind":       "AzureClusterTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
+					Name:       "my-cluster",
+					Namespace:  "default",
+					FieldPath:  "spec.infrastructureRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
@@ -342,10 +422,22 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Don't match InfrastructureClusterTemplate, .matchResources.infrastructureCluster not set",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:         "AzureClusterTemplate",
-				TemplateType: api.InfrastructureClusterTemplateType,
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+							"kind":       "AzureClusterTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
+					Name:       "my-cluster",
+					Namespace:  "default",
+					FieldPath:  "spec.infrastructureRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion:     "infrastructure.cluster.x-k8s.io/v1beta1",
@@ -356,10 +448,22 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Don't match InfrastructureClusterTemplate, .matchResources.infrastructureCluster false",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:         "AzureClusterTemplate",
-				TemplateType: api.InfrastructureClusterTemplateType,
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+							"kind":       "AzureClusterTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
+					Name:       "my-cluster",
+					Namespace:  "default",
+					FieldPath:  "spec.infrastructureRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
@@ -372,10 +476,22 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Match ControlPlaneTemplate",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "controlplane.cluster.x-k8s.io/v1beta1",
-				Kind:         "ControlPlaneTemplate",
-				TemplateType: api.ControlPlaneTemplateType,
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
+							"kind":       "ControlPlaneTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
+					Name:       "my-cluster",
+					Namespace:  "default",
+					FieldPath:  "spec.controlPlaneRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
@@ -388,10 +504,22 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Don't match ControlPlaneTemplate, .matchResources.controlPlane not set",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "controlplane.cluster.x-k8s.io/v1beta1",
-				Kind:         "ControlPlaneTemplate",
-				TemplateType: api.ControlPlaneTemplateType,
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
+							"kind":       "ControlPlaneTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
+					Name:       "my-cluster",
+					Namespace:  "default",
+					FieldPath:  "spec.controlPlaneRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion:     "controlplane.cluster.x-k8s.io/v1beta1",
@@ -402,10 +530,22 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Don't match ControlPlaneTemplate, .matchResources.controlPlane false",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "controlplane.cluster.x-k8s.io/v1beta1",
-				Kind:         "ControlPlaneTemplate",
-				TemplateType: api.ControlPlaneTemplateType,
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
+							"kind":       "ControlPlaneTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
+					Name:       "my-cluster",
+					Namespace:  "default",
+					FieldPath:  "spec.controlPlaneRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
@@ -418,10 +558,22 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Match ControlPlane InfrastructureMachineTemplate",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:         "AzureMachineTemplate",
-				TemplateType: api.ControlPlaneInfrastructureMachineTemplateType,
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+							"kind":       "AzureMachineTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
+					Kind:       "KubeadmControlPlane",
+					Name:       "my-controlplane",
+					Namespace:  "default",
+					FieldPath:  "spec.machineTemplate.infrastructureRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
@@ -434,13 +586,25 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Match MD BootstrapTemplate",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "bootstrap.cluster.x-k8s.io/v1beta1",
-				Kind:         "BootstrapTemplate",
-				TemplateType: api.MachineDeploymentBootstrapConfigTemplateType,
-				MachineDeploymentRef: api.MachineDeploymentRef{
-					Class: "classA",
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+							"kind":       "BootstrapTemplate",
+						},
+					},
 				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "MachineDeployment",
+					Name:       "my-md-0",
+					Namespace:  "default",
+					FieldPath:  "spec.template.spec.bootstrap.configRef",
+				},
+			},
+			templateVariables: map[string]apiextensionsv1.JSON{
+				"builtin": {Raw: []byte(`{"machineDeployment":{"class":"classA"}}`)},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
@@ -455,13 +619,25 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Don't match BootstrapTemplate, .matchResources.machineDeploymentClass not set",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "bootstrap.cluster.x-k8s.io/v1beta1",
-				Kind:         "BootstrapTemplate",
-				TemplateType: api.MachineDeploymentBootstrapConfigTemplateType,
-				MachineDeploymentRef: api.MachineDeploymentRef{
-					Class: "classA",
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+							"kind":       "BootstrapTemplate",
+						},
+					},
 				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "MachineDeployment",
+					Name:       "my-md-0",
+					Namespace:  "default",
+					FieldPath:  "spec.template.spec.bootstrap.configRef",
+				},
+			},
+			templateVariables: map[string]apiextensionsv1.JSON{
+				"builtin": {Raw: []byte(`{"machineDeployment":{"class":"classA"}}`)},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion:     "bootstrap.cluster.x-k8s.io/v1beta1",
@@ -472,13 +648,25 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Don't match BootstrapTemplate, .matchResources.machineDeploymentClass does not match",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "bootstrap.cluster.x-k8s.io/v1beta1",
-				Kind:         "BootstrapTemplate",
-				TemplateType: api.MachineDeploymentBootstrapConfigTemplateType,
-				MachineDeploymentRef: api.MachineDeploymentRef{
-					Class: "classA",
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+							"kind":       "BootstrapTemplate",
+						},
+					},
 				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "MachineDeployment",
+					Name:       "my-md-0",
+					Namespace:  "default",
+					FieldPath:  "spec.template.spec.bootstrap.configRef",
+				},
+			},
+			templateVariables: map[string]apiextensionsv1.JSON{
+				"builtin": {Raw: []byte(`{"machineDeployment":{"class":"classA"}}`)},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
@@ -493,13 +681,25 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		},
 		{
 			name: "Match MD InfrastructureMachineTemplate",
-			templateRef: &api.TemplateRef{
-				APIVersion:   "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:         "AzureMachineTemplate",
-				TemplateType: api.MachineDeploymentInfrastructureMachineTemplateType,
-				MachineDeploymentRef: api.MachineDeploymentRef{
-					Class: "classA",
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+							"kind":       "AzureMachineTemplate",
+						},
+					},
 				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "MachineDeployment",
+					Name:       "my-md-0",
+					Namespace:  "default",
+					FieldPath:  "spec.template.spec.infrastructureRef",
+				},
+			},
+			templateVariables: map[string]apiextensionsv1.JSON{
+				"builtin": {Raw: []byte(`{"machineDeployment":{"class":"classA"}}`)},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
@@ -513,12 +713,23 @@ func TestTemplateMatchesSelector(t *testing.T) {
 			match: true,
 		},
 		{
-			name: "Don't match: unknown target type",
-			templateRef: &api.TemplateRef{
-				APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
-				Kind:       "ControlPlaneTemplate",
-				// invalid is an invalid TemplateType.
-				TemplateType: "invalid",
+			name: "Don't match: unknown field path",
+			req: &runtimehooksv1.GeneratePatchesRequestItem{
+				Object: runtime.RawExtension{
+					Object: &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
+							"kind":       "ControlPlaneTemplate",
+						},
+					},
+				},
+				HolderReference: runtimehooksv1.HolderReference{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Custom",
+					Name:       "my-md-0",
+					Namespace:  "default",
+					FieldPath:  "spec.machineTemplate.unknown.infrastructureRef",
+				},
 			},
 			selector: clusterv1.PatchSelector{
 				APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
@@ -534,7 +745,7 @@ func TestTemplateMatchesSelector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			g.Expect(templateMatchesSelector(tt.templateRef, tt.selector)).To(Equal(tt.match))
+			g.Expect(matchesSelector(tt.req, tt.templateVariables, tt.selector)).To(Equal(tt.match))
 		})
 	}
 }
@@ -1146,66 +1357,6 @@ func TestCalculateValue(t *testing.T) {
 	}
 }
 
-func TestParsePathSegment(t *testing.T) {
-	tests := []struct {
-		name            string
-		segment         string
-		wantPathSegment *pathSegment
-		wantErr         bool
-	}{
-		{
-			name:    "parse basic segment",
-			segment: "propertyName",
-			wantPathSegment: &pathSegment{
-				path:  "propertyName",
-				index: nil,
-			},
-		},
-		{
-			name:    "parse segment with index",
-			segment: "arrayProperty[5]",
-			wantPathSegment: &pathSegment{
-				path:  "arrayProperty",
-				index: pointer.Int(5),
-			},
-		},
-		{
-			name:    "fail invalid syntax: only left delimiter",
-			segment: "arrayProperty[",
-			wantErr: true,
-		},
-		{
-			name:    "fail invalid syntax: only right delimiter",
-			segment: "arrayProperty]",
-			wantErr: true,
-		},
-		{
-			name:    "fail invalid syntax: both delimiter but no index",
-			segment: "arrayProperty[]",
-			wantErr: true,
-		},
-		{
-			name:    "fail invalid syntax: negative index",
-			segment: "arrayProperty[-1]",
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-
-			got, err := parsePathSegment(tt.segment)
-			if tt.wantErr {
-				g.Expect(err).To(HaveOccurred())
-				return
-			}
-			g.Expect(err).ToNot(HaveOccurred())
-
-			g.Expect(got).To(Equal(tt.wantPathSegment))
-		})
-	}
-}
-
 func TestRenderValueTemplate(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1473,7 +1624,7 @@ owner: root:root
 		},
 		// Pick up config for a specific MD Class
 		{
-			name:     "Should render a object property with a lookup based on a builtin variable",
+			name:     "Should render a object property with a lookup based on a builtin variable (class)",
 			template: `{{ (index .mdConfig .builtin.machineDeployment.class).config }}`,
 			variables: map[string]apiextensionsv1.JSON{
 				"mdConfig": {Raw: []byte(`{
@@ -1481,6 +1632,24 @@ owner: root:root
 	"config":"configValue1"
 },
 "mdClass2":{
+	"config":"configValue2"
+}
+}`)},
+				// Schema must either support complex objects with predefined keys/mdClasses or maps with additionalProperties.
+				patchvariables.BuiltinsName: {Raw: []byte(`{"machineDeployment":{"version":"v1.21.1","class":"mdClass2","name":"md1","topologyName":"md-topology","replicas":3}}`)},
+			},
+			want: &apiextensionsv1.JSON{Raw: []byte(`"configValue2"`)},
+		},
+		// Pick up config for a specific version
+		{
+			name:     "Should render a object property with a lookup based on a builtin variable (version)",
+			template: `{{ (index .mdConfig .builtin.machineDeployment.version).config }}`,
+			variables: map[string]apiextensionsv1.JSON{
+				"mdConfig": {Raw: []byte(`{
+"v1.21.0":{
+	"config":"configValue1"
+},
+"v1.21.1":{
 	"config":"configValue2"
 }
 }`)},
@@ -1592,38 +1761,11 @@ func TestCalculateTemplateData(t *testing.T) {
 	}
 }
 
-func TestMergeVariables(t *testing.T) {
-	t.Run("Merge variables", func(t *testing.T) {
-		g := NewWithT(t)
-
-		m, err := mergeVariableMaps(
-			map[string]apiextensionsv1.JSON{
-				patchvariables.BuiltinsName: {Raw: []byte(`{"cluster":{"name":"cluster-name","namespace":"default","topology":{"class":"clusterClass1","version":"v1.21.1"}}}`)},
-				"a":                         {Raw: []byte("a-different")},
-				"c":                         {Raw: []byte("c")},
-			},
-			map[string]apiextensionsv1.JSON{
-				// Verify that builtin variables are merged correctly and
-				// the latter variables take precedent ("cluster-name-overwrite").
-				patchvariables.BuiltinsName: {Raw: []byte(`{"controlPlane":{"replicas":3},"cluster":{"name":"cluster-name-overwrite"}}`)},
-				"a":                         {Raw: []byte("a")},
-				"b":                         {Raw: []byte("b")},
-			},
-		)
-		g.Expect(err).To(BeNil())
-
-		g.Expect(m).To(HaveKeyWithValue(patchvariables.BuiltinsName, apiextensionsv1.JSON{Raw: []byte(`{"cluster":{"name":"cluster-name-overwrite","namespace":"default","topology":{"version":"v1.21.1","class":"clusterClass1"}},"controlPlane":{"replicas":3}}`)}))
-		g.Expect(m).To(HaveKeyWithValue("a", apiextensionsv1.JSON{Raw: []byte("a")}))
-		g.Expect(m).To(HaveKeyWithValue("b", apiextensionsv1.JSON{Raw: []byte("b")}))
-		g.Expect(m).To(HaveKeyWithValue("c", apiextensionsv1.JSON{Raw: []byte("c")}))
-	})
-}
-
 // toJSONCompact is used to be able to write JSON values in a readable manner.
-func toJSONCompact(value string) apiextensionsv1.JSON {
+func toJSONCompact(value string) []byte {
 	var compactValue bytes.Buffer
 	if err := json.Compact(&compactValue, []byte(value)); err != nil {
 		panic(err)
 	}
-	return apiextensionsv1.JSON{Raw: compactValue.Bytes()}
+	return compactValue.Bytes()
 }

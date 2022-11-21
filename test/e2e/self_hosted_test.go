@@ -20,7 +20,8 @@ limitations under the License.
 package e2e
 
 import (
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
+	"k8s.io/utils/pointer"
 )
 
 var _ = Describe("When testing Cluster API working on self-hosted clusters", func() {
@@ -35,15 +36,47 @@ var _ = Describe("When testing Cluster API working on self-hosted clusters", fun
 	})
 })
 
-var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass", func() {
+var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass [ClusterClass]", func() {
 	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
 		return SelfHostedSpecInput{
-			E2EConfig:             e2eConfig,
-			ClusterctlConfigPath:  clusterctlConfigPath,
-			BootstrapClusterProxy: bootstrapClusterProxy,
-			ArtifactFolder:        artifactFolder,
-			SkipCleanup:           skipCleanup,
-			Flavor:                "topology",
+			E2EConfig:                e2eConfig,
+			ClusterctlConfigPath:     clusterctlConfigPath,
+			BootstrapClusterProxy:    bootstrapClusterProxy,
+			ArtifactFolder:           artifactFolder,
+			SkipCleanup:              skipCleanup,
+			Flavor:                   "topology",
+			ControlPlaneMachineCount: pointer.Int64(1),
+			WorkerMachineCount:       pointer.Int64(1),
+		}
+	})
+})
+
+var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass with a HA control plane [ClusterClass]", func() {
+	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
+		return SelfHostedSpecInput{
+			E2EConfig:                e2eConfig,
+			ClusterctlConfigPath:     clusterctlConfigPath,
+			BootstrapClusterProxy:    bootstrapClusterProxy,
+			ArtifactFolder:           artifactFolder,
+			SkipCleanup:              skipCleanup,
+			Flavor:                   "topology",
+			ControlPlaneMachineCount: pointer.Int64(3),
+			WorkerMachineCount:       pointer.Int64(1),
+		}
+	})
+})
+
+var _ = Describe("When testing Cluster API working on single-node self-hosted clusters using ClusterClass [ClusterClass]", func() {
+	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
+		return SelfHostedSpecInput{
+			E2EConfig:                e2eConfig,
+			ClusterctlConfigPath:     clusterctlConfigPath,
+			BootstrapClusterProxy:    bootstrapClusterProxy,
+			ArtifactFolder:           artifactFolder,
+			SkipCleanup:              skipCleanup,
+			Flavor:                   "topology-single-node-cluster",
+			ControlPlaneMachineCount: pointer.Int64(1),
+			WorkerMachineCount:       pointer.Int64(0),
 		}
 	})
 })

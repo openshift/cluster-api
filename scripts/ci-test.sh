@@ -29,5 +29,8 @@ make test-junit
 
 echo -e "\n*** Testing Cluster API Provider Docker ***\n"
 # Docker provider
-cd test/infrastructure/docker
-make test-junit
+make test-docker-infrastructure-junit
+
+echo -e "\n*** Testing Cluster API Runtime SDK test extension ***\n"
+# Test Extension
+make test-test-extension-junit

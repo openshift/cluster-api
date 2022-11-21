@@ -68,8 +68,8 @@ func (e *RemoteClusterConnectionError) Error() string { return e.Name + ": " + e
 func (e *RemoteClusterConnectionError) Unwrap() error { return e.Err }
 
 // Get implements client.Reader.
-func (m *Management) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
-	return m.Client.Get(ctx, key, obj)
+func (m *Management) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	return m.Client.Get(ctx, key, obj, opts...)
 }
 
 // List implements client.Reader.
@@ -116,6 +116,17 @@ func (m *Management) GetWorkloadCluster(ctx context.Context, clusterKey client.O
 		return nil, err
 	}
 
+	clientConfig, err := m.Tracker.GetRESTConfig(ctx, clusterKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Make sure we use the same CA and Host as the client.
+	// Note: This has to be done to be able to communicate directly on self-hosted clusters.
+	restConfig.CAData = clientConfig.CAData
+	restConfig.CAFile = clientConfig.CAFile
+	restConfig.Host = clientConfig.Host
+
 	// Retrieves the etcd CA key Pair
 	crtData, keyData, err := m.getEtcdCAKeyPair(ctx, clusterKey)
 	if err != nil {
@@ -149,6 +160,7 @@ func (m *Management) GetWorkloadCluster(ctx context.Context, clusterKey client.O
 	}
 	tlsConfig.InsecureSkipVerify = true
 	return &Workload{
+		restConfig:          restConfig,
 		Client:              c,
 		CoreDNSMigrator:     &CoreDNSMigrator{},
 		etcdClientGenerator: NewEtcdClientGenerator(restConfig, tlsConfig, m.EtcdDialTimeout),

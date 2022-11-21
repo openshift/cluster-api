@@ -17,6 +17,7 @@ limitations under the License.
 package variables
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -105,7 +106,8 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			errList := ValidateClusterClassVariables(tt.clusterClassVariables,
+			errList := ValidateClusterClassVariables(context.TODO(),
+				tt.clusterClassVariables,
 				field.NewPath("spec", "variables"))
 
 			if tt.wantErr {
@@ -370,6 +372,89 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 							},
 							"noProxy": {
 								Type: "invalidType", // invalid type.
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid map schema",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "httpProxy",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						AdditionalProperties: &clusterv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"enabled": {
+									Type:    "boolean",
+									Default: &apiextensionsv1.JSON{Raw: []byte(`false`)},
+								},
+								"url": {
+									Type: "string",
+								},
+								"noProxy": {
+									Type: "string",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "fail on invalid map schema",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "httpProxy",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						AdditionalProperties: &clusterv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"enabled": {
+									Type:    "boolean",
+									Default: &apiextensionsv1.JSON{Raw: []byte(`false`)},
+								},
+								"url": {
+									Type: "string",
+								},
+								"noProxy": {
+									Type: "invalidType", // invalid type.
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "fail on object (properties) and map (additionalProperties) both set",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name:     "httpProxy",
+				Required: true,
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						AdditionalProperties: &clusterv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"enabled": {
+									Type:    "boolean",
+									Default: &apiextensionsv1.JSON{Raw: []byte(`false`)},
+								},
+							},
+						},
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"enabled": {
+								Type:    "boolean",
+								Default: &apiextensionsv1.JSON{Raw: []byte(`false`)},
 							},
 						},
 					},
@@ -824,7 +909,8 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			errList := validateClusterClassVariable(tt.clusterClassVariable,
+			errList := validateClusterClassVariable(context.TODO(),
+				tt.clusterClassVariable,
 				field.NewPath("spec", "variables").Index(0))
 
 			if tt.wantErr {

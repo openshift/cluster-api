@@ -147,7 +147,7 @@ func TestReconcileReturnErrorWhenOwnerClusterIsMissing(t *testing.T) {
 	g.Expect(result).To(Equal(ctrl.Result{}))
 
 	// calling reconcile should return error
-	g.Expect(env.Delete(ctx, cluster)).To(Succeed())
+	g.Expect(env.CleanupAndWait(ctx, cluster)).To(Succeed())
 
 	g.Eventually(func() error {
 		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: util.ObjectKey(kcp)})
@@ -196,7 +196,7 @@ func TestReconcileUpdateObservedGeneration(t *testing.T) {
 	}, 10*time.Second).Should(Equal(generation))
 
 	// triggers a generation change by changing the spec
-	kcp.Spec.Replicas = pointer.Int32Ptr(*kcp.Spec.Replicas + 2)
+	kcp.Spec.Replicas = pointer.Int32(*kcp.Spec.Replicas + 2)
 	g.Expect(env.Update(ctx, kcp)).To(Succeed())
 
 	// read kcp.Generation after the update
@@ -461,6 +461,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "bar"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
+		cluster.Status.InfrastructureReady = true
 		kcp.Spec.Version = version
 
 		fmc := &fakeManagementCluster{
@@ -525,6 +526,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "bar"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
+		cluster.Status.InfrastructureReady = true
 		kcp.Spec.Version = version
 
 		fmc := &fakeManagementCluster{
@@ -631,6 +633,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "nodomain.example.com1"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
+		cluster.Status.InfrastructureReady = true
 		kcp.Spec.Version = version
 
 		now := metav1.Now()
@@ -697,6 +700,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "nodomain.example.com2"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
+		cluster.Status.InfrastructureReady = true
 		kcp.Spec.Version = "v1.17.0"
 
 		fmc := &fakeManagementCluster{
@@ -714,7 +718,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 								Kind:       "KubeadmConfig",
 							},
 						},
-						Version: pointer.StringPtr("v1.15.0"),
+						Version: pointer.String("v1.15.0"),
 					},
 				},
 			},
@@ -743,6 +747,218 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 			g.Expect(machine.OwnerReferences).To(BeEmpty())
 		}
 	})
+}
+
+func TestReconcileCertificateExpiries(t *testing.T) {
+	g := NewWithT(t)
+
+	preExistingExpiry := time.Now().Add(5 * 24 * time.Hour)
+	detectedExpiry := time.Now().Add(25 * 24 * time.Hour)
+
+	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
+	kcp := &controlplanev1.KubeadmControlPlane{}
+	machineWithoutExpiryAnnotation := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithoutExpiryAnnotation",
+		},
+		Spec: clusterv1.MachineSpec{
+			InfrastructureRef: corev1.ObjectReference{
+				Kind:       "GenericMachine",
+				APIVersion: "generic.io/v1",
+				Namespace:  metav1.NamespaceDefault,
+				Name:       "machineWithoutExpiryAnnotation-infra",
+			},
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: &corev1.ObjectReference{
+					Kind:       "KubeadmConfig",
+					APIVersion: bootstrapv1.GroupVersion.String(),
+					Namespace:  metav1.NamespaceDefault,
+					Name:       "machineWithoutExpiryAnnotation-bootstrap",
+				},
+			},
+		},
+		Status: clusterv1.MachineStatus{
+			NodeRef: &corev1.ObjectReference{
+				Name: "machineWithoutExpiryAnnotation",
+			},
+		},
+	}
+	machineWithoutExpiryAnnotationKubeadmConfig := &bootstrapv1.KubeadmConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithoutExpiryAnnotation-bootstrap",
+		},
+	}
+	machineWithExpiryAnnotation := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithExpiryAnnotation",
+		},
+		Spec: clusterv1.MachineSpec{
+			InfrastructureRef: corev1.ObjectReference{
+				Kind:       "GenericMachine",
+				APIVersion: "generic.io/v1",
+				Namespace:  metav1.NamespaceDefault,
+				Name:       "machineWithExpiryAnnotation-infra",
+			},
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: &corev1.ObjectReference{
+					Kind:       "KubeadmConfig",
+					APIVersion: bootstrapv1.GroupVersion.String(),
+					Namespace:  metav1.NamespaceDefault,
+					Name:       "machineWithExpiryAnnotation-bootstrap",
+				},
+			},
+		},
+		Status: clusterv1.MachineStatus{
+			NodeRef: &corev1.ObjectReference{
+				Name: "machineWithExpiryAnnotation",
+			},
+		},
+	}
+	machineWithExpiryAnnotationKubeadmConfig := &bootstrapv1.KubeadmConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithExpiryAnnotation-bootstrap",
+			Annotations: map[string]string{
+				clusterv1.MachineCertificatesExpiryDateAnnotation: preExistingExpiry.Format(time.RFC3339),
+			},
+		},
+	}
+	machineWithDeletionTimestamp := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "machineWithDeletionTimestamp",
+			DeletionTimestamp: &metav1.Time{Time: time.Now()},
+		},
+		Spec: clusterv1.MachineSpec{
+			InfrastructureRef: corev1.ObjectReference{
+				Kind:       "GenericMachine",
+				APIVersion: "generic.io/v1",
+				Namespace:  metav1.NamespaceDefault,
+				Name:       "machineWithDeletionTimestamp-infra",
+			},
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: &corev1.ObjectReference{
+					Kind:       "KubeadmConfig",
+					APIVersion: bootstrapv1.GroupVersion.String(),
+					Namespace:  metav1.NamespaceDefault,
+					Name:       "machineWithDeletionTimestamp-bootstrap",
+				},
+			},
+		},
+		Status: clusterv1.MachineStatus{
+			NodeRef: &corev1.ObjectReference{
+				Name: "machineWithDeletionTimestamp",
+			},
+		},
+	}
+	machineWithDeletionTimestampKubeadmConfig := &bootstrapv1.KubeadmConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithDeletionTimestamp-bootstrap",
+		},
+	}
+	machineWithoutNodeRef := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithoutNodeRef",
+		},
+		Spec: clusterv1.MachineSpec{
+			InfrastructureRef: corev1.ObjectReference{
+				Kind:       "GenericMachine",
+				APIVersion: "generic.io/v1",
+				Namespace:  metav1.NamespaceDefault,
+				Name:       "machineWithoutNodeRef-infra",
+			},
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: &corev1.ObjectReference{
+					Kind:       "KubeadmConfig",
+					APIVersion: bootstrapv1.GroupVersion.String(),
+					Namespace:  metav1.NamespaceDefault,
+					Name:       "machineWithoutNodeRef-bootstrap",
+				},
+			},
+		},
+	}
+	machineWithoutNodeRefKubeadmConfig := &bootstrapv1.KubeadmConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithoutNodeRef-bootstrap",
+		},
+	}
+	machineWithoutKubeadmConfig := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithoutKubeadmConfig",
+		},
+		Spec: clusterv1.MachineSpec{
+			InfrastructureRef: corev1.ObjectReference{
+				Kind:       "GenericMachine",
+				APIVersion: "generic.io/v1",
+				Namespace:  metav1.NamespaceDefault,
+				Name:       "machineWithoutKubeadmConfig-infra",
+			},
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: &corev1.ObjectReference{
+					Kind:       "KubeadmConfig",
+					APIVersion: bootstrapv1.GroupVersion.String(),
+					Namespace:  metav1.NamespaceDefault,
+					Name:       "machineWithoutKubeadmConfig-bootstrap",
+				},
+			},
+		},
+		Status: clusterv1.MachineStatus{
+			NodeRef: &corev1.ObjectReference{
+				Name: "machineWithoutKubeadmConfig",
+			},
+		},
+	}
+
+	ownedMachines := collections.FromMachines(
+		machineWithoutExpiryAnnotation,
+		machineWithExpiryAnnotation,
+		machineWithDeletionTimestamp,
+		machineWithoutNodeRef,
+		machineWithoutKubeadmConfig,
+	)
+
+	fakeClient := newFakeClient(
+		machineWithoutExpiryAnnotationKubeadmConfig,
+		machineWithExpiryAnnotationKubeadmConfig,
+		machineWithDeletionTimestampKubeadmConfig,
+		machineWithoutNodeRefKubeadmConfig,
+	)
+
+	controlPlane, err := internal.NewControlPlane(ctx, fakeClient, cluster, kcp, ownedMachines)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	r := &KubeadmControlPlaneReconciler{
+		Client: fakeClient,
+		managementCluster: &fakeManagementCluster{
+			Workload: fakeWorkloadCluster{
+				APIServerCertificateExpiry: &detectedExpiry,
+			},
+		},
+	}
+
+	_, err = r.reconcileCertificateExpiries(ctx, controlPlane)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	// Verify machineWithoutExpiryAnnotation has detectedExpiry.
+	actualKubeadmConfig := bootstrapv1.KubeadmConfig{}
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(machineWithoutExpiryAnnotationKubeadmConfig), &actualKubeadmConfig)
+	g.Expect(err).NotTo(HaveOccurred())
+	actualExpiry := actualKubeadmConfig.Annotations[clusterv1.MachineCertificatesExpiryDateAnnotation]
+	g.Expect(actualExpiry).To(Equal(detectedExpiry.Format(time.RFC3339)))
+
+	// Verify machineWithExpiryAnnotation has still preExistingExpiry.
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(machineWithExpiryAnnotationKubeadmConfig), &actualKubeadmConfig)
+	g.Expect(err).NotTo(HaveOccurred())
+	actualExpiry = actualKubeadmConfig.Annotations[clusterv1.MachineCertificatesExpiryDateAnnotation]
+	g.Expect(actualExpiry).To(Equal(preExistingExpiry.Format(time.RFC3339)))
+
+	// Verify machineWithDeletionTimestamp has still no expiry annotation.
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(machineWithDeletionTimestampKubeadmConfig), &actualKubeadmConfig)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(actualKubeadmConfig.Annotations).ToNot(ContainElement(clusterv1.MachineCertificatesExpiryDateAnnotation))
+
+	// Verify machineWithoutNodeRef has still no expiry annotation.
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(machineWithoutNodeRefKubeadmConfig), &actualKubeadmConfig)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(actualKubeadmConfig.Annotations).ToNot(ContainElement(clusterv1.MachineCertificatesExpiryDateAnnotation))
 }
 
 func TestReconcileInitializeControlPlane(t *testing.T) {
@@ -823,7 +1039,7 @@ func TestReconcileInitializeControlPlane(t *testing.T) {
 			"ClusterConfiguration": `apiServer:
 dns:
   type: CoreDNS
-imageRepository: k8s.gcr.io
+imageRepository: registry.k8s.io
 kind: ClusterConfiguration
 kubernetesVersion: metav1.16.1`,
 		},
@@ -841,7 +1057,7 @@ kubernetesVersion: metav1.16.1`,
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "coredns",
-						Image: "k8s.gcr.io/coredns:1.6.2",
+						Image: "registry.k8s.io/coredns:1.6.2",
 					}},
 				},
 			},
@@ -947,7 +1163,7 @@ func TestKubeadmControlPlaneReconciler_updateCoreDNS(t *testing.T) {
 				ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
 					DNS: bootstrapv1.DNS{
 						ImageMeta: bootstrapv1.ImageMeta{
-							ImageRepository: "k8s.gcr.io",
+							ImageRepository: "registry.k8s.io",
 							ImageTag:        "1.7.2",
 						},
 					},
@@ -968,7 +1184,7 @@ func TestKubeadmControlPlaneReconciler_updateCoreDNS(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "coredns",
-						Image: "k8s.gcr.io/coredns:1.6.2",
+						Image: "registry.k8s.io/coredns:1.6.2",
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "config-volume",
@@ -1008,7 +1224,7 @@ func TestKubeadmControlPlaneReconciler_updateCoreDNS(t *testing.T) {
 			"ClusterConfiguration": `apiServer:
 dns:
   type: CoreDNS
-imageRepository: k8s.gcr.io
+imageRepository: registry.k8s.io
 kind: ClusterConfiguration
 kubernetesVersion: metav1.16.1`,
 		},
@@ -1066,7 +1282,7 @@ kubernetesVersion: metav1.16.1`,
 		}
 		var actualCoreDNSDeployment appsv1.Deployment
 		g.Expect(fakeClient.Get(ctx, client.ObjectKey{Name: "coredns", Namespace: metav1.NamespaceSystem}, &actualCoreDNSDeployment)).To(Succeed())
-		g.Expect(actualCoreDNSDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("k8s.gcr.io/coredns:1.7.2"))
+		g.Expect(actualCoreDNSDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("registry.k8s.io/coredns:1.7.2"))
 		g.Expect(actualCoreDNSDeployment.Spec.Template.Spec.Volumes).To(ConsistOf(expectedVolume))
 	})
 
@@ -1437,7 +1653,7 @@ func createClusterWithControlPlane(namespace string) (*clusterv1.Cluster, *contr
 					APIVersion: "generic.io/v1",
 				},
 			},
-			Replicas: pointer.Int32Ptr(int32(3)),
+			Replicas: pointer.Int32(int32(3)),
 			Version:  "v1.16.6",
 			RolloutStrategy: &controlplanev1.RolloutStrategy{
 				Type: "RollingUpdate",

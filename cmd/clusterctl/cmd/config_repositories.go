@@ -51,12 +51,12 @@ var cro = &configRepositoriesOptions{}
 var configRepositoryCmd = &cobra.Command{
 	Use:   "repositories",
 	Args:  cobra.NoArgs,
-	Short: "Display the list of providers and their repository configurations.",
+	Short: "Display the list of providers and their repository configurations",
 	Long: LongDesc(`
 		Display the list of providers and their repository configurations.
 
 		clusterctl ships with a list of known providers; if necessary, edit
-		$HOME/.cluster-api/clusterctl.yaml file to add new provider or to customize existing ones.`),
+		$HOME/.cluster-api/clusterctl.yaml file to add a new provider or to customize existing ones.`),
 
 	Example: Examples(`
 		# Displays the list of available providers.
@@ -78,7 +78,7 @@ func init() {
 
 func runGetRepositories(cfgFile string, out io.Writer) error {
 	if cro.output != RepositoriesOutputText && cro.output != RepositoriesOutputYaml {
-		return errors.Errorf("Invalid output format %q. Valid values: %v.", cro.output, RepositoriesOutputs)
+		return errors.Errorf("invalid output format %q, valid values: %v", cro.output, RepositoriesOutputs)
 	}
 
 	if out == nil {

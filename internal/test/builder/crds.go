@@ -17,7 +17,6 @@ limitations under the License.
 package builder
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/gobuffalo/flect"
@@ -27,16 +26,30 @@ import (
 	"k8s.io/utils/pointer"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/contract"
 )
 
-func generateCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefinition {
+func untypedCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefinition {
+	return generateCRD(gvk, map[string]apiextensionsv1.JSONSchemaProps{
+		"spec": {
+			Type:                   "object",
+			XPreserveUnknownFields: pointer.Bool(true),
+		},
+		"status": {
+			Type:                   "object",
+			XPreserveUnknownFields: pointer.Bool(true),
+		},
+	})
+}
+
+func generateCRD(gvk schema.GroupVersionKind, properties map[string]apiextensionsv1.JSONSchemaProps) *apiextensionsv1.CustomResourceDefinition {
 	return &apiextensionsv1.CustomResourceDefinition{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: apiextensionsv1.SchemeGroupVersion.String(),
 			Kind:       "CustomResourceDefinition",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s.%s", flect.Pluralize(strings.ToLower(gvk.Kind)), gvk.Group),
+			Name: contract.CalculateCRDName(gvk.Group, gvk.Kind),
 			Labels: map[string]string{
 				clusterv1.GroupVersion.String(): "v1beta1",
 			},
@@ -58,17 +71,8 @@ func generateCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDef
 					},
 					Schema: &apiextensionsv1.CustomResourceValidation{
 						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: "object",
-							Properties: map[string]apiextensionsv1.JSONSchemaProps{
-								"spec": {
-									Type:                   "object",
-									XPreserveUnknownFields: pointer.BoolPtr(true),
-								},
-								"status": {
-									Type:                   "object",
-									XPreserveUnknownFields: pointer.BoolPtr(true),
-								},
-							},
+							Type:       "object",
+							Properties: properties,
 						},
 					},
 				},
@@ -76,3 +80,34 @@ func generateCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDef
 		},
 	}
 }
+
+var (
+	refSchema = apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]apiextensionsv1.JSONSchemaProps{
+			"apiVersion": {Type: "string"},
+			"kind":       {Type: "string"},
+			"name":       {Type: "string"},
+			"namespace":  {Type: "string"},
+			// NOTE: omitting fields not used for sake of simplicity.
+		},
+	}
+
+	metadataSchema = apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]apiextensionsv1.JSONSchemaProps{
+			"labels": {
+				Type: "object",
+				AdditionalProperties: &apiextensionsv1.JSONSchemaPropsOrBool{
+					Schema: &apiextensionsv1.JSONSchemaProps{Type: "string"},
+				},
+			},
+			"annotations": {
+				Type: "object",
+				AdditionalProperties: &apiextensionsv1.JSONSchemaPropsOrBool{
+					Schema: &apiextensionsv1.JSONSchemaProps{Type: "string"},
+				},
+			},
+		},
+	}
+)

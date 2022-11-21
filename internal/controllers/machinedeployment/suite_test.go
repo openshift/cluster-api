@@ -84,7 +84,6 @@ func TestMain(m *testing.M) {
 		}
 		if err := (&remote.ClusterCacheReconciler{
 			Client:  mgr.GetClient(),
-			Log:     ctrl.Log.WithName("remote").WithName("ClusterCacheReconciler"),
 			Tracker: tracker,
 		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
 			panic(fmt.Sprintf("Failed to start ClusterCacheReconciler: %v", err))
@@ -171,7 +170,7 @@ func fakeMachineNodeRef(m *clusterv1.Machine, pid string, g *WithT) {
 
 	// Patch the Machine.
 	patchMachine := client.MergeFrom(m.DeepCopy())
-	m.Spec.ProviderID = pointer.StringPtr(pid)
+	m.Spec.ProviderID = pointer.String(pid)
 	g.Expect(env.Patch(ctx, m, patchMachine)).To(Succeed())
 
 	patchMachine = client.MergeFrom(m.DeepCopy())

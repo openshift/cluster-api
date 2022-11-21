@@ -1,0 +1,10 @@
+resources:
+  - ../namespace.yaml
+
+helmCharts:
+  - name: cluster-api-visualizer
+    repo: https://jont828.github.io/cluster-api-visualizer/charts
+    releaseName: visualizer
+    namespace: observability
+    valuesFile: values.yaml
+    version: 1.0.0

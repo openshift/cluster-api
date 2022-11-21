@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -41,12 +42,11 @@ var (
 )
 
 func (r *Reconciler) reconcileNode(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine) (ctrl.Result, error) {
-	log := ctrl.LoggerFrom(ctx, "machine", machine.Name, "namespace", machine.Namespace)
-	log = log.WithValues("cluster", cluster.Name)
+	log := ctrl.LoggerFrom(ctx)
 
 	// Check that the Machine has a valid ProviderID.
 	if machine.Spec.ProviderID == nil || *machine.Spec.ProviderID == "" {
-		log.Info("Cannot reconcile Machine's Node, no valid ProviderID yet")
+		log.Info("Waiting for infrastructure provider to report spec.providerID", machine.Spec.InfrastructureRef.Kind, klog.KRef(machine.Spec.InfrastructureRef.Namespace, machine.Spec.InfrastructureRef.Name))
 		conditions.MarkFalse(machine, clusterv1.MachineNodeHealthyCondition, clusterv1.WaitingForNodeRefReason, clusterv1.ConditionSeverityInfo, "")
 		return ctrl.Result{}, nil
 	}
@@ -88,7 +88,7 @@ func (r *Reconciler) reconcileNode(ctx context.Context, cluster *clusterv1.Clust
 			Name:       node.Name,
 			UID:        node.UID,
 		}
-		log.Info("Set Machine's NodeRef", "noderef", machine.Status.NodeRef.Name)
+		log.Info("Infrastructure provider reporting spec.providerID, Kubernetes node is now available", machine.Spec.InfrastructureRef.Kind, klog.KRef(machine.Spec.InfrastructureRef.Namespace, machine.Spec.InfrastructureRef.Name), "providerID", providerID, "node", klog.KRef("", machine.Status.NodeRef.Name))
 		r.recorder.Event(machine, corev1.EventTypeNormal, "SuccessfulSetNodeRef", machine.Status.NodeRef.Name)
 	}
 
@@ -189,7 +189,7 @@ func (r *Reconciler) getNode(ctx context.Context, c client.Reader, providerID *n
 			for key, node := range nl.Items {
 				nodeProviderID, err := noderefutil.NewProviderID(node.Spec.ProviderID)
 				if err != nil {
-					log.Error(err, "Failed to parse ProviderID", "node", client.ObjectKeyFromObject(&nl.Items[key]).String())
+					log.Error(err, "Failed to parse ProviderID", "Node", klog.KRef("", nl.Items[key].GetName()))
 					continue
 				}
 

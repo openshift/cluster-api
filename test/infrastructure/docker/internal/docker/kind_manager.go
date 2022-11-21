@@ -79,6 +79,7 @@ func (m *Manager) CreateControlPlaneNode(ctx context.Context, name, image, clust
 		Role:         constants.ControlPlaneNodeRoleValue,
 		PortMappings: portMappingsWithAPIServer,
 		Mounts:       mounts,
+		Labels:       labels,
 		IPFamily:     ipFamily,
 	}
 	node, err := createNode(ctx, createOpts)
@@ -105,7 +106,7 @@ func (m *Manager) CreateWorkerNode(ctx context.Context, name, image, clusterName
 }
 
 // CreateExternalLoadBalancerNode will create a new container to act as the load balancer for external access.
-func (m *Manager) CreateExternalLoadBalancerNode(ctx context.Context, name, image, clusterName, listenAddress string, port int32, ipFamily clusterv1.ClusterIPFamily) (*types.Node, error) {
+func (m *Manager) CreateExternalLoadBalancerNode(ctx context.Context, name, image, clusterName, listenAddress string, port int32, _ clusterv1.ClusterIPFamily) (*types.Node, error) {
 	// gets a random host port for control-plane load balancer
 	// gets a random host port for the API server
 	if port == 0 {

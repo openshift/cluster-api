@@ -25,9 +25,41 @@ import (
 	"k8s.io/utils/pointer"
 
 	"sigs.k8s.io/cluster-api/feature"
+	utildefaulting "sigs.k8s.io/cluster-api/util/defaulting"
 )
 
-func TestClusterValidate(t *testing.T) {
+func TestKubeadmConfigDefault(t *testing.T) {
+	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
+
+	g := NewWithT(t)
+
+	kubeadmConfig := &KubeadmConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "foo",
+		},
+		Spec: KubeadmConfigSpec{},
+	}
+	updateDefaultingKubeadmConfig := kubeadmConfig.DeepCopy()
+	updateDefaultingKubeadmConfig.Spec.Verbosity = pointer.Int32(4)
+	t.Run("for KubeadmConfig", utildefaulting.DefaultValidateTest(updateDefaultingKubeadmConfig))
+
+	kubeadmConfig.Default()
+
+	g.Expect(kubeadmConfig.Spec.Format).To(Equal(CloudConfig))
+
+	ignitionKubeadmConfig := &KubeadmConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "foo",
+		},
+		Spec: KubeadmConfigSpec{
+			Format: Ignition,
+		},
+	}
+	ignitionKubeadmConfig.Default()
+	g.Expect(ignitionKubeadmConfig.Spec.Format).To(Equal(Ignition))
+}
+
+func TestKubeadmConfigValidate(t *testing.T) {
 	cases := map[string]struct {
 		in                    *KubeadmConfig
 		enableIgnitionFeature bool
@@ -146,6 +178,100 @@ func TestClusterValidate(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		"valid passwd": {
+			in: &KubeadmConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "baz",
+					Namespace: metav1.NamespaceDefault,
+				},
+				Spec: KubeadmConfigSpec{
+					Users: []User{
+						{
+							Passwd: pointer.String("foo"),
+						},
+					},
+				},
+			},
+		},
+		"valid passwdFrom": {
+			in: &KubeadmConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "baz",
+					Namespace: metav1.NamespaceDefault,
+				},
+				Spec: KubeadmConfigSpec{
+					Users: []User{
+						{
+							PasswdFrom: &PasswdSource{
+								Secret: SecretPasswdSource{
+									Name: "foo",
+									Key:  "bar",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"invalid passwd and passwdFrom": {
+			in: &KubeadmConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "baz",
+					Namespace: metav1.NamespaceDefault,
+				},
+				Spec: KubeadmConfigSpec{
+					Users: []User{
+						{
+							PasswdFrom: &PasswdSource{},
+							Passwd:     pointer.String("foo"),
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"invalid passwdFrom without name": {
+			in: &KubeadmConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "baz",
+					Namespace: metav1.NamespaceDefault,
+				},
+				Spec: KubeadmConfigSpec{
+					Users: []User{
+						{
+							PasswdFrom: &PasswdSource{
+								Secret: SecretPasswdSource{
+									Key: "bar",
+								},
+							},
+							Passwd: pointer.String("foo"),
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"invalid passwdFrom without key": {
+			in: &KubeadmConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "baz",
+					Namespace: metav1.NamespaceDefault,
+				},
+				Spec: KubeadmConfigSpec{
+					Users: []User{
+						{
+							PasswdFrom: &PasswdSource{
+								Secret: SecretPasswdSource{
+									Name: "foo",
+								},
+							},
+							Passwd: pointer.String("foo"),
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
 		"Ignition field is set, format is not Ignition": {
 			enableIgnitionFeature: true,
 			in: &KubeadmConfig{
@@ -182,7 +308,7 @@ func TestClusterValidate(t *testing.T) {
 					Format: Ignition,
 					Users: []User{
 						{
-							Inactive: pointer.BoolPtr(true),
+							Inactive: pointer.Bool(true),
 						},
 					},
 				},
@@ -201,7 +327,7 @@ func TestClusterValidate(t *testing.T) {
 					DiskSetup: &DiskSetup{
 						Partitions: []Partition{
 							{
-								TableType: pointer.StringPtr("MS-DOS"),
+								TableType: pointer.String("MS-DOS"),
 							},
 						},
 					},
@@ -262,7 +388,7 @@ func TestClusterValidate(t *testing.T) {
 					DiskSetup: &DiskSetup{
 						Filesystems: []Filesystem{
 							{
-								ReplaceFS: pointer.StringPtr("ntfs"),
+								ReplaceFS: pointer.String("ntfs"),
 							},
 						},
 					},
@@ -282,8 +408,44 @@ func TestClusterValidate(t *testing.T) {
 					DiskSetup: &DiskSetup{
 						Filesystems: []Filesystem{
 							{
-								Partition: pointer.StringPtr("1"),
+								Partition: pointer.String("1"),
 							},
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"file encoding gzip specified with Ignition": {
+			enableIgnitionFeature: true,
+			in: &KubeadmConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "baz",
+					Namespace: "default",
+				},
+				Spec: KubeadmConfigSpec{
+					Format: Ignition,
+					Files: []File{
+						{
+							Encoding: Gzip,
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"file encoding gzip+base64 specified with Ignition": {
+			enableIgnitionFeature: true,
+			in: &KubeadmConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "baz",
+					Namespace: "default",
+				},
+				Spec: KubeadmConfigSpec{
+					Format: Ignition,
+					Files: []File{
+						{
+							Encoding: GzipBase64,
 						},
 					},
 				},

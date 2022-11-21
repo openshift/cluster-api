@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/storage/names"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -103,7 +104,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileKubeconfig(ctx context.Context,
 
 func (r *KubeadmControlPlaneReconciler) adoptKubeconfigSecret(ctx context.Context, cluster *clusterv1.Cluster, configSecret *corev1.Secret, controllerOwnerRef metav1.OwnerReference) error {
 	log := ctrl.LoggerFrom(ctx)
-	log.Info("Adopting KubeConfig secret created by v1alpha2 controllers", "Name", configSecret.Name)
+	log.Info("Adopting KubeConfig secret created by v1alpha2 controllers", "Secret", klog.KObj(configSecret))
 
 	patch, err := patch.NewHelper(configSecret, r.Client)
 	if err != nil {
@@ -166,7 +167,7 @@ func (r *KubeadmControlPlaneReconciler) cloneConfigsAndGenerateMachine(ctx conte
 	}
 
 	// Clone the infrastructure template
-	infraRef, err := external.CloneTemplate(ctx, &external.CloneTemplateInput{
+	infraRef, err := external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
 		Client:      r.Client,
 		TemplateRef: &kcp.Spec.MachineTemplate.InfrastructureRef,
 		Namespace:   kcp.Namespace,
@@ -288,6 +289,9 @@ func (r *KubeadmControlPlaneReconciler) generateMachine(ctx context.Context, kcp
 			FailureDomain:    failureDomain,
 			NodeDrainTimeout: kcp.Spec.MachineTemplate.NodeDrainTimeout,
 		},
+	}
+	if kcp.Spec.MachineTemplate.NodeDeletionTimeout != nil {
+		machine.Spec.NodeDeletionTimeout = kcp.Spec.MachineTemplate.NodeDeletionTimeout
 	}
 
 	// Machine's bootstrap config may be missing ClusterConfiguration if it is not the first machine in the control plane.

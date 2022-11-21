@@ -1,3 +1,0 @@
-resources:
-  - ../bases/crs.yaml
-  - ../bases/cluster-with-topology.yaml

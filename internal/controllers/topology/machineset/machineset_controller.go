@@ -23,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -32,6 +33,7 @@ import (
 	tlog "sigs.k8s.io/cluster-api/internal/log"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
@@ -75,15 +77,16 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 // i.e. the templates would otherwise be orphaned after the MachineSet deletion completes.
 // Additional context:
 // * MachineSet deletion:
-//   * MachineSets are deleted and garbage collected first (without waiting until all Machines are also deleted)
-//   * After that, deletion of Machines is automatically triggered by Kubernetes based on owner references.
+//   - MachineSets are deleted and garbage collected first (without waiting until all Machines are also deleted)
+//   - After that, deletion of Machines is automatically triggered by Kubernetes based on owner references.
+//
 // Note: We assume templates are not reused by different MachineDeployments, which is (only) true for topology-owned
-//       MachineDeployments.
+//
+//	MachineDeployments.
+//
 // We don't have to set the finalizer, as it's already set during MachineSet creation
 // in the MachineSet controller.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := ctrl.LoggerFrom(ctx)
-
 	// Fetch the MachineSet instance.
 	ms := &clusterv1.MachineSet{}
 	if err := r.Client.Get(ctx, req.NamespacedName, ms); err != nil {
@@ -94,6 +97,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// Error reading the object - requeue the request.
 		return ctrl.Result{}, errors.Wrapf(err, "failed to get MachineSet/%s", req.NamespacedName.Name)
 	}
+
+	// AddOwners adds the owners of MachineSet as k/v pairs to the logger.
+	// Specifically, it will add MachineDeployment.
+	ctx, log, err := clog.AddOwners(ctx, r.Client, ms)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	log = log.WithValues("Cluster", klog.KRef(ms.Namespace, ms.Spec.ClusterName))
+	ctx = ctrl.LoggerInto(ctx, log)
 
 	cluster, err := util.GetClusterByName(ctx, r.Client, ms.Namespace, ms.Spec.ClusterName)
 	if err != nil {
