@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -62,7 +63,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 			Name:      "machine-test",
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
-				clusterv1.MachineControlPlaneLabelName: "",
+				clusterv1.MachineControlPlaneLabel: "",
 			},
 		},
 		Spec: clusterv1.MachineSpec{
@@ -117,6 +118,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 		infraConfig := defaultInfra.DeepCopy()
 
 		r := &Reconciler{
+			disableNodeLabelSync: true,
 			Client: fake.NewClientBuilder().
 				WithScheme(scheme.Scheme).
 				WithObjects(defaultCluster,
@@ -138,12 +140,12 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(r.Client.Get(ctx, types.NamespacedName{Name: bootstrapConfig.GetName(), Namespace: bootstrapConfig.GetNamespace()}, bootstrapConfig)).To(Succeed())
 
 		g.Expect(bootstrapConfig.GetOwnerReferences()).To(HaveLen(1))
-		g.Expect(bootstrapConfig.GetLabels()[clusterv1.ClusterLabelName]).To(BeEquivalentTo("test-cluster"))
+		g.Expect(bootstrapConfig.GetLabels()[clusterv1.ClusterNameLabel]).To(BeEquivalentTo("test-cluster"))
 
 		g.Expect(r.Client.Get(ctx, types.NamespacedName{Name: infraConfig.GetName(), Namespace: infraConfig.GetNamespace()}, infraConfig)).To(Succeed())
 
 		g.Expect(infraConfig.GetOwnerReferences()).To(HaveLen(1))
-		g.Expect(infraConfig.GetLabels()[clusterv1.ClusterLabelName]).To(BeEquivalentTo("test-cluster"))
+		g.Expect(infraConfig.GetLabels()[clusterv1.ClusterNameLabel]).To(BeEquivalentTo("test-cluster"))
 	})
 
 	t.Run("Should set `Pending` with a new Machine", func(t *testing.T) {
@@ -155,6 +157,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 		infraConfig := defaultInfra.DeepCopy()
 
 		r := &Reconciler{
+			disableNodeLabelSync: true,
 			Client: fake.NewClientBuilder().
 				WithScheme(scheme.Scheme).
 				WithObjects(defaultCluster,
@@ -198,6 +201,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 		machine.Status.LastUpdated = &lastUpdated
 
 		r := &Reconciler{
+			disableNodeLabelSync: true,
 			Client: fake.NewClientBuilder().
 				WithScheme(scheme.Scheme).
 				WithObjects(defaultCluster,
@@ -268,8 +272,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "machine-test-node",
-				Namespace: metav1.NamespaceDefault,
+				Name: "machine-test-node",
 			},
 			Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
 		}
@@ -283,10 +286,13 @@ func TestReconcileMachinePhases(t *testing.T) {
 				bootstrapConfig,
 				infraConfig,
 				defaultKubeconfigSecret,
-			).Build()
+			).
+			WithIndex(&corev1.Node{}, index.NodeProviderIDField, index.NodeByProviderID).
+			Build()
 		r := &Reconciler{
-			Client:  cl,
-			Tracker: remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
+			disableNodeLabelSync: true,
+			Client:               cl,
+			Tracker:              remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
 		}
 
 		res, err := r.reconcile(ctx, defaultCluster, machine)
@@ -334,8 +340,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "machine-test-node",
-				Namespace: metav1.NamespaceDefault,
+				Name: "machine-test-node",
 			},
 			Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
 		}
@@ -349,10 +354,13 @@ func TestReconcileMachinePhases(t *testing.T) {
 				bootstrapConfig,
 				infraConfig,
 				defaultKubeconfigSecret,
-			).Build()
+			).
+			WithIndex(&corev1.Node{}, index.NodeProviderIDField, index.NodeByProviderID).
+			Build()
 		r := &Reconciler{
-			Client:  cl,
-			Tracker: remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
+			disableNodeLabelSync: true,
+			Client:               cl,
+			Tracker:              remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
 		}
 
 		res, err := r.reconcile(ctx, defaultCluster, machine)
@@ -410,8 +418,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 		machine.Status.LastUpdated = &lastUpdated
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "machine-test-node",
-				Namespace: metav1.NamespaceDefault,
+				Name: "machine-test-node",
 			},
 			Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
 		}
@@ -425,10 +432,13 @@ func TestReconcileMachinePhases(t *testing.T) {
 				bootstrapConfig,
 				infraConfig,
 				defaultKubeconfigSecret,
-			).Build()
+			).
+			WithIndex(&corev1.Node{}, index.NodeProviderIDField, index.NodeByProviderID).
+			Build()
 		r := &Reconciler{
-			Client:  cl,
-			Tracker: remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
+			disableNodeLabelSync: true,
+			Client:               cl,
+			Tracker:              remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
 		}
 
 		res, err := r.reconcile(ctx, defaultCluster, machine)
@@ -484,11 +494,14 @@ func TestReconcileMachinePhases(t *testing.T) {
 				builder.GenericInfrastructureMachineCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
-			).Build()
+			).
+			WithIndex(&corev1.Node{}, index.NodeProviderIDField, index.NodeByProviderID).
+			Build()
 
 		r := &Reconciler{
-			Client:  cl,
-			Tracker: remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
+			disableNodeLabelSync: true,
+			Client:               cl,
+			Tracker:              remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
 		}
 
 		res, err := r.reconcile(ctx, defaultCluster, machine)
@@ -541,9 +554,9 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(err).NotTo(HaveOccurred())
 
 		// Set Cluster label.
-		machine.Labels[clusterv1.ClusterLabelName] = machine.Spec.ClusterName
+		machine.Labels[clusterv1.ClusterNameLabel] = machine.Spec.ClusterName
 		machine.ResourceVersion = "999"
-		machineSecond.Labels[clusterv1.ClusterLabelName] = machine.Spec.ClusterName
+		machineSecond.Labels[clusterv1.ClusterNameLabel] = machine.Spec.ClusterName
 		machineSecond.Name = "SecondMachine"
 		// Set NodeRef.
 		machine.Status.NodeRef = &corev1.ObjectReference{Kind: "Node", Name: "machine-test-node"}
@@ -568,9 +581,10 @@ func TestReconcileMachinePhases(t *testing.T) {
 				infraConfig,
 			).Build()
 		r := &Reconciler{
-			Client:   cl,
-			Tracker:  remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
-			recorder: record.NewFakeRecorder(32),
+			disableNodeLabelSync: true,
+			Client:               cl,
+			Tracker:              remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
+			recorder:             record.NewFakeRecorder(32),
 		}
 
 		res, err := r.reconcileDelete(ctx, defaultCluster, machine)
@@ -596,7 +610,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			Name:      "machine-test",
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: "test-cluster",
+				clusterv1.ClusterNameLabel: "test-cluster",
 			},
 		},
 		Spec: clusterv1.MachineSpec{
@@ -867,6 +881,7 @@ func TestReconcileBootstrap(t *testing.T) {
 
 			bootstrapConfig := &unstructured.Unstructured{Object: tc.bootstrapConfig}
 			r := &Reconciler{
+				disableNodeLabelSync: true,
 				Client: fake.NewClientBuilder().
 					WithObjects(tc.machine,
 						builder.GenericBootstrapConfigCRD.DeepCopy(),
@@ -896,7 +911,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 			Name:      "machine-test",
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: "test-cluster",
+				clusterv1.ClusterNameLabel: "test-cluster",
 			},
 		},
 		Spec: clusterv1.MachineSpec{
@@ -1077,6 +1092,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 
 			infraConfig := &unstructured.Unstructured{Object: tc.infraConfig}
 			r := &Reconciler{
+				disableNodeLabelSync: true,
 				Client: fake.NewClientBuilder().
 					WithObjects(tc.machine,
 						builder.GenericBootstrapConfigCRD.DeepCopy(),
@@ -1171,7 +1187,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 					Name:      "bootstrap-test-existing",
 					Namespace: metav1.NamespaceDefault,
 					Labels: map[string]string{
-						clusterv1.MachineControlPlaneLabelName: "",
+						clusterv1.MachineControlPlaneLabel: "",
 					},
 				},
 				Spec: clusterv1.MachineSpec{
@@ -1189,7 +1205,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 					Name:      "bootstrap-test-existing",
 					Namespace: metav1.NamespaceDefault,
 					Labels: map[string]string{
-						clusterv1.MachineControlPlaneLabelName: "",
+						clusterv1.MachineControlPlaneLabel: "",
 					},
 				},
 				Spec: clusterv1.MachineSpec{
@@ -1213,7 +1229,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 					Name:      "bootstrap-test-existing",
 					Namespace: metav1.NamespaceDefault,
 					Labels: map[string]string{
-						clusterv1.MachineControlPlaneLabelName: "",
+						clusterv1.MachineControlPlaneLabel: "",
 					},
 				},
 				Spec: clusterv1.MachineSpec{
@@ -1237,7 +1253,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 					Name:      "bootstrap-test-existing",
 					Namespace: metav1.NamespaceDefault,
 					Labels: map[string]string{
-						clusterv1.MachineControlPlaneLabelName: "",
+						clusterv1.MachineControlPlaneLabel: "",
 					},
 					Annotations: map[string]string{
 						clusterv1.MachineCertificatesExpiryDateAnnotation: fakeTimeString,
@@ -1264,7 +1280,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 					Name:      "bootstrap-test-existing",
 					Namespace: metav1.NamespaceDefault,
 					Labels: map[string]string{
-						clusterv1.MachineControlPlaneLabelName: "",
+						clusterv1.MachineControlPlaneLabel: "",
 					},
 					Annotations: map[string]string{
 						clusterv1.MachineCertificatesExpiryDateAnnotation: fakeTimeString2,
@@ -1291,7 +1307,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 					Name:      "bootstrap-test-existing",
 					Namespace: metav1.NamespaceDefault,
 					Labels: map[string]string{
-						clusterv1.MachineControlPlaneLabelName: "",
+						clusterv1.MachineControlPlaneLabel: "",
 					},
 				},
 				Spec: clusterv1.MachineSpec{
@@ -1318,6 +1334,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 			g := NewWithT(t)
 
 			r := &Reconciler{
+				disableNodeLabelSync: true,
 				Client: fake.NewClientBuilder().
 					WithObjects(
 						tc.machine,

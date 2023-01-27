@@ -136,12 +136,6 @@ const (
 	// In the event that the health check fails it will be set to False.
 	MachineHealthCheckSucceededCondition ConditionType = "HealthCheckSucceeded"
 
-	// MachineHealthCheckSuccededCondition is set on machines that have passed a healthcheck by the MachineHealthCheck controller.
-	// In the event that the health check fails it will be set to False.
-	//
-	// Deprecated: This const is going to be removed in a next release. Use MachineHealthCheckSucceededCondition instead.
-	MachineHealthCheckSuccededCondition ConditionType = "HealthCheckSucceeded"
-
 	// MachineHasFailureReason is the reason used when a machine has either a FailureReason or a FailureMessage set on its status.
 	MachineHasFailureReason = "MachineHasFailure"
 
@@ -166,19 +160,19 @@ const (
 	// RemediationInProgressReason is the reason used when an unhealthy machine is being remediated by the remediation owner.
 	RemediationInProgressReason = "RemediationInProgress"
 
-	// ExternalRemediationTemplateAvailable is set on machinehealthchecks when MachineHealthCheck controller uses external remediation.
-	// ExternalRemediationTemplateAvailable is set to false if external remediation template is not found.
-	ExternalRemediationTemplateAvailable ConditionType = "ExternalRemediationTemplateAvailable"
+	// ExternalRemediationTemplateAvailableCondition is set on machinehealthchecks when MachineHealthCheck controller uses external remediation.
+	// ExternalRemediationTemplateAvailableCondition is set to false if external remediation template is not found.
+	ExternalRemediationTemplateAvailableCondition ConditionType = "ExternalRemediationTemplateAvailable"
 
-	// ExternalRemediationTemplateNotFound is the reason used when a machine health check fails to find external remediation template.
-	ExternalRemediationTemplateNotFound = "ExternalRemediationTemplateNotFound"
+	// ExternalRemediationTemplateNotFoundReason is the reason used when a machine health check fails to find external remediation template.
+	ExternalRemediationTemplateNotFoundReason = "ExternalRemediationTemplateNotFound"
 
-	// ExternalRemediationRequestAvailable is set on machinehealthchecks when MachineHealthCheck controller uses external remediation.
-	// ExternalRemediationRequestAvailable is set to false if creating external remediation request fails.
-	ExternalRemediationRequestAvailable ConditionType = "ExternalRemediationRequestAvailable"
+	// ExternalRemediationRequestAvailableCondition is set on machinehealthchecks when MachineHealthCheck controller uses external remediation.
+	// ExternalRemediationRequestAvailableCondition is set to false if creating external remediation request fails.
+	ExternalRemediationRequestAvailableCondition ConditionType = "ExternalRemediationRequestAvailable"
 
-	// ExternalRemediationRequestCreationFailed is the reason used when a machine health check fails to create external remediation request.
-	ExternalRemediationRequestCreationFailed = "ExternalRemediationRequestCreationFailed"
+	// ExternalRemediationRequestCreationFailedReason is the reason used when a machine health check fails to create external remediation request.
+	ExternalRemediationRequestCreationFailedReason = "ExternalRemediationRequestCreationFailed"
 )
 
 // Conditions and condition Reasons for the Machine's Node object.

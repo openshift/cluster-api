@@ -142,7 +142,7 @@ The set of Kubernetes services that form the basis of a cluster. See also [https
 
 ### Control plane provider
 
-Refers to a [provider](#provider) that implements a solution for the management of a Kubernetes [control plane][#control-plane].
+Refers to a [provider](#provider) that implements a solution for the management of a Kubernetes [control plane](#control-plane).
 Control plane provider's interaction with Cluster API is based on what is defined in the [Cluster API contract](#contract).
 
 See [KCP](#KCP).
@@ -172,9 +172,7 @@ A feature implementation offered as part of the Cluster API project and maintain
 
 ### External patch extension
 
-A [runtime extension] that implements a [topology mutation hook]
-
-See [Runtime Extension](#runtime-extension), [topology mutation hook](#topology-mutation-hook)
+A [runtime extension](#runtime-extension) that implements a [topology mutation hook](#topology-mutation-hook).
 
 # H
 ---
@@ -199,12 +197,19 @@ Infrastructure provider's interaction with Cluster API is based on what is defin
 Clouds infrastructure providers include AWS, Azure, or Google; while VMware, MAAS, or metal3.io can be defined as bare metal providers.
 When there is more than one way to obtain resources from the same infrastructure provider (e.g. EC2 vs. EKS in AWS) each way is referred to as a variant.
 
-See e.g. [CAPA][#CAPA], [CAPC][#CAPC], [CAPD][#CAPD], [CAPG][#CAPG], [CAPH][#CAPH], [CAPIBM][#CAPIBM], [CAPN][#CAPN],
-[CAPX][#CAPX], [CAPK][#CAPK], [CAPO][#CAPO], [CAPOCI][#CAPOCI], [CAPV][#CAPV], [CAPVC][#CAPVC], [CAPVCD][#CAPVCD], [CAPZ][#CAPZ]
+For a complete list of providers see [Provider Implementations](providers.md).
 
 ### Inline patch 
 
 A [patch](#patch) defined inline in a [ClusterClass](#clusterclass). An alternative to an [external patch](#external-patch).
+
+### In-place mutable fields
+
+Fields which changes would only impact Kubernetes objects or/and controller behaviour
+but they won't mutate in any way provider infrastructure nor the software running on it. In-place mutable fields
+are propagated in place by CAPI controllers to avoid the more elaborated mechanics of a replace rollout.
+They include metadata, MinReadySeconds, NodeDrainTimeout, NodeVolumeDetachTimeout and NodeDeletionTimeout but are
+not limited to be expanded in the future.
 
 ### Instance
 
@@ -257,6 +262,10 @@ See also: [Server](#server)
 ### Manage a cluster
 
 Perform create, scale, upgrade, or destroy operations on the cluster.
+
+### Managed Topology
+
+See [Topology](#Topology)
 
 ### Management cluster
 
@@ -373,6 +382,7 @@ The infrastructure that backs a [Machine Resource](#machine), typically either a
 ### Topology
 
 A field in the Cluster object spec that allows defining and managing the shape of the Cluster's control plane and worker machines from a single point of control. The Cluster's topology is based on a [ClusterClass](#clusterclass).
+Sometimes it is also referred as a managed topology.
 
 See [ClusterClass](#clusterclass)
 

@@ -155,7 +155,7 @@ func TestObjectGraph_getDiscoveryTypeMetaList(t *testing.T) {
 					WithObjs(
 						func() client.Object {
 							crd := test.FakeNamespacedCustomResourceDefinition("foo", "Bar", "v1")
-							crd.Labels[clusterctlv1.ClusterctlMoveLabelName] = ""
+							crd.Labels[clusterctlv1.ClusterctlMoveLabel] = ""
 							return crd
 						}(),
 					),
@@ -189,7 +189,7 @@ func TestObjectGraph_getDiscoveryTypeMetaList(t *testing.T) {
 					WithObjs(
 						func() client.Object {
 							crd := test.FakeNamespacedCustomResourceDefinition("foo", "Bar", "v1")
-							crd.Labels[clusterctlv1.ClusterctlMoveHierarchyLabelName] = ""
+							crd.Labels[clusterctlv1.ClusterctlMoveHierarchyLabel] = ""
 							return crd
 						}(),
 					),
@@ -2337,7 +2337,7 @@ func Test_objectGraph_setGlobalIdentityTenants(t *testing.T) {
 
 func deduplicateObjects(objs []client.Object) []client.Object {
 	res := []client.Object{}
-	uniqueObjectKeys := sets.NewString()
+	uniqueObjectKeys := sets.Set[string]{}
 	for _, o := range objs {
 		if !uniqueObjectKeys.Has(string(o.GetUID())) {
 			res = append(res, o)

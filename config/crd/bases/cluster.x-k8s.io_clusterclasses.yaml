@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.10.0
+    controller-gen.kubebuilder.io/version: v0.11.1
   creationTimestamp: null
   name: clusterclasses.cluster.x-k8s.io
 spec:
@@ -560,11 +560,13 @@ spec:
                     - ref
                     type: object
                   metadata:
-                    description: "Metadata is the metadata applied to the machines
-                      of the ControlPlane. At runtime this metadata is merged with
-                      the corresponding metadata from the topology. \n This field
-                      is supported if and only if the control plane provider template
-                      referenced is Machine based."
+                    description: "Metadata is the metadata applied to the ControlPlane
+                      and the Machines of the ControlPlane if the ControlPlaneTemplate
+                      referenced is machine based. If not, it is applied only to the
+                      ControlPlane. At runtime this metadata is merged with the corresponding
+                      metadata from the topology. \n This field is supported if and
+                      only if the control plane provider template referenced is Machine
+                      based."
                     properties:
                       annotations:
                         additionalProperties:
@@ -835,6 +837,13 @@ spec:
                           description: GenerateExtension references an extension which
                             is called to generate patches.
                           type: string
+                        settings:
+                          additionalProperties:
+                            type: string
+                          description: Settings defines key value pairs to be passed
+                            to the extensions. Values defined here take precedence
+                            over the values defined in the corresponding ExtensionConfig.
+                          type: object
                         validateExtension:
                           description: ValidateExtension references an extension which
                             is called to validate the topology.
@@ -1350,9 +1359,9 @@ spec:
                               type: object
                             metadata:
                               description: Metadata is the metadata applied to the
-                                machines of the MachineDeployment. At runtime this
-                                metadata is merged with the corresponding metadata
-                                from the topology.
+                                MachineDeployment and the machines of the MachineDeployment.
+                                At runtime this metadata is merged with the corresponding
+                                metadata from the topology.
                               properties:
                                 annotations:
                                   additionalProperties:
@@ -1431,6 +1440,11 @@ spec:
                   - type
                   type: object
                 type: array
+              observedGeneration:
+                description: ObservedGeneration is the latest generation observed
+                  by the controller.
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

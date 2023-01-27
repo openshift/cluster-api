@@ -42,6 +42,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
@@ -79,7 +80,7 @@ func TestMachineHealthCheck_Reconcile(t *testing.T) {
 				return nil
 			}
 			return mhc.GetLabels()
-		}).Should(HaveKeyWithValue(clusterv1.ClusterLabelName, cluster.Name))
+		}).Should(HaveKeyWithValue(clusterv1.ClusterNameLabel, cluster.Name))
 	})
 
 	t.Run("it should ensure the correct cluster-name label when the label has the wrong value", func(t *testing.T) {
@@ -88,7 +89,7 @@ func TestMachineHealthCheck_Reconcile(t *testing.T) {
 
 		mhc := newMachineHealthCheck(cluster.Namespace, cluster.Name)
 		mhc.Labels = map[string]string{
-			clusterv1.ClusterLabelName: "wrong-cluster",
+			clusterv1.ClusterNameLabel: "wrong-cluster",
 		}
 
 		g.Expect(env.Create(ctx, mhc)).To(Succeed())
@@ -102,7 +103,7 @@ func TestMachineHealthCheck_Reconcile(t *testing.T) {
 				return nil
 			}
 			return mhc.GetLabels()
-		}).Should(HaveKeyWithValue(clusterv1.ClusterLabelName, cluster.Name))
+		}).Should(HaveKeyWithValue(clusterv1.ClusterNameLabel, cluster.Name))
 	})
 
 	t.Run("it should ensure the correct cluster-name label when other labels are present", func(t *testing.T) {
@@ -126,7 +127,7 @@ func TestMachineHealthCheck_Reconcile(t *testing.T) {
 			}
 			return mhc.GetLabels()
 		}).Should(And(
-			HaveKeyWithValue(clusterv1.ClusterLabelName, cluster.Name),
+			HaveKeyWithValue(clusterv1.ClusterNameLabel, cluster.Name),
 			HaveKeyWithValue("extra-label", "1"),
 			HaveLen(2),
 		))
@@ -1957,7 +1958,9 @@ func TestMachineToMachineHealthCheck(t *testing.T) {
 }
 
 func TestNodeToMachineHealthCheck(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().Build()
+	fakeClient := fake.NewClientBuilder().
+		WithIndex(&clusterv1.Machine{}, index.MachineNodeNameField, index.MachineByNodeName).
+		Build()
 
 	r := &Reconciler{
 		Client: fakeClient,
@@ -2410,7 +2413,7 @@ func createMachinesWithNodes(
 			if machine.Labels == nil {
 				machine.Labels = make(map[string]string)
 			}
-			machine.Labels[clusterv1.MachineControlPlaneLabelName] = ""
+			machine.Labels[clusterv1.MachineControlPlaneLabel] = ""
 		}
 		infraMachine, providerID := newInfraMachine(machine)
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
@@ -2528,7 +2531,7 @@ func newMachineHealthCheckWithLabels(name, namespace, cluster string, labels map
 	for k, v := range labels {
 		l[k] = v
 	}
-	l[clusterv1.ClusterLabelName] = cluster
+	l[clusterv1.ClusterNameLabel] = cluster
 
 	mhc := newMachineHealthCheck(namespace, cluster)
 	mhc.SetName(name)

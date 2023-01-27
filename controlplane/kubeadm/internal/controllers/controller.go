@@ -44,6 +44,7 @@ import (
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
+	"sigs.k8s.io/cluster-api/internal/labels"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/collections"
@@ -69,6 +70,7 @@ type KubeadmControlPlaneReconciler struct {
 	recorder        record.EventRecorder
 	Tracker         *remote.ClusterCacheTracker
 	EtcdDialTimeout time.Duration
+	EtcdCallTimeout time.Duration
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -111,6 +113,7 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mg
 			Client:          r.Client,
 			Tracker:         r.Tracker,
 			EtcdDialTimeout: r.EtcdDialTimeout,
+			EtcdCallTimeout: r.EtcdCallTimeout,
 		}
 	}
 
@@ -312,6 +315,9 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		err = r.adoptMachines(ctx, kcp, adoptableMachines, cluster)
 		return ctrl.Result{}, err
 	}
+	if err := ensureCertificatesOwnerRef(ctx, r.Client, util.ObjectKey(cluster), certificates, *controllerRef); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	ownedMachines := controlPlaneMachines.Filter(collections.OwnedMachines(kcp))
 	if len(ownedMachines) != len(controlPlaneMachines) {
@@ -328,6 +334,21 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 	// Aggregate the operational state of all the machines; while aggregating we are adding the
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.
 	conditions.SetAggregate(controlPlane.KCP, controlplanev1.MachinesReadyCondition, ownedMachines.ConditionGetters(), conditions.AddSourceRef(), conditions.WithStepCounterIf(false))
+
+	// Ensure all required labels exist on the controlled Machines.
+	// This logic is needed to add the `cluster.x-k8s.io/control-plane-name` label to Machines
+	// which were created before the `cluster.x-k8s.io/control-plane-name` label was introduced
+	// or if a user manually removed the label.
+	// NOTE: Changes will be applied to the Machines in reconcileControlPlaneConditions.
+	// NOTE: cluster.x-k8s.io/control-plane is already set at this stage (it is used when reading controlPlane.Machines).
+	for i := range controlPlane.Machines {
+		machine := controlPlane.Machines[i]
+		// Note: MustEqualValue and MustFormatValue is used here as the label value can be a hash if the control plane
+		// name is longer than 63 characters.
+		if value, ok := machine.Labels[clusterv1.MachineControlPlaneNameLabel]; !ok || !labels.MustEqualValue(kcp.Name, value) {
+			machine.Labels[clusterv1.MachineControlPlaneNameLabel] = labels.MustFormatValue(kcp.Name)
+		}
+	}
 
 	// Updates conditions reporting the status of static pods and the status of the etcd cluster.
 	// NOTE: Conditions reporting KCP operation progress like e.g. Resized or SpecUpToDate are inlined with the rest of the execution.
@@ -605,6 +626,11 @@ func (r *KubeadmControlPlaneReconciler) reconcileCertificateExpiries(ctx context
 		return ctrl.Result{}, nil
 	}
 
+	// Return if KCP is not yet initialized (no API server to contact for checking certificate expiration).
+	if !controlPlane.KCP.Status.Initialized {
+		return ctrl.Result{}, nil
+	}
+
 	// Ignore machines which are being deleted.
 	machines := controlPlane.Machines.Filter(collections.Not(collections.HasDeletionTimestamp))
 
@@ -741,7 +767,7 @@ func (r *KubeadmControlPlaneReconciler) adoptMachines(ctx context.Context, kcp *
 
 func (r *KubeadmControlPlaneReconciler) adoptOwnedSecrets(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane, currentOwner *bootstrapv1.KubeadmConfig, clusterName string) error {
 	secrets := corev1.SecretList{}
-	if err := r.Client.List(ctx, &secrets, client.InNamespace(kcp.Namespace), client.MatchingLabels{clusterv1.ClusterLabelName: clusterName}); err != nil {
+	if err := r.Client.List(ctx, &secrets, client.InNamespace(kcp.Namespace), client.MatchingLabels{clusterv1.ClusterNameLabel: clusterName}); err != nil {
 		return errors.Wrap(err, "error finding secrets for adoption")
 	}
 
@@ -771,5 +797,35 @@ func (r *KubeadmControlPlaneReconciler) adoptOwnedSecrets(ctx context.Context, k
 		}
 	}
 
+	return nil
+}
+
+// ensureCertificatesOwnerRef ensures an ownerReference to the owner is added on the Secrets holding certificates.
+func ensureCertificatesOwnerRef(ctx context.Context, ctrlclient client.Client, clusterKey client.ObjectKey, certificates secret.Certificates, owner metav1.OwnerReference) error {
+	for _, c := range certificates {
+		s := &corev1.Secret{}
+		secretKey := client.ObjectKey{Namespace: clusterKey.Namespace, Name: secret.Name(clusterKey.Name, c.Purpose)}
+		if err := ctrlclient.Get(ctx, secretKey, s); err != nil {
+			return errors.Wrapf(err, "failed to get Secret %s", secretKey)
+		}
+		// If the Type doesn't match the type used for secrets created by core components, KCP included
+		if s.Type != clusterv1.ClusterSecretType {
+			continue
+		}
+		patchHelper, err := patch.NewHelper(s, ctrlclient)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create patchHelper for Secret %s", secretKey)
+		}
+
+		// Remove the current controller if one exists.
+		if controller := metav1.GetControllerOf(s); controller != nil {
+			s.SetOwnerReferences(util.RemoveOwnerRef(s.OwnerReferences, *controller))
+		}
+
+		s.OwnerReferences = util.EnsureOwnerRef(s.OwnerReferences, owner)
+		if err := patchHelper.Patch(ctx, s); err != nil {
+			return errors.Wrapf(err, "failed to patch Secret %s with ownerReference %s", secretKey, owner.String())
+		}
+	}
 	return nil
 }

@@ -117,6 +117,105 @@ func TestKubeadmConfigReconciler_Reconcile_ReturnEarlyIfKubeadmConfigIsReady(t *
 	g.Expect(result.RequeueAfter).To(Equal(time.Duration(0)))
 }
 
+// Reconcile returns early if the kubeadm config is ready because it should never re-generate bootstrap data.
+func TestKubeadmConfigReconciler_TestSecretOwnerReferenceReconciliation(t *testing.T) {
+	g := NewWithT(t)
+
+	clusterName := "my-cluster"
+	cluster := builder.Cluster(metav1.NamespaceDefault, clusterName).Build()
+	machine := builder.Machine(metav1.NamespaceDefault, "machine").
+		WithVersion("v1.19.1").
+		WithClusterName(clusterName).
+		WithBootstrapTemplate(bootstrapbuilder.KubeadmConfig(metav1.NamespaceDefault, "cfg").Unstructured()).
+		Build()
+	machine.Spec.Bootstrap.DataSecretName = pointer.String("something")
+
+	config := newKubeadmConfig(metav1.NamespaceDefault, "cfg")
+	config.SetOwnerReferences(util.EnsureOwnerRef(config.GetOwnerReferences(), metav1.OwnerReference{
+		APIVersion: machine.APIVersion,
+		Kind:       machine.Kind,
+		Name:       machine.Name,
+		UID:        machine.UID,
+	}))
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      config.Name,
+			Namespace: config.Namespace,
+		},
+		Type: corev1.SecretTypeBootstrapToken,
+	}
+	config.Status.Ready = true
+
+	objects := []client.Object{
+		config,
+		machine,
+		secret,
+		cluster,
+	}
+	myclient := fake.NewClientBuilder().WithObjects(objects...).Build()
+
+	k := &KubeadmConfigReconciler{
+		Client: myclient,
+	}
+
+	request := ctrl.Request{
+		NamespacedName: client.ObjectKey{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "cfg",
+		},
+	}
+	var err error
+	key := client.ObjectKeyFromObject(config)
+	actual := &corev1.Secret{}
+
+	t.Run("KubeadmConfig ownerReference is added on first reconcile", func(t *testing.T) {
+		_, err = k.Reconcile(ctx, request)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		g.Expect(myclient.Get(ctx, key, actual)).To(Succeed())
+
+		controllerOwner := metav1.GetControllerOf(actual)
+		g.Expect(controllerOwner).To(Not(BeNil()))
+		g.Expect(controllerOwner.Kind).To(Equal(config.Kind))
+		g.Expect(controllerOwner.Name).To(Equal(config.Name))
+	})
+
+	t.Run("KubeadmConfig ownerReference re-reconciled without error", func(t *testing.T) {
+		_, err = k.Reconcile(ctx, request)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		g.Expect(myclient.Get(ctx, key, actual)).To(Succeed())
+
+		controllerOwner := metav1.GetControllerOf(actual)
+		g.Expect(controllerOwner).To(Not(BeNil()))
+		g.Expect(controllerOwner.Kind).To(Equal(config.Kind))
+		g.Expect(controllerOwner.Name).To(Equal(config.Name))
+	})
+	t.Run("non-KubeadmConfig controller OwnerReference is replaced", func(t *testing.T) {
+		g.Expect(myclient.Get(ctx, key, actual)).To(Succeed())
+
+		actual.SetOwnerReferences([]metav1.OwnerReference{
+			{
+				APIVersion: machine.APIVersion,
+				Kind:       machine.Kind,
+				Name:       machine.Name,
+				UID:        machine.UID,
+				Controller: pointer.Bool(true),
+			}})
+		g.Expect(myclient.Update(ctx, actual)).To(Succeed())
+
+		_, err = k.Reconcile(ctx, request)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		g.Expect(myclient.Get(ctx, key, actual)).To(Succeed())
+
+		controllerOwner := metav1.GetControllerOf(actual)
+		g.Expect(controllerOwner).To(Not(BeNil()))
+		g.Expect(controllerOwner.Kind).To(Equal(config.Kind))
+		g.Expect(controllerOwner.Name).To(Equal(config.Name))
+	})
+}
+
 // Reconcile returns nil if the referenced Machine cannot be found.
 func TestKubeadmConfigReconciler_Reconcile_ReturnNilIfReferencedMachineIsNotFound(t *testing.T) {
 	g := NewWithT(t)
@@ -836,7 +935,7 @@ func TestKubeadmConfigSecretCreatedStatusNotPatched(t *testing.T) {
 			Name:      workerJoinConfig.Name,
 			Namespace: workerJoinConfig.Namespace,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster.Name,
+				clusterv1.ClusterNameLabel: cluster.Name,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -2080,13 +2179,13 @@ func newWorkerMachineForCluster(cluster *clusterv1.Cluster) *clusterv1.Machine {
 		Build()
 }
 
-// newControlPlaneMachine returns a Machine with the passed Cluster information and a MachineControlPlaneLabelName.
+// newControlPlaneMachine returns a Machine with the passed Cluster information and a MachineControlPlaneLabel.
 func newControlPlaneMachine(cluster *clusterv1.Cluster, name string) *clusterv1.Machine {
 	m := builder.Machine(cluster.Namespace, name).
 		WithVersion("v1.19.1").
 		WithBootstrapTemplate(bootstrapbuilder.KubeadmConfig(metav1.NamespaceDefault, "cfg").Unstructured()).
 		WithClusterName(cluster.Name).
-		WithLabels(map[string]string{clusterv1.MachineControlPlaneLabelName: ""}).
+		WithLabels(map[string]string{clusterv1.MachineControlPlaneLabel: ""}).
 		Build()
 	return m
 }
@@ -2095,7 +2194,7 @@ func newControlPlaneMachine(cluster *clusterv1.Cluster, name string) *clusterv1.
 func newMachinePool(cluster *clusterv1.Cluster, name string) *expv1.MachinePool {
 	m := builder.MachinePool(cluster.Namespace, name).
 		WithClusterName(cluster.Name).
-		WithLabels(map[string]string{clusterv1.ClusterLabelName: cluster.Name}).
+		WithLabels(map[string]string{clusterv1.ClusterNameLabel: cluster.Name}).
 		WithBootstrapTemplate(bootstrapbuilder.KubeadmConfig(cluster.Namespace, "conf1").Unstructured()).
 		WithVersion("1.19.1").
 		Build()

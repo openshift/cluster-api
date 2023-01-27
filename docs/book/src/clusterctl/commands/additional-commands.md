@@ -1,9 +1,3 @@
-# clusterctl backup
-
-**DEPRECATED. Please use `clusterctl move --to-directory` instead.**
-
-Backup Cluster API objects and all dependencies from a management cluster.
-
 # clusterctl config repositories
 
 Display the list of providers and their repository configurations.
@@ -15,13 +9,6 @@ $HOME/.cluster-api/clusterctl.yaml file to add a new provider or to customize ex
 
 Help provides help for any command in the application.
 Simply type `clusterctl help [command]` for full details.
-
-# clusterctl restore
-
-**DEPRECATED. Please use `clusterctl move --from-directory` instead.**
-
-Restore Cluster API objects from file by glob. Object files are searched in the default config directory
-or in the provided directory.
 
 # clusterctl version
 

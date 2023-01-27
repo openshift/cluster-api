@@ -46,8 +46,8 @@ import (
 	"github.com/spf13/pflag"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
+	logsv1 "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
@@ -74,8 +74,7 @@ func init() {
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
 	// Initialize logs flags using Kubernetes component-base machinery.
-	logs.AddFlags(fs, logs.SkipLoggingConfigurationFlags())
-	logOptions.AddFlags(fs)
+	logsv1.AddFlags(logOptions, fs)
 
 	// Add test-extension specific flags
 	fs.StringVar(&profilerAddress, "profiler-address", "",
@@ -99,7 +98,7 @@ func main() {
 	pflag.Parse()
 
 	// Validates logs flags using Kubernetes component-base machinery and applies them
-	if err := logOptions.ValidateAndApply(nil); err != nil {
+	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
 		setupLog.Error(err, "unable to start extension")
 		os.Exit(1)
 	}
@@ -128,17 +127,17 @@ func main() {
 
 	// Register extension handlers.
 	if err := webhookServer.AddExtensionHandler(server.ExtensionHandler{
-		Hook:           runtimehooksv1.BeforeClusterCreate,
-		Name:           "before-cluster-create",
-		HandlerFunc:    DoBeforeClusterCreate,
+		Hook:        runtimehooksv1.BeforeClusterCreate,
+		Name:        "before-cluster-create",
+		HandlerFunc: DoBeforeClusterCreate,
 	}); err != nil {
 		setupLog.Error(err, "error adding handler")
 		os.Exit(1)
 	}
 	if err := webhookServer.AddExtensionHandler(server.ExtensionHandler{
-		Hook:           runtimehooksv1.BeforeClusterUpgrade,
-		Name:           "before-cluster-upgrade",
-		HandlerFunc:    DoBeforeClusterUpgrade,
+		Hook:        runtimehooksv1.BeforeClusterUpgrade,
+		Name:        "before-cluster-upgrade",
+		HandlerFunc: DoBeforeClusterUpgrade,
 	}); err != nil {
 		setupLog.Error(err, "error adding handler")
 		os.Exit(1)
@@ -291,6 +290,16 @@ lead to to Kubernetes resources conditions continuously changing, and this gener
 controllers processing those resource that might impact system stability.
 
 </aside>
+
+### Settings
+
+Settings can be added to the ExtensionConfig object in the form of a map with string keys and values. These settings are
+sent with each request to hooks registered by that ExtensionConfig. Extension developers can implement behavior in their
+extensions to alter behavior based on these settings. Settings should be well documented by extension developers so that 
+ClusterClass authors can understand usage and expected behaviour.
+
+Settings can be provided for individual external patches by providing them in the ClusterClass `.spec.patches[*].external.settings`.
+This can be used to overwrite settings at the ExtensionConfig level for that patch.
 
 ### Error management
 

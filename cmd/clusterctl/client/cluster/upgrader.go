@@ -257,7 +257,7 @@ func (u *providerUpgrader) createCustomPlan(upgradeItems []UpgradeItem) (*Upgrad
 	}
 
 	// Builds the custom upgrade plan, by adding all the upgrade items after checking consistency with the targetContract.
-	upgradeInstanceNames := sets.NewString()
+	upgradeInstanceNames := sets.Set[string]{}
 	upgradePlan := &UpgradePlan{
 		Contract: targetContract,
 	}
@@ -469,8 +469,8 @@ func (u *providerUpgrader) scaleDownProvider(provider clusterctlv1.Provider) err
 		deploymentList,
 		client.InNamespace(provider.Namespace),
 		client.MatchingLabels{
-			clusterctlv1.ClusterctlLabelName: "",
-			clusterv1.ProviderLabelName:      provider.ManifestLabel(),
+			clusterctlv1.ClusterctlLabel: "",
+			clusterv1.ProviderNameLabel:  provider.ManifestLabel(),
 		}); err != nil {
 		return errors.Wrapf(err, "failed to list Deployments for provider %s", provider.Name)
 	}

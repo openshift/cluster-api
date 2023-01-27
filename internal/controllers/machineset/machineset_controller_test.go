@@ -228,14 +228,24 @@ func TestMachineSetReconciler(t *testing.T) {
 			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("annotation-1", "true"), "have annotations of MachineTemplate applied")
 			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("precedence", "MachineSet"), "the annotations from the MachineSpec template to overwrite the infrastructure template ones")
 			g.Expect(im.GetLabels()).To(HaveKeyWithValue("label-1", "true"), "have labels of MachineTemplate applied")
+		}
+		g.Eventually(func() bool {
+			g.Expect(env.List(ctx, infraMachines, client.InNamespace(namespace.Name))).To(Succeed())
+			// The Machine reconciler should remove the ownerReference to the MachineSet on the InfrastructureMachine.
 			hasMSOwnerRef := false
-			for _, o := range im.GetOwnerReferences() {
-				if o.Kind == machineSetKind.Kind {
-					hasMSOwnerRef = true
+			hasMachineOwnerRef := false
+			for _, im := range infraMachines.Items {
+				for _, o := range im.GetOwnerReferences() {
+					if o.Kind == machineSetKind.Kind {
+						hasMSOwnerRef = true
+					}
+					if o.Kind == "Machine" {
+						hasMachineOwnerRef = true
+					}
 				}
 			}
-			g.Expect(hasMSOwnerRef).To(BeTrue(), "have ownerRef to MachineSet")
-		}
+			return !hasMSOwnerRef && hasMachineOwnerRef
+		}, timeout).Should(BeTrue(), "infraMachine should not have ownerRef to MachineSet")
 
 		t.Log("Creating a BootstrapConfig for each Machine")
 		bootstrapConfigs := &unstructured.UnstructuredList{}
@@ -251,14 +261,24 @@ func TestMachineSetReconciler(t *testing.T) {
 			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("annotation-1", "true"), "have annotations of MachineTemplate applied")
 			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("precedence", "MachineSet"), "the annotations from the MachineSpec template to overwrite the bootstrap config template ones")
 			g.Expect(im.GetLabels()).To(HaveKeyWithValue("label-1", "true"), "have labels of MachineTemplate applied")
+		}
+		g.Eventually(func() bool {
+			g.Expect(env.List(ctx, bootstrapConfigs, client.InNamespace(namespace.Name))).To(Succeed())
+			// The Machine reconciler should remove the ownerReference to the MachineSet on the Bootstrap object.
 			hasMSOwnerRef := false
-			for _, o := range im.GetOwnerReferences() {
-				if o.Kind == machineSetKind.Kind {
-					hasMSOwnerRef = true
+			hasMachineOwnerRef := false
+			for _, im := range bootstrapConfigs.Items {
+				for _, o := range im.GetOwnerReferences() {
+					if o.Kind == machineSetKind.Kind {
+						hasMSOwnerRef = true
+					}
+					if o.Kind == "Machine" {
+						hasMachineOwnerRef = true
+					}
 				}
 			}
-			g.Expect(hasMSOwnerRef).To(BeTrue(), "have ownerRef to MachineSet")
-		}
+			return !hasMSOwnerRef && hasMachineOwnerRef
+		}, timeout).Should(BeTrue(), "bootstrap should not have ownerRef to MachineSet")
 
 		// Set the infrastructure reference as ready.
 		for _, m := range machines.Items {
@@ -524,7 +544,7 @@ func TestMachineSetToMachines(t *testing.T) {
 				Selector: metav1.LabelSelector{
 					MatchLabels: map[string]string{
 						"foo":                      "bar",
-						clusterv1.ClusterLabelName: testClusterName,
+						clusterv1.ClusterNameLabel: testClusterName,
 					},
 				},
 			},
@@ -536,7 +556,7 @@ func TestMachineSetToMachines(t *testing.T) {
 			Name:      "withOwnerRef",
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: testClusterName,
+				clusterv1.ClusterNameLabel: testClusterName,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -552,7 +572,7 @@ func TestMachineSetToMachines(t *testing.T) {
 			Name:      "noOwnerRefNoLabels",
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: testClusterName,
+				clusterv1.ClusterNameLabel: testClusterName,
 			},
 		},
 	}
@@ -562,7 +582,7 @@ func TestMachineSetToMachines(t *testing.T) {
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
 				"foo":                      "bar",
-				clusterv1.ClusterLabelName: testClusterName,
+				clusterv1.ClusterNameLabel: testClusterName,
 			},
 		},
 	}
@@ -753,7 +773,7 @@ func newMachineSet(name, cluster string, replicas int32) *clusterv1.MachineSet {
 			Name:      name,
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster,
+				clusterv1.ClusterNameLabel: cluster,
 			},
 		},
 		Spec: clusterv1.MachineSetSpec{
@@ -762,13 +782,13 @@ func newMachineSet(name, cluster string, replicas int32) *clusterv1.MachineSet {
 			Template: clusterv1.MachineTemplateSpec{
 				ObjectMeta: clusterv1.ObjectMeta{
 					Labels: map[string]string{
-						clusterv1.ClusterLabelName: cluster,
+						clusterv1.ClusterNameLabel: cluster,
 					},
 				},
 			},
 			Selector: metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					clusterv1.ClusterLabelName: cluster,
+					clusterv1.ClusterNameLabel: cluster,
 				},
 			},
 		},
@@ -791,7 +811,7 @@ func TestMachineSetReconcile_MachinesCreatedConditionFalseOnBadInfraRef(t *testi
 			Name:      "ms-foo",
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster.Name,
+				clusterv1.ClusterNameLabel: cluster.Name,
 			},
 		},
 		Spec: clusterv1.MachineSetSpec{
@@ -800,7 +820,7 @@ func TestMachineSetReconcile_MachinesCreatedConditionFalseOnBadInfraRef(t *testi
 			Template: clusterv1.MachineTemplateSpec{
 				ObjectMeta: clusterv1.ObjectMeta{
 					Labels: map[string]string{
-						clusterv1.ClusterLabelName: cluster.Name,
+						clusterv1.ClusterNameLabel: cluster.Name,
 					},
 				},
 				Spec: clusterv1.MachineSpec{
@@ -816,7 +836,7 @@ func TestMachineSetReconcile_MachinesCreatedConditionFalseOnBadInfraRef(t *testi
 			},
 			Selector: metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					clusterv1.ClusterLabelName: cluster.Name,
+					clusterv1.ClusterNameLabel: cluster.Name,
 				},
 			},
 		},
@@ -871,7 +891,7 @@ func TestMachineSetReconciler_updateStatusResizedCondition(t *testing.T) {
 					Name:      "machine-a",
 					Namespace: metav1.NamespaceDefault,
 					Labels: map[string]string{
-						clusterv1.ClusterLabelName: cluster.Name,
+						clusterv1.ClusterNameLabel: cluster.Name,
 					},
 				},
 			},

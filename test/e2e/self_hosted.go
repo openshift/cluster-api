@@ -213,7 +213,7 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 			ctx,
 			preMoveMachineList,
 			client.InNamespace(namespace.Name),
-			client.MatchingLabels{clusterv1.ClusterLabelName: workloadClusterName},
+			client.MatchingLabels{clusterv1.ClusterNameLabel: workloadClusterName},
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to list machines before move")
 
@@ -225,6 +225,26 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 			ToKubeconfigPath:     selfHostedClusterProxy.GetKubeconfigPath(),
 			Namespace:            namespace.Name,
 		})
+
+		// Note: clusterctl should restore the managedFields to the same as before the move,
+		// and thus removing any managedField entries with clusterctl as a manager. This should happen
+		// for all the objects processed by move, but for sake of simplicity we test only the Cluster
+		// object. The Cluster object has special processing for the paused field during the move to
+		// avoid having clusterctl as the manager of the field.
+		log.Logf("Ensure clusterctl does not take ownership on any fields on the self-hosted cluster")
+		selfHostedCluster = framework.GetClusterByName(ctx, framework.GetClusterByNameInput{
+			Getter:    selfHostedClusterProxy.GetClient(),
+			Name:      cluster.Name,
+			Namespace: selfHostedNamespace.Name,
+		})
+		hasClusterctlManagedFields := false
+		for _, managedField := range selfHostedCluster.GetManagedFields() {
+			if managedField.Manager == "clusterctl" {
+				hasClusterctlManagedFields = true
+				break
+			}
+		}
+		Expect(hasClusterctlManagedFields).To(BeFalse(), "clusterctl should not manage any fields on the Cluster after the move")
 
 		log.Logf("Waiting for the cluster to be reconciled after moving to self hosted")
 		selfHostedCluster = framework.DiscoveryAndWaitForCluster(ctx, framework.DiscoveryAndWaitForClusterInput{
@@ -241,6 +261,7 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 		Expect(controlPlane).ToNot(BeNil())
 
 		// After the move check that there were no unexpected rollouts.
+		log.Logf("Verify there are no unexpected rollouts")
 		Consistently(func() bool {
 			postMoveMachineList := &unstructured.UnstructuredList{}
 			postMoveMachineList.SetGroupVersionKind(clusterv1.GroupVersion.WithKind("MachineList"))
@@ -248,7 +269,7 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 				ctx,
 				postMoveMachineList,
 				client.InNamespace(namespace.Name),
-				client.MatchingLabels{clusterv1.ClusterLabelName: workloadClusterName},
+				client.MatchingLabels{clusterv1.ClusterNameLabel: workloadClusterName},
 			)
 			Expect(err).NotTo(HaveOccurred(), "Failed to list machines after move")
 			return matchUnstructuredLists(preMoveMachineList, postMoveMachineList)
@@ -259,8 +280,14 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 			return
 		}
 
-		By("Upgrading the self-hosted Cluster")
+		log.Logf("Waiting for control plane to be ready")
+		framework.WaitForControlPlaneAndMachinesReady(ctx, framework.WaitForControlPlaneAndMachinesReadyInput{
+			GetLister:    selfHostedClusterProxy.GetClient(),
+			Cluster:      clusterResources.Cluster,
+			ControlPlane: clusterResources.ControlPlane,
+		}, input.E2EConfig.GetIntervals(specName, "wait-control-plane")...)
 
+		By("Upgrading the self-hosted Cluster")
 		if clusterResources.Cluster.Spec.Topology != nil {
 			// Cluster is using ClusterClass, upgrade via topology.
 			By("Upgrading the Cluster topology")

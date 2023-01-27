@@ -338,7 +338,7 @@ func modifyMachineDeploymentViaClusterClassAndWait(ctx context.Context, input mo
 				// Get MachineDeployment for the current MachineDeploymentTopology.
 				mdList := &clusterv1.MachineDeploymentList{}
 				Expect(mgmtClient.List(ctx, mdList, client.InNamespace(input.Cluster.Namespace), client.MatchingLabels{
-					clusterv1.ClusterTopologyMachineDeploymentLabelName: mdTopology.Name,
+					clusterv1.ClusterTopologyMachineDeploymentNameLabel: mdTopology.Name,
 				})).To(Succeed())
 				if len(mdList.Items) != 1 {
 					return errors.Errorf("expected one MachineDeployment for topology %q, but got %d", mdTopology.Name, len(mdList.Items))
@@ -426,7 +426,12 @@ func rebaseClusterClassAndWait(ctx context.Context, input rebaseClusterClassAndW
 	patchHelper, err := patch.NewHelper(input.Cluster, mgmtClient)
 	Expect(err).ToNot(HaveOccurred())
 	input.Cluster.Spec.Topology.Class = newClusterClassName
-	Expect(patchHelper.Patch(ctx, input.Cluster)).To(Succeed())
+	// We have to retry the patch. The ClusterClass was just created so the client cache in the
+	// controller/webhook might not be aware of it yet. If the webhook is not aware of the ClusterClass
+	// we get a "Cluster ... can't be validated. ClusterClass ... can not be retrieved" error.
+	Eventually(func() error {
+		return patchHelper.Patch(ctx, input.Cluster)
+	}, "1m", "5s").Should(Succeed(), "Failed to patch Cluster")
 
 	log.Logf("Waiting for MachineDeployment rollout to complete.")
 	for _, mdTopology := range input.Cluster.Spec.Topology.Workers.MachineDeployments {
@@ -437,7 +442,7 @@ func rebaseClusterClassAndWait(ctx context.Context, input rebaseClusterClassAndW
 			// Get MachineDeployment for the current MachineDeploymentTopology.
 			mdList := &clusterv1.MachineDeploymentList{}
 			Expect(mgmtClient.List(ctx, mdList, client.InNamespace(input.Cluster.Namespace), client.MatchingLabels{
-				clusterv1.ClusterTopologyMachineDeploymentLabelName: mdTopology.Name,
+				clusterv1.ClusterTopologyMachineDeploymentNameLabel: mdTopology.Name,
 			})).To(Succeed())
 			if len(mdList.Items) != 1 {
 				return errors.Errorf("expected one MachineDeployment for topology %q, but got %d", mdTopology.Name, len(mdList.Items))
@@ -496,7 +501,7 @@ func deleteMachineDeploymentTopologyAndWait(ctx context.Context, input deleteMac
 		// Get MachineDeployment for the current MachineDeploymentTopology.
 		mdList := &clusterv1.MachineDeploymentList{}
 		Expect(input.ClusterProxy.GetClient().List(ctx, mdList, client.InNamespace(input.Cluster.Namespace), client.MatchingLabels{
-			clusterv1.ClusterTopologyMachineDeploymentLabelName: mdTopologyToDelete.Name,
+			clusterv1.ClusterTopologyMachineDeploymentNameLabel: mdTopologyToDelete.Name,
 		})).To(Succeed())
 		if len(mdList.Items) != 0 {
 			return errors.Errorf("expected no MachineDeployment for topology %q, but got %d", mdTopologyToDelete.Name, len(mdList.Items))

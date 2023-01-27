@@ -22,7 +22,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	. "github.com/onsi/gomega/gstruct"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -97,8 +96,8 @@ func WaitForKubeadmControlPlaneMachinesToExist(ctx context.Context, input WaitFo
 	inClustersNamespaceListOption := client.InNamespace(input.Cluster.Namespace)
 	// ControlPlane labels
 	matchClusterListOption := client.MatchingLabels{
-		clusterv1.MachineControlPlaneLabelName: "",
-		clusterv1.ClusterLabelName:             input.Cluster.Name,
+		clusterv1.MachineControlPlaneLabel: "",
+		clusterv1.ClusterNameLabel:         input.Cluster.Name,
 	}
 
 	Eventually(func() (int, error) {
@@ -134,8 +133,8 @@ func WaitForOneKubeadmControlPlaneMachineToExist(ctx context.Context, input Wait
 	inClustersNamespaceListOption := client.InNamespace(input.Cluster.Namespace)
 	// ControlPlane labels
 	matchClusterListOption := client.MatchingLabels{
-		clusterv1.MachineControlPlaneLabelName: "",
-		clusterv1.ClusterLabelName:             input.Cluster.Name,
+		clusterv1.MachineControlPlaneLabel: "",
+		clusterv1.ClusterNameLabel:         input.Cluster.Name,
 	}
 
 	Eventually(func() (bool, error) {
@@ -164,20 +163,34 @@ type WaitForControlPlaneToBeReadyInput struct {
 func WaitForControlPlaneToBeReady(ctx context.Context, input WaitForControlPlaneToBeReadyInput, intervals ...interface{}) {
 	By("Waiting for the control plane to be ready")
 	controlplane := &controlplanev1.KubeadmControlPlane{}
-	Eventually(func() (controlplanev1.KubeadmControlPlane, error) {
+	Eventually(func() (bool, error) {
 		key := client.ObjectKey{
 			Namespace: input.ControlPlane.GetNamespace(),
 			Name:      input.ControlPlane.GetName(),
 		}
 		if err := input.Getter.Get(ctx, key, controlplane); err != nil {
-			return *controlplane, errors.Wrapf(err, "failed to get KCP")
+			return false, errors.Wrapf(err, "failed to get KCP")
 		}
-		return *controlplane, nil
-	}, intervals...).Should(MatchFields(IgnoreExtras, Fields{
-		"Status": MatchFields(IgnoreExtras, Fields{
-			"Ready": BeTrue(),
-		}),
-	}), PrettyPrint(controlplane)+"\n")
+
+		desiredReplicas := controlplane.Spec.Replicas
+		statusReplicas := controlplane.Status.Replicas
+		updatedReplicas := controlplane.Status.UpdatedReplicas
+		readyReplicas := controlplane.Status.ReadyReplicas
+		unavailableReplicas := controlplane.Status.UnavailableReplicas
+
+		// Control plane is still rolling out (and thus not ready) if:
+		// * .spec.replicas, .status.replicas, .status.updatedReplicas,
+		//   .status.readyReplicas are not equal and
+		// * unavailableReplicas > 0
+		if statusReplicas != *desiredReplicas ||
+			updatedReplicas != *desiredReplicas ||
+			readyReplicas != *desiredReplicas ||
+			unavailableReplicas > 0 {
+			return false, nil
+		}
+
+		return true, nil
+	}, intervals...).Should(BeTrue(), PrettyPrint(controlplane)+"\n")
 }
 
 // AssertControlPlaneFailureDomainsInput is the input for AssertControlPlaneFailureDomains.
@@ -194,7 +207,7 @@ func AssertControlPlaneFailureDomains(ctx context.Context, input AssertControlPl
 	Expect(input.Cluster).ToNot(BeNil(), "Invalid argument. input.Cluster can't be nil when calling AssertControlPlaneFailureDomains")
 
 	By("Checking all the control plane machines are in the expected failure domains")
-	controlPlaneFailureDomains := sets.NewString()
+	controlPlaneFailureDomains := sets.Set[string]{}
 	for fd, fdSettings := range input.Cluster.Status.FailureDomains {
 		if fdSettings.ControlPlane {
 			controlPlaneFailureDomains.Insert(fd)
@@ -204,8 +217,8 @@ func AssertControlPlaneFailureDomains(ctx context.Context, input AssertControlPl
 	// Look up all the control plane machines.
 	inClustersNamespaceListOption := client.InNamespace(input.Cluster.Namespace)
 	matchClusterListOption := client.MatchingLabels{
-		clusterv1.ClusterLabelName:             input.Cluster.Name,
-		clusterv1.MachineControlPlaneLabelName: "",
+		clusterv1.ClusterNameLabel:         input.Cluster.Name,
+		clusterv1.MachineControlPlaneLabel: "",
 	}
 
 	machineList := &clusterv1.MachineList{}
@@ -377,7 +390,7 @@ func UpgradeControlPlaneAndWaitForUpgrade(ctx context.Context, input UpgradeCont
 // controlPlaneMachineOptions returns a set of ListOptions that allows to get all machine objects belonging to control plane.
 func controlPlaneMachineOptions() []client.ListOption {
 	return []client.ListOption{
-		client.HasLabels{clusterv1.MachineControlPlaneLabelName},
+		client.HasLabels{clusterv1.MachineControlPlaneLabel},
 	}
 }
 

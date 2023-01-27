@@ -30,7 +30,6 @@ import (
 	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
@@ -318,6 +317,8 @@ func TestComputeControlPlane(t *testing.T) {
 			template:    blueprint.ControlPlane.Template,
 			currentRef:  nil,
 			obj:         obj,
+			labels:      mergeMap(blueprint.Topology.ControlPlane.Metadata.Labels, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Labels),
+			annotations: mergeMap(blueprint.Topology.ControlPlane.Metadata.Annotations, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Annotations),
 		})
 
 		assertNestedField(g, obj, version, contract.ControlPlane().Version().Path()...)
@@ -407,6 +408,8 @@ func TestComputeControlPlane(t *testing.T) {
 			template:    blueprint.ControlPlane.Template,
 			currentRef:  nil,
 			obj:         obj,
+			labels:      mergeMap(blueprint.Topology.ControlPlane.Metadata.Labels, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Labels),
+			annotations: mergeMap(blueprint.Topology.ControlPlane.Metadata.Annotations, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Annotations),
 		})
 
 		assertNestedField(g, obj, version, contract.ControlPlane().Version().Path()...)
@@ -450,12 +453,14 @@ func TestComputeControlPlane(t *testing.T) {
 			template:    blueprint.ControlPlane.Template,
 			currentRef:  nil,
 			obj:         obj,
+			labels:      mergeMap(blueprint.Topology.ControlPlane.Metadata.Labels, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Labels),
+			annotations: mergeMap(blueprint.Topology.ControlPlane.Metadata.Annotations, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Annotations),
 		})
 		gotMetadata, err := contract.ControlPlane().MachineTemplate().Metadata().Get(obj)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		expectedLabels := mergeMap(s.Current.Cluster.Spec.Topology.ControlPlane.Metadata.Labels, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Labels)
-		expectedLabels[clusterv1.ClusterLabelName] = cluster.Name
+		expectedLabels[clusterv1.ClusterNameLabel] = cluster.Name
 		expectedLabels[clusterv1.ClusterTopologyOwnedLabel] = ""
 		g.Expect(gotMetadata).To(Equal(&clusterv1.ObjectMeta{
 			Labels:      expectedLabels,
@@ -502,6 +507,8 @@ func TestComputeControlPlane(t *testing.T) {
 			template:    blueprint.ControlPlane.Template,
 			currentRef:  scope.Current.Cluster.Spec.ControlPlaneRef,
 			obj:         obj,
+			labels:      mergeMap(blueprint.Topology.ControlPlane.Metadata.Labels, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Labels),
+			annotations: mergeMap(blueprint.Topology.ControlPlane.Metadata.Annotations, blueprint.ClusterClass.Spec.ControlPlane.Metadata.Annotations),
 		})
 	})
 	t.Run("Should choose the correct version for control plane", func(t *testing.T) {
@@ -612,7 +619,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
 
 		// Note: the version used by the machine deployments does
-		// not affect how we determining the control plane version.
+		// not affect how we're determining the control plane version.
 		// We only want to know if the machine deployments are stable.
 		//
 		// A machine deployment is considered stable if all the following are true:
@@ -707,10 +714,11 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 						"spec.replicas": int64(2),
 					}).
 					WithStatusFields(map[string]interface{}{
-						"status.version":         "v1.2.2",
-						"status.replicas":        int64(2),
-						"status.updatedReplicas": int64(2),
-						"status.readyReplicas":   int64(2),
+						"status.version":             "v1.2.2",
+						"status.replicas":            int64(2),
+						"status.updatedReplicas":     int64(2),
+						"status.readyReplicas":       int64(2),
+						"status.unavailableReplicas": int64(0),
 					}).
 					Build(),
 				expectedVersion: "v1.2.3",
@@ -740,10 +748,11 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 						"spec.replicas": int64(2),
 					}).
 					WithStatusFields(map[string]interface{}{
-						"status.version":         "v1.2.2",
-						"status.replicas":        int64(1),
-						"status.updatedReplicas": int64(1),
-						"status.readyReplicas":   int64(1),
+						"status.version":             "v1.2.2",
+						"status.replicas":            int64(1),
+						"status.updatedReplicas":     int64(1),
+						"status.readyReplicas":       int64(1),
+						"status.unavailableReplicas": int64(0),
 					}).
 					Build(),
 				expectedVersion: "v1.2.2",
@@ -757,10 +766,11 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 						"spec.replicas": int64(2),
 					}).
 					WithStatusFields(map[string]interface{}{
-						"status.version":         "v1.2.2",
-						"status.replicas":        int64(2),
-						"status.updatedReplicas": int64(2),
-						"status.readyReplicas":   int64(2),
+						"status.version":             "v1.2.2",
+						"status.replicas":            int64(2),
+						"status.updatedReplicas":     int64(2),
+						"status.readyReplicas":       int64(2),
+						"status.unavailableReplicas": int64(0),
 					}).
 					Build(),
 				machineDeploymentsState: scope.MachineDeploymentsStateMap{
@@ -779,10 +789,11 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 						"spec.replicas": int64(2),
 					}).
 					WithStatusFields(map[string]interface{}{
-						"status.version":         "v1.2.2",
-						"status.replicas":        int64(2),
-						"status.updatedReplicas": int64(2),
-						"status.readyReplicas":   int64(2),
+						"status.version":             "v1.2.2",
+						"status.replicas":            int64(2),
+						"status.updatedReplicas":     int64(2),
+						"status.readyReplicas":       int64(2),
+						"status.unavailableReplicas": int64(0),
 					}).
 					Build(),
 				machineDeploymentsState: scope.MachineDeploymentsStateMap{
@@ -801,10 +812,11 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 						"spec.replicas": int64(2),
 					}).
 					WithStatusFields(map[string]interface{}{
-						"status.version":         "v1.2.2",
-						"status.replicas":        int64(2),
-						"status.updatedReplicas": int64(2),
-						"status.readyReplicas":   int64(2),
+						"status.version":             "v1.2.2",
+						"status.replicas":            int64(2),
+						"status.updatedReplicas":     int64(2),
+						"status.readyReplicas":       int64(2),
+						"status.unavailableReplicas": int64(0),
 					}).
 					Build(),
 				machineDeploymentsState: scope.MachineDeploymentsStateMap{
@@ -823,10 +835,11 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 						"spec.replicas": int64(2),
 					}).
 					WithStatusFields(map[string]interface{}{
-						"status.version":         "v1.2.2",
-						"status.replicas":        int64(2),
-						"status.updatedReplicas": int64(2),
-						"status.readyReplicas":   int64(2),
+						"status.version":             "v1.2.2",
+						"status.replicas":            int64(2),
+						"status.updatedReplicas":     int64(2),
+						"status.readyReplicas":       int64(2),
+						"status.unavailableReplicas": int64(0),
 					}).
 					Build(),
 				machineDeploymentsState: scope.MachineDeploymentsStateMap{
@@ -1212,10 +1225,11 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 				"spec.replicas": int64(2),
 			}).
 			WithStatusFields(map[string]interface{}{
-				"status.version":         "v1.2.2",
-				"status.replicas":        int64(2),
-				"status.updatedReplicas": int64(2),
-				"status.readyReplicas":   int64(2),
+				"status.version":             "v1.2.2",
+				"status.replicas":            int64(2),
+				"status.updatedReplicas":     int64(2),
+				"status.readyReplicas":       int64(2),
+				"status.unavailableReplicas": int64(0),
 			}).
 			Build()
 
@@ -1295,7 +1309,7 @@ func TestComputeCluster(t *testing.T) {
 	// ObjectMeta
 	g.Expect(obj.Name).To(Equal(cluster.Name))
 	g.Expect(obj.Namespace).To(Equal(cluster.Namespace))
-	g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterLabelName, cluster.Name))
+	g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterNameLabel, cluster.Name))
 	g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyOwnedLabel, ""))
 
 	// Spec
@@ -1415,14 +1429,14 @@ func TestComputeMachineDeployment(t *testing.T) {
 		actual, err := computeMachineDeployment(ctx, scope, nil, mdTopology)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		g.Expect(actual.BootstrapTemplate.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentLabelName, "big-pool-of-machines"))
+		g.Expect(actual.BootstrapTemplate.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentNameLabel, "big-pool-of-machines"))
 
 		// Ensure Cluster ownership is added to generated BootstrapTemplate.
 		g.Expect(actual.BootstrapTemplate.GetOwnerReferences()).To(HaveLen(1))
 		g.Expect(actual.BootstrapTemplate.GetOwnerReferences()[0].Kind).To(Equal("Cluster"))
 		g.Expect(actual.BootstrapTemplate.GetOwnerReferences()[0].Name).To(Equal(cluster.Name))
 
-		g.Expect(actual.InfrastructureMachineTemplate.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentLabelName, "big-pool-of-machines"))
+		g.Expect(actual.InfrastructureMachineTemplate.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentNameLabel, "big-pool-of-machines"))
 
 		// Ensure Cluster ownership is added to generated InfrastructureMachineTemplate.
 		g.Expect(actual.InfrastructureMachineTemplate.GetOwnerReferences()).To(HaveLen(1))
@@ -1441,12 +1455,14 @@ func TestComputeMachineDeployment(t *testing.T) {
 		g.Expect(actualMd.Name).To(ContainSubstring("cluster1"))
 		g.Expect(actualMd.Name).To(ContainSubstring("big-pool-of-machines"))
 
-		g.Expect(actualMd.Labels).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentLabelName, "big-pool-of-machines"))
+		g.Expect(actualMd.Labels).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentNameLabel, "big-pool-of-machines"))
 		g.Expect(actualMd.Labels).To(HaveKey(clusterv1.ClusterTopologyOwnedLabel))
-		g.Expect(controllerutil.ContainsFinalizer(actualMd, clusterv1.MachineDeploymentTopologyFinalizer)).To(BeTrue())
+		for k, v := range mergeMap(mdTopology.Metadata.Labels, md1.Template.Metadata.Labels) {
+			g.Expect(actualMd.Labels).To(HaveKeyWithValue(k, v))
+		}
 
 		g.Expect(actualMd.Spec.Selector.MatchLabels).To(HaveKey(clusterv1.ClusterTopologyOwnedLabel))
-		g.Expect(actualMd.Spec.Selector.MatchLabels).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentLabelName, "big-pool-of-machines"))
+		g.Expect(actualMd.Spec.Selector.MatchLabels).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentNameLabel, "big-pool-of-machines"))
 
 		g.Expect(actualMd.Spec.Template.ObjectMeta.Labels).To(HaveKeyWithValue("foo", "baz"))
 		g.Expect(actualMd.Spec.Template.ObjectMeta.Labels).To(HaveKeyWithValue("fizz", "buzz"))
@@ -1522,9 +1538,11 @@ func TestComputeMachineDeployment(t *testing.T) {
 		g.Expect(*actualMd.Spec.Template.Spec.FailureDomain).To(Equal(topologyFailureDomain))
 		g.Expect(actualMd.Name).To(Equal("existing-deployment-1"))
 
-		g.Expect(actualMd.Labels).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentLabelName, "big-pool-of-machines"))
+		g.Expect(actualMd.Labels).To(HaveKeyWithValue(clusterv1.ClusterTopologyMachineDeploymentNameLabel, "big-pool-of-machines"))
 		g.Expect(actualMd.Labels).To(HaveKey(clusterv1.ClusterTopologyOwnedLabel))
-		g.Expect(controllerutil.ContainsFinalizer(actualMd, clusterv1.MachineDeploymentTopologyFinalizer)).To(BeFalse())
+		for k, v := range mergeMap(mdTopology.Metadata.Labels, md1.Template.Metadata.Labels) {
+			g.Expect(actualMd.Labels).To(HaveKeyWithValue(k, v))
+		}
 
 		g.Expect(actualMd.Spec.Template.ObjectMeta.Labels).To(HaveKeyWithValue("foo", "baz"))
 		g.Expect(actualMd.Spec.Template.ObjectMeta.Labels).To(HaveKeyWithValue("fizz", "buzz"))
@@ -1682,7 +1700,7 @@ func TestComputeMachineDeployment(t *testing.T) {
 		g.Expect(actual.MachineHealthCheck.Spec.ClusterName).To(Equal(cluster.Name))
 		g.Expect(actual.MachineHealthCheck.Spec.Selector).To(Equal(metav1.LabelSelector{MatchLabels: map[string]string{
 			clusterv1.ClusterTopologyOwnedLabel:                 actual.Object.Spec.Selector.MatchLabels[clusterv1.ClusterTopologyOwnedLabel],
-			clusterv1.ClusterTopologyMachineDeploymentLabelName: actual.Object.Spec.Selector.MatchLabels[clusterv1.ClusterTopologyMachineDeploymentLabelName],
+			clusterv1.ClusterTopologyMachineDeploymentNameLabel: actual.Object.Spec.Selector.MatchLabels[clusterv1.ClusterTopologyMachineDeploymentNameLabel],
 		}}))
 
 		// Check that the NodeStartupTime is set as expected.
@@ -1700,10 +1718,11 @@ func TestComputeMachineDeploymentVersion(t *testing.T) {
 			"spec.replicas": int64(2),
 		}).
 		WithStatusFields(map[string]interface{}{
-			"status.version":         "v1.2.2",
-			"status.replicas":        int64(2),
-			"status.updatedReplicas": int64(2),
-			"status.readyReplicas":   int64(2),
+			"status.version":             "v1.2.2",
+			"status.replicas":            int64(2),
+			"status.updatedReplicas":     int64(2),
+			"status.readyReplicas":       int64(2),
+			"status.unavailableReplicas": int64(0),
 		}).
 		Build()
 	controlPlaneStable123 := builder.ControlPlane("test1", "cp1").
@@ -1712,10 +1731,11 @@ func TestComputeMachineDeploymentVersion(t *testing.T) {
 			"spec.replicas": int64(2),
 		}).
 		WithStatusFields(map[string]interface{}{
-			"status.version":         "v1.2.3",
-			"status.replicas":        int64(2),
-			"status.updatedReplicas": int64(2),
-			"status.readyReplicas":   int64(2),
+			"status.version":             "v1.2.3",
+			"status.replicas":            int64(2),
+			"status.updatedReplicas":     int64(2),
+			"status.readyReplicas":       int64(2),
+			"status.unavailableReplicas": int64(0),
 		}).
 		Build()
 	controlPlaneUpgrading := builder.ControlPlane("test1", "cp1").
@@ -1732,10 +1752,11 @@ func TestComputeMachineDeploymentVersion(t *testing.T) {
 			"spec.replicas": int64(2),
 		}).
 		WithStatusFields(map[string]interface{}{
-			"status.version":         "v1.2.3",
-			"status.replicas":        int64(1),
-			"status.updatedReplicas": int64(1),
-			"status.readyReplicas":   int64(1),
+			"status.version":             "v1.2.3",
+			"status.replicas":            int64(1),
+			"status.updatedReplicas":     int64(1),
+			"status.readyReplicas":       int64(1),
+			"status.unavailableReplicas": int64(0),
 		}).
 		Build()
 	controlPlaneDesired := builder.ControlPlane("test1", "cp1").
@@ -2004,7 +2025,7 @@ func assertTemplateToObject(g *WithT, in assertTemplateInput) {
 		g.Expect(in.obj.GetName()).To(HavePrefix(in.cluster.Name))
 	}
 	g.Expect(in.obj.GetNamespace()).To(Equal(in.cluster.Namespace))
-	g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterLabelName, in.cluster.Name))
+	g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterNameLabel, in.cluster.Name))
 	g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyOwnedLabel, ""))
 	for k, v := range in.labels {
 		g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(k, v))
@@ -2039,7 +2060,7 @@ func assertTemplateToTemplate(g *WithT, in assertTemplateInput) {
 		g.Expect(in.obj.GetName()).To(HavePrefix(in.cluster.Name))
 	}
 	g.Expect(in.obj.GetNamespace()).To(Equal(in.cluster.Namespace))
-	g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterLabelName, in.cluster.Name))
+	g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterNameLabel, in.cluster.Name))
 	g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyOwnedLabel, ""))
 	for k, v := range in.labels {
 		g.Expect(in.obj.GetLabels()).To(HaveKeyWithValue(k, v))

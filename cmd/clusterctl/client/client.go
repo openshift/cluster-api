@@ -54,16 +54,6 @@ type Client interface {
 	// Move moves all the Cluster API objects existing in a namespace (or from all the namespaces if empty) to a target management cluster.
 	Move(options MoveOptions) error
 
-	// Backup saves all the Cluster API objects existing in a namespace (or from all the namespaces if empty) to a target management cluster.
-	//
-	// Deprecated: This will be dropped in a future release. Please use Move.
-	Backup(options BackupOptions) error
-
-	// Restore restores all the Cluster API objects existing in a configured directory based on a glob to a target management cluster.
-	//
-	// Deprecated: This will be dropped in a future release. Please use Move.
-	Restore(options RestoreOptions) error
-
 	// PlanUpgrade returns a set of suggested Upgrade plans for the cluster, and more specifically:
 	// - Upgrade to the latest version in the v1alpha3 series: ....
 	// - Upgrade to the latest version in the v1alpha4 series: ....
@@ -127,7 +117,7 @@ type RepositoryClientFactoryInput struct {
 // RepositoryClientFactory is a factory of repository.Client from a given input.
 type RepositoryClientFactory func(RepositoryClientFactoryInput) (repository.Client, error)
 
-// ClusterClientFactoryInput reporesents the inputs required by the factory.
+// ClusterClientFactoryInput represents the inputs required by the factory.
 type ClusterClientFactoryInput struct {
 	Kubeconfig Kubeconfig
 	Processor  Processor

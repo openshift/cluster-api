@@ -52,16 +52,6 @@ type ObjectMover interface {
 
 	// FromDirectory reads all the Cluster API objects existing in a configured directory to a target management cluster.
 	FromDirectory(toCluster Client, directory string) error
-
-	// Backup saves all the Cluster API objects existing in a namespace (or from all the namespaces if empty) to a target directory.
-	//
-	// Deprecated: This will be dropped in a future release. Please use ToDirectory.
-	Backup(namespace string, directory string) error
-
-	// Restore restores all the Cluster API objects existing in a configured directory to a target management cluster.
-	//
-	// Deprecated: This will be dropped in a future release. Please use FromDirectory.
-	Restore(toCluster Client, directory string) error
 }
 
 // objectMover implements the ObjectMover interface.
@@ -105,12 +95,6 @@ func (o *objectMover) Move(namespace string, toCluster Client, dryRun bool) erro
 	return o.move(objectGraph, proxy)
 }
 
-func (o *objectMover) Backup(namespace string, directory string) error {
-	log := logf.Log
-	log.V(5).Info("Deprecated: This function will be dropped in a future release. Please use ToDirectory instead of Backup.")
-	return o.ToDirectory(namespace, directory)
-}
-
 func (o *objectMover) ToDirectory(namespace string, directory string) error {
 	log := logf.Log
 	log.Info("Moving to directory...")
@@ -121,12 +105,6 @@ func (o *objectMover) ToDirectory(namespace string, directory string) error {
 	}
 
 	return o.toDirectory(objectGraph, directory)
-}
-
-func (o *objectMover) Restore(toCluster Client, directory string) error {
-	log := logf.Log
-	log.V(5).Info("Deprecated: This function will be dropped in a future release. Please use FromDirectory instead of Restore.")
-	return o.FromDirectory(toCluster, directory)
 }
 
 func (o *objectMover) FromDirectory(toCluster Client, directory string) error {
@@ -691,7 +669,7 @@ func (o *objectMover) ensureNamespaces(graph *objectGraph, toProxy Proxy) error 
 	}
 
 	ensureNamespaceBackoff := newWriteBackoff()
-	namespaces := sets.NewString()
+	namespaces := sets.Set[string]{}
 	for _, node := range graph.getMoveNodes() {
 		// ignore global/cluster-wide objects
 		if node.isGlobal {

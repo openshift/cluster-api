@@ -437,6 +437,13 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_ClusterClassStatus(ref common.Refe
 							},
 						},
 					},
+					"observedGeneration": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ObservedGeneration is the latest generation observed by the controller.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
 				},
 			},
 		},
@@ -815,7 +822,7 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_ControlPlaneClass(ref common.Refer
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Metadata is the metadata applied to the machines of the ControlPlane. At runtime this metadata is merged with the corresponding metadata from the topology.\n\nThis field is supported if and only if the control plane provider template referenced is Machine based.",
+							Description: "Metadata is the metadata applied to the ControlPlane and the Machines of the ControlPlane if the ControlPlaneTemplate referenced is machine based. If not, it is applied only to the ControlPlane. At runtime this metadata is merged with the corresponding metadata from the topology.\n\nThis field is supported if and only if the control plane provider template referenced is Machine based.",
 							Default:     map[string]interface{}{},
 							Ref:         ref("sigs.k8s.io/cluster-api/api/v1beta1.ObjectMeta"),
 						},
@@ -874,7 +881,7 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_ControlPlaneTopology(ref common.Re
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Metadata is the metadata applied to the machines of the ControlPlane. At runtime this metadata is merged with the corresponding metadata from the ClusterClass.\n\nThis field is supported if and only if the control plane provider template referenced in the ClusterClass is Machine based.",
+							Description: "Metadata is the metadata applied to the ControlPlane and the Machines of the ControlPlane if the ControlPlaneTemplate referenced by the ClusterClass is machine based. If not, it is applied only to the ControlPlane. At runtime this metadata is merged with the corresponding metadata from the ClusterClass.",
 							Default:     map[string]interface{}{},
 							Ref:         ref("sigs.k8s.io/cluster-api/api/v1beta1.ObjectMeta"),
 						},
@@ -937,6 +944,22 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_ExternalPatchDefinition(ref common
 							Description: "ValidateExtension references an extension which is called to validate the topology.",
 							Type:        []string{"string"},
 							Format:      "",
+						},
+					},
+					"settings": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Settings defines key value pairs to be passed to the extensions. Values defined here take precedence over the values defined in the corresponding ExtensionConfig.",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Allows: true,
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: "",
+										Type:    []string{"string"},
+										Format:  "",
+									},
+								},
+							},
 						},
 					},
 				},
@@ -1313,7 +1336,7 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_MachineAddress(ref common.Referenc
 				Properties: map[string]spec.Schema{
 					"type": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Machine address type, one of Hostname, ExternalIP or InternalIP.",
+							Description: "Machine address type, one of Hostname, ExternalIP, InternalIP, ExternalDNS or InternalDNS.",
 							Default:     "",
 							Type:        []string{"string"},
 							Format:      "",
@@ -1465,7 +1488,7 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_MachineDeploymentClassTemplate(ref
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Metadata is the metadata applied to the machines of the MachineDeployment. At runtime this metadata is merged with the corresponding metadata from the topology.",
+							Description: "Metadata is the metadata applied to the MachineDeployment and the machines of the MachineDeployment. At runtime this metadata is merged with the corresponding metadata from the topology.",
 							Default:     map[string]interface{}{},
 							Ref:         ref("sigs.k8s.io/cluster-api/api/v1beta1.ObjectMeta"),
 						},
@@ -1748,7 +1771,7 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_MachineDeploymentTopology(ref comm
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Metadata is the metadata applied to the machines of the MachineDeployment. At runtime this metadata is merged with the corresponding metadata from the ClusterClass.",
+							Description: "Metadata is the metadata applied to the MachineDeployment and the machines of the MachineDeployment. At runtime this metadata is merged with the corresponding metadata from the ClusterClass.",
 							Default:     map[string]interface{}{},
 							Ref:         ref("sigs.k8s.io/cluster-api/api/v1beta1.ObjectMeta"),
 						},
@@ -1778,7 +1801,7 @@ func schema_sigsk8sio_cluster_api_api_v1beta1_MachineDeploymentTopology(ref comm
 					},
 					"replicas": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Replicas is the number of worker nodes belonging to this set. If the value is nil, the MachineDeployment is created without the number of Replicas (defaulting to zero) and it's assumed that an external entity (like cluster autoscaler) is responsible for the management of this value.",
+							Description: "Replicas is the number of worker nodes belonging to this set. If the value is nil, the MachineDeployment is created without the number of Replicas (defaulting to 1) and it's assumed that an external entity (like cluster autoscaler) is responsible for the management of this value.",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},

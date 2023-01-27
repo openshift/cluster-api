@@ -91,6 +91,11 @@ type Reconciler struct {
 	// nodeDeletionRetryTimeout determines how long the controller will retry deleting a node
 	// during a single reconciliation.
 	nodeDeletionRetryTimeout time.Duration
+
+	// disableNodeLabelSync should only be used for tests. This is used to skip the parts of
+	// the controller that need SSA as the current test setup does not support SSA.
+	// This flag should be dropped after the tests are migrated to envtest.
+	disableNodeLabelSync bool
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -197,7 +202,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 	if m.Labels == nil {
 		m.Labels = make(map[string]string)
 	}
-	m.Labels[clusterv1.ClusterLabelName] = m.Spec.ClusterName
+	m.Labels[clusterv1.ClusterNameLabel] = m.Spec.ClusterName
 
 	// Add finalizer first if not exist to avoid the race condition between init and delete
 	if !controllerutil.ContainsFinalizer(m, clusterv1.MachineFinalizer) {
@@ -267,10 +272,6 @@ func patchMachine(ctx context.Context, patchHelper *patch.Helper, machine *clust
 }
 
 func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, m *clusterv1.Machine) (ctrl.Result, error) {
-	if err := r.watchClusterNodes(ctx, cluster); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// If the machine is a stand-alone one, meaning not originated from a MachineDeployment, then set it as directly
 	// owned by the Cluster (if not already present).
 	if r.shouldAdopt(m) {
@@ -760,10 +761,16 @@ func (r *Reconciler) shouldAdopt(m *clusterv1.Machine) bool {
 		return false
 	}
 
-	// If the Machine is originated by a MachineDeployment, this prevents it from being adopted as a stand-alone Machine.
-	// Note: this is required because after restore from a backup both the Machine controller and the
-	// MachineSet controller are racing to adopt Machines, see https://github.com/kubernetes-sigs/cluster-api/issues/7529
-	if _, ok := m.Labels[clusterv1.MachineDeploymentUniqueLabel]; ok {
+	// Note: following checks are required because after restore from a backup both the Machine controller and the
+	// MachineSet/ControlPlane controller are racing to adopt Machines, see https://github.com/kubernetes-sigs/cluster-api/issues/7529
+
+	// If the Machine is originated by a MachineSet, it should not be adopted directly by the Cluster as a stand-alone Machine.
+	if _, ok := m.Labels[clusterv1.MachineSetNameLabel]; ok {
+		return false
+	}
+
+	// If the Machine is originated by a ControlPlane object, it should not be adopted directly by the Cluster as a stand-alone Machine.
+	if _, ok := m.Labels[clusterv1.MachineControlPlaneNameLabel]; ok {
 		return false
 	}
 	return true
@@ -801,7 +808,7 @@ func (r *Reconciler) nodeToMachine(o client.Object) []reconcile.Request {
 	// Match by clusterName when the node has the annotation.
 	if clusterName, ok := node.GetAnnotations()[clusterv1.ClusterNameAnnotation]; ok {
 		filters = append(filters, client.MatchingLabels{
-			clusterv1.ClusterLabelName: clusterName,
+			clusterv1.ClusterNameLabel: clusterName,
 		})
 	}
 

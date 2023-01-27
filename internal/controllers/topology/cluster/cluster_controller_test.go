@@ -837,12 +837,9 @@ func assertClusterReconcile(cluster *clusterv1.Cluster) error {
 	}
 
 	// Check if ControlPlaneRef exists is of the expected Kind and APIVersion.
-	if err := referenceExistsWithCorrectKindAndAPIVersion(cluster.Spec.ControlPlaneRef,
+	return referenceExistsWithCorrectKindAndAPIVersion(cluster.Spec.ControlPlaneRef,
 		builder.TestControlPlaneKind,
-		builder.ControlPlaneGroupVersion); err != nil {
-		return err
-	}
-	return nil
+		builder.ControlPlaneGroupVersion)
 }
 
 // assertInfrastructureClusterReconcile checks if the infrastructureCluster object:
@@ -911,9 +908,8 @@ func assertControlPlaneReconcile(cluster *clusterv1.Cluster) error {
 // assertMachineDeploymentsReconcile checks if the MachineDeployments:
 // 1) Are created in the correct number.
 // 2) Have the correct labels (TopologyOwned, ClusterName, MachineDeploymentName).
-// 3) Have the correct finalizer applied.
-// 4) Have the correct replicas and version.
-// 6) Have the correct Kind/APIVersion and Labels/Annotations for BoostrapRef and InfrastructureRef templates.
+// 3) Have the correct replicas and version.
+// 4) Have the correct Kind/APIVersion and Labels/Annotations for BoostrapRef and InfrastructureRef templates.
 func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 	// List all created machine deployments to assert the expected numbers are created.
 	machineDeployments := &clusterv1.MachineDeploymentList{}
@@ -925,14 +921,14 @@ func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 	clusterMDs := []clusterv1.MachineDeployment{}
 
 	// Run through all machine deployments and add only those with the TopologyOwnedLabel and the correct
-	// ClusterLabelName to the items for further testing.
+	// ClusterNameLabel to the items for further testing.
 	for _, m := range machineDeployments.Items {
-		// If the machineDeployment doesn't have the ClusterTopologyOwnedLabel and the ClusterLabelName ignore.
+		// If the machineDeployment doesn't have the ClusterTopologyOwnedLabel and the ClusterNameLabel ignore.
 		md := m
 		if err := assertClusterTopologyOwnedLabel(&md); err != nil {
 			continue
 		}
-		if err := assertClusterLabelName(&md, cluster.Name); err != nil {
+		if err := assertClusterNameLabel(&md, cluster.Name); err != nil {
 			continue
 		}
 		clusterMDs = append(clusterMDs, md)
@@ -946,18 +942,8 @@ func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 		for _, topologyMD := range cluster.Spec.Topology.Workers.MachineDeployments {
 			md := m
 			// use the ClusterTopologyMachineDeploymentLabel to get the specific machineDeployment to compare to.
-			if topologyMD.Name != md.GetLabels()[clusterv1.ClusterTopologyMachineDeploymentLabelName] {
+			if topologyMD.Name != md.GetLabels()[clusterv1.ClusterTopologyMachineDeploymentNameLabel] {
 				continue
-			}
-
-			// Assert that the correct Finalizer has been added to the MachineDeployment.
-			for _, f := range md.Finalizers {
-				// Break as soon as we find a matching finalizer.
-				if f == clusterv1.MachineDeploymentTopologyFinalizer {
-					break
-				}
-				// False if the finalizer is not present on the MachineDeployment.
-				return fmt.Errorf("finalizer %v not found on MachineDeployment", clusterv1.MachineDeploymentTopologyFinalizer)
 			}
 
 			// Check if the ClusterTopologyLabelName and ClusterTopologyOwnedLabel are set correctly.
@@ -965,7 +951,7 @@ func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 				return err
 			}
 
-			if err := assertClusterLabelName(&md, cluster.Name); err != nil {
+			if err := assertClusterNameLabel(&md, cluster.Name); err != nil {
 				return err
 			}
 
@@ -1007,7 +993,7 @@ func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 
 // getAndAssertLabelsAndAnnotations pulls the template referenced in the ObjectReference from the API server, checks for:
 // 1) The ClusterTopologyOwnedLabel.
-// 2) The correct ClusterLabelName.
+// 2) The correct ClusterNameLabel.
 // 3) The annotation stating where the template was cloned from.
 // The function returns the unstructured object and a bool indicating if it passed all tests.
 func getAndAssertLabelsAndAnnotations(template corev1.ObjectReference, clusterName string) (*unstructured.Unstructured, error) {
@@ -1031,16 +1017,13 @@ func assertLabelsAndAnnotations(got client.Object, clusterName string) error {
 	if err := assertClusterTopologyOwnedLabel(got); err != nil {
 		return err
 	}
-	if err := assertClusterLabelName(got, clusterName); err != nil {
+	if err := assertClusterNameLabel(got, clusterName); err != nil {
 		return err
 	}
-	if err := assertTemplateClonedFromNameAnnotation(got); err != nil {
-		return err
-	}
-	return nil
+	return assertTemplateClonedFromNameAnnotation(got)
 }
 
-// assertClusterTopologyOwnedLabel  asserts the label exists.
+// assertClusterTopologyOwnedLabel asserts the label exists.
 func assertClusterTopologyOwnedLabel(got client.Object) error {
 	_, ok := got.GetLabels()[clusterv1.ClusterTopologyOwnedLabel]
 	if !ok {
@@ -1049,14 +1032,14 @@ func assertClusterTopologyOwnedLabel(got client.Object) error {
 	return nil
 }
 
-// assertClusterTopologyOwnedLabel asserts the label exists and is set to the correct value.
-func assertClusterLabelName(got client.Object, clusterName string) error {
-	v, ok := got.GetLabels()[clusterv1.ClusterLabelName]
+// assertClusterNameLabel asserts the label exists and is set to the correct value.
+func assertClusterNameLabel(got client.Object, clusterName string) error {
+	v, ok := got.GetLabels()[clusterv1.ClusterNameLabel]
 	if !ok {
-		return fmt.Errorf("%v not found in %v: %v", clusterv1.ClusterLabelName, got.GetObjectKind().GroupVersionKind().Kind, got.GetName())
+		return fmt.Errorf("%v not found in %v: %v", clusterv1.ClusterNameLabel, got.GetObjectKind().GroupVersionKind().Kind, got.GetName())
 	}
 	if v != clusterName {
-		return fmt.Errorf("%v %v does not match expected %v", clusterv1.ClusterLabelName, v, clusterName)
+		return fmt.Errorf("%v %v does not match expected %v", clusterv1.ClusterNameLabel, v, clusterName)
 	}
 	return nil
 }

@@ -24,13 +24,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-github/v45/github"
+	"github.com/google/go-github/v48/github"
 	. "github.com/onsi/gomega"
 	"k8s.io/utils/pointer"
 
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test"
+	"sigs.k8s.io/cluster-api/internal/goproxy"
 )
 
 func Test_gitHubRepository_GetVersions(t *testing.T) {
@@ -63,6 +64,21 @@ func Test_gitHubRepository_GetVersions(t *testing.T) {
 		fmt.Fprint(w, "v0.3.1\n")
 	})
 
+	// setup an handler for returning 3 different major fake releases
+	muxGoproxy.HandleFunc("/github.com/o/r3/@v/list", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		fmt.Fprint(w, "v1.0.0\n")
+		fmt.Fprint(w, "v0.1.0\n")
+	})
+	muxGoproxy.HandleFunc("/github.com/o/r3/v2/@v/list", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		fmt.Fprint(w, "v2.0.0\n")
+	})
+	muxGoproxy.HandleFunc("/github.com/o/r3/v3/@v/list", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		fmt.Fprint(w, "v3.0.0\n")
+	})
+
 	configVariablesClient := test.NewFakeVariableClient()
 
 	tests := []struct {
@@ -81,6 +97,12 @@ func Test_gitHubRepository_GetVersions(t *testing.T) {
 			name:           "use goproxy",
 			providerConfig: config.NewProvider("test", "https://github.com/o/r2/releases/v0.4.0/path", clusterctlv1.CoreProviderType),
 			want:           []string{"v0.3.1", "v0.3.2", "v0.4.0", "v0.5.0"},
+			wantErr:        false,
+		},
+		{
+			name:           "use goproxy having multiple majors",
+			providerConfig: config.NewProvider("test", "https://github.com/o/r3/releases/v3.0.0/path", clusterctlv1.CoreProviderType),
+			want:           []string{"v0.1.0", "v1.0.0", "v2.0.0", "v3.0.0"},
 			wantErr:        false,
 		},
 		{
@@ -697,7 +719,8 @@ func Test_gitHubRepository_downloadFilesFromRelease(t *testing.T) {
 	client, mux, teardown := test.NewFakeGitHub()
 	defer teardown()
 
-	providerConfig := config.NewProvider("test", "https://github.com/o/r/releases/v0.4.1/file.yaml", clusterctlv1.CoreProviderType) // tree/main/path not relevant for the test
+	providerConfig := config.NewProvider("test", "https://github.com/o/r/releases/v0.4.1/file.yaml", clusterctlv1.CoreProviderType)                           // tree/main/path not relevant for the test
+	providerConfigWithRedirect := config.NewProvider("test", "https://github.com/o/r-with-redirect/releases/v0.4.1/file.yaml", clusterctlv1.CoreProviderType) // tree/main/path not relevant for the test
 
 	// test.NewFakeGitHub an handler for returning a fake release asset
 	mux.HandleFunc("/repos/o/r/releases/assets/1", func(w http.ResponseWriter, r *http.Request) {
@@ -705,6 +728,11 @@ func Test_gitHubRepository_downloadFilesFromRelease(t *testing.T) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=file.yaml")
 		fmt.Fprint(w, "content")
+	})
+	// handler which redirects to a different location
+	mux.HandleFunc("/repos/o/r-with-redirect/releases/assets/1", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		http.Redirect(w, r, "/api-v3/repos/o/r/releases/assets/1", http.StatusFound)
 	})
 
 	configVariablesClient := test.NewFakeVariableClient()
@@ -719,10 +747,11 @@ func Test_gitHubRepository_downloadFilesFromRelease(t *testing.T) {
 		fileName string
 	}
 	tests := []struct {
-		name    string
-		args    args
-		want    []byte
-		wantErr bool
+		name           string
+		args           args
+		providerConfig config.Provider
+		want           []byte
+		wantErr        bool
 	}{
 		{
 			name: "Pass if file exists",
@@ -738,8 +767,27 @@ func Test_gitHubRepository_downloadFilesFromRelease(t *testing.T) {
 				},
 				fileName: file,
 			},
-			want:    []byte("content"),
-			wantErr: false,
+			providerConfig: providerConfig,
+			want:           []byte("content"),
+			wantErr:        false,
+		},
+		{
+			name: "Pass if file exists with redirect",
+			args: args{
+				release: &github.RepositoryRelease{
+					TagName: &tagName,
+					Assets: []*github.ReleaseAsset{
+						{
+							ID:   &id1,
+							Name: &file,
+						},
+					},
+				},
+				fileName: file,
+			},
+			providerConfig: providerConfigWithRedirect,
+			want:           []byte("content"),
+			wantErr:        false,
 		},
 		{
 			name: "Fails if file does not exists",
@@ -755,7 +803,8 @@ func Test_gitHubRepository_downloadFilesFromRelease(t *testing.T) {
 				},
 				fileName: "another file",
 			},
-			wantErr: true,
+			providerConfig: providerConfig,
+			wantErr:        true,
 		},
 		{
 			name: "Fails if file does not exists",
@@ -771,7 +820,8 @@ func Test_gitHubRepository_downloadFilesFromRelease(t *testing.T) {
 				},
 				fileName: "another file",
 			},
-			wantErr: true,
+			providerConfig: providerConfig,
+			wantErr:        true,
 		},
 	}
 	for _, tt := range tests {
@@ -779,7 +829,7 @@ func Test_gitHubRepository_downloadFilesFromRelease(t *testing.T) {
 			g := NewWithT(t)
 			resetCaches()
 
-			gRepo, err := NewGitHubRepository(providerConfig, configVariablesClient, injectGithubClient(client))
+			gRepo, err := NewGitHubRepository(tt.providerConfig, configVariablesClient, injectGithubClient(client))
 			g.Expect(err).NotTo(HaveOccurred())
 
 			got, err := gRepo.(*gitHubRepository).downloadFilesFromRelease(tt.args.release, tt.args.fileName)
@@ -812,7 +862,7 @@ func resetCaches() {
 // newFakeGoproxy sets up a test HTTP server along with a github.Client that is
 // configured to talk to that test server. Tests should register handlers on
 // mux which provide mock responses for the API method being tested.
-func newFakeGoproxy() (client *goproxyClient, mux *http.ServeMux, teardown func()) {
+func newFakeGoproxy() (client *goproxy.Client, mux *http.ServeMux, teardown func()) {
 	// mux is the HTTP request multiplexer used with the test server.
 	mux = http.NewServeMux()
 
@@ -824,5 +874,5 @@ func newFakeGoproxy() (client *goproxyClient, mux *http.ServeMux, teardown func(
 
 	// client is the GitHub client being tested and is configured to use test server.
 	url, _ := url.Parse(server.URL + "/")
-	return &goproxyClient{scheme: url.Scheme, host: url.Host}, mux, server.Close
+	return goproxy.NewClient(url.Scheme, url.Host), mux, server.Close
 }

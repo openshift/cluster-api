@@ -35,11 +35,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/controllers/machinedeployment/mdutil"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/cluster-api/util/labels"
 	"sigs.k8s.io/cluster-api/util/patch"
 )
 
@@ -164,9 +162,10 @@ func (r *Reconciler) getNewMachineSet(ctx context.Context, d *clusterv1.MachineD
 	newMS := clusterv1.MachineSet{
 		ObjectMeta: metav1.ObjectMeta{
 			// Make the name deterministic, to ensure idempotence
-			Name:            d.Name + "-" + apirand.SafeEncodeString(machineTemplateSpecHash),
-			Namespace:       d.Namespace,
-			Labels:          newMSTemplate.Labels,
+			Name:      d.Name + "-" + apirand.SafeEncodeString(machineTemplateSpecHash),
+			Namespace: d.Namespace,
+			Labels:    make(map[string]string),
+			// Note: by setting the ownerRef on creation we signal to the MachineSet controller that this is not a stand-alone MachineSet.
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(d, machineDeploymentKind)},
 		},
 		Spec: clusterv1.MachineSetSpec{
@@ -178,23 +177,25 @@ func (r *Reconciler) getNewMachineSet(ctx context.Context, d *clusterv1.MachineD
 		},
 	}
 
-	if feature.Gates.Enabled(feature.ClusterTopology) {
-		// If the MachineDeployment is owned by a Cluster Topology,
-		// add the finalizer to allow the topology controller to
-		// clean up resources when the MachineSet is deleted.
-		// MachineSets are deleted during rollout (e.g. template rotation) and
-		// after MachineDeployment deletion.
-		if labels.IsTopologyOwned(d) {
-			controllerutil.AddFinalizer(&newMS, clusterv1.MachineSetTopologyFinalizer)
-		}
+	// Set the labels from newMSTemplate as top-level labels for the new MS.
+	// Note: We can't just set `newMSTemplate.Labels` directly and thus "share" the labels map between top-level and
+	// .spec.template.metadata.labels. This would mean that adding the MachineDeploymentNameLabel later top-level
+	// would also add the label to .spec.template.metadata.labels.
+	for k, v := range newMSTemplate.Labels {
+		newMS.Labels[k] = v
 	}
+
+	// Enforce that the MachineDeploymentNameLabel label is set
+	// Note: the MachineDeploymentNameLabel is added by the default webhook to MachineDeployment.spec.template.labels if spec.selector is empty.
+	newMS.Labels[clusterv1.MachineDeploymentNameLabel] = d.Name
 
 	if d.Spec.Strategy.RollingUpdate.DeletePolicy != nil {
 		newMS.Spec.DeletePolicy = *d.Spec.Strategy.RollingUpdate.DeletePolicy
 	}
 
 	// Add foregroundDeletion finalizer to MachineSet if the MachineDeployment has it
-	if sets.NewString(d.Finalizers...).Has(metav1.FinalizerDeleteDependents) {
+	finalizerSet := sets.Set[string]{}.Insert(d.Finalizers...)
+	if finalizerSet.Has(metav1.FinalizerDeleteDependents) {
 		controllerutil.AddFinalizer(&newMS, metav1.FinalizerDeleteDependents)
 	}
 
@@ -532,16 +533,20 @@ func (r *Reconciler) updateMachineDeployment(ctx context.Context, d *clusterv1.M
 
 // We have this as standalone variant to be able to use it from the tests.
 func updateMachineDeployment(ctx context.Context, c client.Client, d *clusterv1.MachineDeployment, modify func(*clusterv1.MachineDeployment)) error {
+	mdObjectKey := util.ObjectKey(d)
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		if err := c.Get(ctx, util.ObjectKey(d), d); err != nil {
+		// Note: We intentionally don't re-use the passed in MachineDeployment d here as that would
+		// overwrite any local changes we might have previously made to the MachineDeployment with the version
+		// we get here from the apiserver.
+		md := &clusterv1.MachineDeployment{}
+		if err := c.Get(ctx, mdObjectKey, md); err != nil {
 			return err
 		}
-		patchHelper, err := patch.NewHelper(d, c)
+		patchHelper, err := patch.NewHelper(md, c)
 		if err != nil {
 			return err
 		}
-		clusterv1.PopulateDefaultsMachineDeployment(d)
-		modify(d)
-		return patchHelper.Patch(ctx, d)
+		modify(md)
+		return patchHelper.Patch(ctx, md)
 	})
 }

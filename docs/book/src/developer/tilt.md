@@ -9,7 +9,7 @@ workflow that offers easy deployments and rapid iterative builds.
 
 1. [Docker](https://docs.docker.com/install/): v19.03 or newer
 1. [kind](https://kind.sigs.k8s.io): v0.17 or newer
-1. [Tilt](https://docs.tilt.dev/install.html): v0.22.2 or newer
+1. [Tilt](https://docs.tilt.dev/install.html): v0.30.8 or newer
 1. [kustomize](https://github.com/kubernetes-sigs/kustomize): provided via `make kustomize`
 1. [envsubst](https://github.com/drone/envsubst): provided via `make envsubst`
 1. [helm](https://github.com/helm/helm): v3.7.1 or newer
@@ -36,7 +36,17 @@ kubectl cluster-info --context kind-capi-test
 
 ### Create a tilt-settings file
 
-Next, create a `tilt-settings.yaml` file and place it in your local copy of `cluster-api`. Here is an example:
+Next, create a `tilt-settings.yaml` file and place it in your local copy of `cluster-api`. Here is an example that uses the components from the CAPI repo:
+
+```yaml
+default_registry: gcr.io/your-project-name-here
+enable_providers:
+- docker
+- kubeadm-bootstrap
+- kubeadm-control-plane
+```
+
+To use tilt to launch a provider with its own repo, using Cluster API Provider AWS here, `tilt-settings.yaml` should look like: 
 
 ```yaml
 default_registry: gcr.io/your-project-name-here
@@ -44,7 +54,6 @@ provider_repos:
 - ../cluster-api-provider-aws
 enable_providers:
 - aws
-- docker
 - kubeadm-bootstrap
 - kubeadm-control-plane
 ```
@@ -62,6 +71,9 @@ If you prefer JSON, you can create a `tilt-settings.json` file instead. YAML wil
 
 **default_registry** (String, default=""): The image registry to use if you need to push images. See the [Tilt
 documentation](https://docs.tilt.dev/api.html#api.default_registry) for more details.
+
+**build_engine** (String, default="docker"): The engine used to build images. Can either be `docker` or `podman`.
+NB: the default is dynamic and will be "podman" if the string "Podman Engine" is found in `docker version` (or in `podman version` if the command fails).
 
 **kind_cluster_name** (String, default="capi-test"): The name of the kind cluster to use when preloading images.
 
@@ -100,7 +112,7 @@ kustomize_substitutions:
   EXP_RUNTIME_SDK: "true"
 ```
 
-{{#tabs name:"tab-tilt-kustomize-substitution" tabs:"AWS,Azure,DigitalOcean,GCP"}}
+{{#tabs name:"tab-tilt-kustomize-substitution" tabs:"AWS,Azure,DigitalOcean,GCP,vSphere"}}
 {{#tab AWS}}
 
 For example, if the yaml contains `${AWS_B64ENCODED_CREDENTIALS}`, you could do the following:
@@ -170,10 +182,19 @@ kustomize_substitutions:
 ```
 
 {{#/tab }}
+{{#tab vSphere}}
+
+```yaml
+kustomize_substitutions:
+  VSPHERE_USERNAME: "administrator@vsphere.local"
+  VSPHERE_PASSWORD: "Admin123"
+```
+
+{{#/tab }}
 {{#/tabs }}
 
 **deploy_observability** ([string], default=[]): If set, installs on the dev cluster one of more observability
-tools. 
+tools.
 Important! This feature requires the `helm` command to be available in the user's path.
 
 Supported values are:
@@ -303,7 +324,7 @@ Custom values for variable substitutions can be set using `kustomize_substitutio
 ```yaml
 kustomize_substitutions:
   NAMESPACE: default
-  KUBERNETES_VERSION: v1.25.0
+  KUBERNETES_VERSION: v1.26.0
   CONTROL_PLANE_MACHINE_COUNT: 1
   WORKER_MACHINE_COUNT: 3
 ```
@@ -353,8 +374,7 @@ A provider must supply a `tilt-provider.yaml` file describing how to build it. H
 ```yaml
 name: aws
 config:
-  image: "gcr.io/k8s-staging-cluster-api-aws/cluster-api-aws-controller",
-  label: CAPA
+  image: "gcr.io/k8s-staging-cluster-api-aws/cluster-api-aws-controller"
   live_reload_deps: ["main.go", "go.mod", "go.sum", "api", "cmd", "controllers", "pkg"]
   label: CAPA
 ```
@@ -373,6 +393,9 @@ build it.
 
 **live_reload_deps**: a list of files/directories to watch. If any of them changes, Tilt rebuilds the manager binary
 for the provider and performs a live update of the running container.
+
+**version**: allows to define the version to be used for the Provider CR. If empty, a default version will 
+be used.
 
 **additional_docker_helper_commands** (String, default=""): Additional commands to be run in the helper image
 docker build. e.g.
@@ -449,3 +472,13 @@ syntax highlighting and auto-formatting. To enable it for Tiltfile a file associ
   "Tiltfile": "starlark",
 },
 ```
+
+## Using Podman
+
+[Podman](https://podman.io) can be used instead of docker by following these actions:
+
+1. Enable the podman unix socket (eg. `systemctl --user enable --now podman.socket` on Fedora)
+1. Set `build_engine` to `podman` in `tilt-settings.yaml` (optional, only if both docker & podman are installed)
+1. Define the env variable `DOCKER_HOST` to the right socket while running tilt (eg. `DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock tilt up`)
+
+NB: The socket defined by `DOCKER_HOST` is used only for the `hack/tools/tilt-prepare` command, the image build is running the `podman build`/`podman push` commands.

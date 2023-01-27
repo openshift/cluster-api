@@ -20,12 +20,10 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apiserver/pkg/storage/names"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -93,35 +91,6 @@ func (c *ControlPlane) FailureDomains() clusterv1.FailureDomains {
 	return c.Cluster.Status.FailureDomains
 }
 
-// Version returns the KubeadmControlPlane's version.
-func (c *ControlPlane) Version() *string {
-	return &c.KCP.Spec.Version
-}
-
-// MachineInfrastructureTemplateRef returns the KubeadmControlPlane's infrastructure template for Machines.
-func (c *ControlPlane) MachineInfrastructureTemplateRef() *corev1.ObjectReference {
-	return &c.KCP.Spec.MachineTemplate.InfrastructureRef
-}
-
-// AsOwnerReference returns an owner reference to the KubeadmControlPlane.
-func (c *ControlPlane) AsOwnerReference() *metav1.OwnerReference {
-	return &metav1.OwnerReference{
-		APIVersion: controlplanev1.GroupVersion.String(),
-		Kind:       "KubeadmControlPlane",
-		Name:       c.KCP.Name,
-		UID:        c.KCP.UID,
-	}
-}
-
-// EtcdImageData returns the etcd image data embedded in the ClusterConfiguration or empty strings if none are defined.
-func (c *ControlPlane) EtcdImageData() (string, string) {
-	if c.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration != nil && c.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local != nil {
-		meta := c.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local.ImageMeta
-		return meta.ImageRepository, meta.ImageTag
-	}
-	return "", ""
-}
-
 // MachineInFailureDomainWithMostMachines returns the first matching failure domain with machines that has the most control-plane machines on it.
 func (c *ControlPlane) MachineInFailureDomainWithMostMachines(machines collections.Machines) (*clusterv1.Machine, error) {
 	fd := c.FailureDomainWithMostMachines(machines)
@@ -182,63 +151,6 @@ func (c *ControlPlane) JoinControlPlaneConfig() *bootstrapv1.KubeadmConfigSpec {
 	return bootstrapSpec
 }
 
-// GenerateKubeadmConfig generates a new kubeadm config for creating new control plane nodes.
-func (c *ControlPlane) GenerateKubeadmConfig(spec *bootstrapv1.KubeadmConfigSpec) *bootstrapv1.KubeadmConfig {
-	// Create an owner reference without a controller reference because the owning controller is the machine controller
-	owner := metav1.OwnerReference{
-		APIVersion: controlplanev1.GroupVersion.String(),
-		Kind:       "KubeadmControlPlane",
-		Name:       c.KCP.Name,
-		UID:        c.KCP.UID,
-	}
-
-	bootstrapConfig := &bootstrapv1.KubeadmConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            names.SimpleNameGenerator.GenerateName(c.KCP.Name + "-"),
-			Namespace:       c.KCP.Namespace,
-			Labels:          ControlPlaneMachineLabelsForCluster(c.KCP, c.Cluster.Name),
-			Annotations:     c.KCP.Spec.MachineTemplate.ObjectMeta.Annotations,
-			OwnerReferences: []metav1.OwnerReference{owner},
-		},
-		Spec: *spec,
-	}
-	return bootstrapConfig
-}
-
-// NewMachine returns a machine configured to be a part of the control plane.
-func (c *ControlPlane) NewMachine(infraRef, bootstrapRef *corev1.ObjectReference, failureDomain *string) *clusterv1.Machine {
-	return &clusterv1.Machine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        names.SimpleNameGenerator.GenerateName(c.KCP.Name + "-"),
-			Namespace:   c.KCP.Namespace,
-			Labels:      ControlPlaneMachineLabelsForCluster(c.KCP, c.Cluster.Name),
-			Annotations: c.KCP.Spec.MachineTemplate.ObjectMeta.Annotations,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(c.KCP, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane")),
-			},
-		},
-		Spec: clusterv1.MachineSpec{
-			ClusterName:       c.Cluster.Name,
-			Version:           c.Version(),
-			InfrastructureRef: *infraRef,
-			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: bootstrapRef,
-			},
-			FailureDomain: failureDomain,
-		},
-	}
-}
-
-// NeedsReplacementNode determines if the control plane needs to create a replacement node during upgrade.
-func (c *ControlPlane) NeedsReplacementNode() bool {
-	// Can't do anything with an unknown number of desired replicas.
-	if c.KCP.Spec.Replicas == nil {
-		return false
-	}
-	// if the number of existing machines is exactly 1 > than the number of replicas.
-	return len(c.Machines)+1 == int(*c.KCP.Spec.Replicas)
-}
-
 // HasDeletingMachine returns true if any machine in the control plane is in the process of being deleted.
 func (c *ControlPlane) HasDeletingMachine() bool {
 	return len(c.Machines.Filter(collections.HasDeletionTimestamp)) > 0
@@ -256,13 +168,8 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 	machines := c.Machines.Filter(collections.Not(collections.HasDeletionTimestamp))
 
 	// Return machines if they are scheduled for rollout or if with an outdated configuration.
-	return machines.AnyFilter(
-		// Machines whose certificates are about to expire.
-		collections.ShouldRolloutBefore(&c.reconciliationTime, c.KCP.Spec.RolloutBefore),
-		// Machines that are scheduled for rollout (KCP.Spec.RolloutAfter set, the RolloutAfter deadline is expired, and the machine was created before the deadline).
-		collections.ShouldRolloutAfter(&c.reconciliationTime, c.KCP.Spec.RolloutAfter),
-		// Machines that do not match with KCP config.
-		collections.Not(MatchesMachineSpec(c.infraResources, c.kubeadmConfigs, c.KCP)),
+	return machines.Filter(
+		NeedsRollout(&c.reconciliationTime, c.KCP.Spec.RolloutAfter, c.KCP.Spec.RolloutBefore, c.infraResources, c.kubeadmConfigs, c.KCP),
 	)
 }
 
@@ -270,12 +177,7 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 // plane's configuration and therefore do not require rollout.
 func (c *ControlPlane) UpToDateMachines() collections.Machines {
 	return c.Machines.Filter(
-		// Machines that shouldn't be rollout out if their certificates are not about to expire.
-		collections.Not(collections.ShouldRolloutBefore(&c.reconciliationTime, c.KCP.Spec.RolloutBefore)),
-		// Machines that shouldn't be rolled out after the deadline has expired.
-		collections.Not(collections.ShouldRolloutAfter(&c.reconciliationTime, c.KCP.Spec.RolloutAfter)),
-		// Machines that match with KCP config.
-		MatchesMachineSpec(c.infraResources, c.kubeadmConfigs, c.KCP),
+		collections.Not(NeedsRollout(&c.reconciliationTime, c.KCP.Spec.RolloutAfter, c.KCP.Spec.RolloutBefore, c.infraResources, c.kubeadmConfigs, c.KCP)),
 	)
 }
 

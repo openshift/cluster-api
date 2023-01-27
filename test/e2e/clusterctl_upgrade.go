@@ -71,6 +71,24 @@ type ClusterctlUpgradeSpecInput struct {
 	// InitWithKubernetesVersion can be used to override the INIT_WITH_KUBERNETES_VERSION e2e config variable with a specific
 	// Kubernetes version to use to create the secondary management cluster, e.g. `v1.25.0`
 	InitWithKubernetesVersion string
+	// InitWithCoreProvider specifies the core provider version to use when initializing the secondary management cluster, e.g. `cluster-api:v1.3.0`.
+	// If not set, the core provider version is calculated based on the contract.
+	InitWithCoreProvider string
+	// InitWithBootstrapProviders specifies the bootstrap provider versions to use when initializing the secondary management cluster, e.g. `kubeadm:v1.3.0`.
+	// If not set, the bootstrap provider version is calculated based on the contract.
+	InitWithBootstrapProviders []string
+	// InitWithControlPlaneProviders specifies the control plane provider versions to use when initializing the secondary management cluster, e.g. `kubeadm:v1.3.0`.
+	// If not set, the control plane provider version is calculated based on the contract.
+	InitWithControlPlaneProviders []string
+	// InitWithInfrastructureProviders specifies the infrastructure provider versions to add to the secondary management cluster, e.g. `aws:v2.0.0`.
+	// If not set, the infrastructure provider version is calculated based on the contract.
+	InitWithInfrastructureProviders []string
+	// InitWithIPAMProviders specifies the IPAM provider versions to add to the secondary management cluster, e.g. `infoblox:v0.0.1`.
+	// If not set, the IPAM provider version is calculated based on the contract.
+	InitWithIPAMProviders []string
+	// InitWithRuntimeExtensionProviders specifies the runtime extension provider versions to add to the secondary management cluster, e.g. `test:v0.0.1`.
+	// If not set, the runtime extension provider version is calculated based on the contract.
+	InitWithRuntimeExtensionProviders []string
 	// UpgradeClusterctlVariables can be used to set additional variables for clusterctl upgrade.
 	UpgradeClusterctlVariables map[string]string
 	SkipCleanup                bool
@@ -255,16 +273,41 @@ func ClusterctlUpgradeSpec(ctx context.Context, inputGetter func() ClusterctlUpg
 			input.PreInit(managementClusterProxy)
 		}
 
+		var (
+			coreProvider              string
+			bootstrapProviders        []string
+			controlPlaneProviders     []string
+			infrastructureProviders   []string
+			ipamProviders             []string
+			runtimeExtensionProviders []string
+		)
+
+		coreProvider = input.E2EConfig.GetProviderLatestVersionsByContract(initContract, config.ClusterAPIProviderName)[0]
+		if input.InitWithCoreProvider != "" {
+			coreProvider = input.InitWithCoreProvider
+		}
+
+		bootstrapProviders = getValueOrFallback(input.InitWithBootstrapProviders,
+			input.E2EConfig.GetProviderLatestVersionsByContract(initContract, config.KubeadmBootstrapProviderName))
+		controlPlaneProviders = getValueOrFallback(input.InitWithControlPlaneProviders,
+			input.E2EConfig.GetProviderLatestVersionsByContract(initContract, config.KubeadmControlPlaneProviderName))
+		infrastructureProviders = getValueOrFallback(input.InitWithInfrastructureProviders,
+			input.E2EConfig.GetProviderLatestVersionsByContract(initContract, input.E2EConfig.InfrastructureProviders()...))
+		ipamProviders = getValueOrFallback(input.InitWithIPAMProviders,
+			input.E2EConfig.GetProviderLatestVersionsByContract(initContract, input.E2EConfig.IPAMProviders()...))
+		runtimeExtensionProviders = getValueOrFallback(input.InitWithRuntimeExtensionProviders,
+			input.E2EConfig.GetProviderLatestVersionsByContract(initContract, input.E2EConfig.RuntimeExtensionProviders()...))
+
 		clusterctl.InitManagementClusterAndWatchControllerLogs(ctx, clusterctl.InitManagementClusterAndWatchControllerLogsInput{
 			ClusterctlBinaryPath:      clusterctlBinaryPath, // use older version of clusterctl to init the management cluster
 			ClusterProxy:              managementClusterProxy,
 			ClusterctlConfigPath:      clusterctlConfigPath,
-			CoreProvider:              input.E2EConfig.GetProviderLatestVersionsByContract(initContract, config.ClusterAPIProviderName)[0],
-			BootstrapProviders:        input.E2EConfig.GetProviderLatestVersionsByContract(initContract, config.KubeadmBootstrapProviderName),
-			ControlPlaneProviders:     input.E2EConfig.GetProviderLatestVersionsByContract(initContract, config.KubeadmControlPlaneProviderName),
-			InfrastructureProviders:   input.E2EConfig.GetProviderLatestVersionsByContract(initContract, input.E2EConfig.InfrastructureProviders()...),
-			IPAMProviders:             input.E2EConfig.GetProviderLatestVersionsByContract(initContract, input.E2EConfig.IPAMProviders()...),
-			RuntimeExtensionProviders: input.E2EConfig.GetProviderLatestVersionsByContract(initContract, input.E2EConfig.RuntimeExtensionProviders()...),
+			CoreProvider:              coreProvider,
+			BootstrapProviders:        bootstrapProviders,
+			ControlPlaneProviders:     controlPlaneProviders,
+			InfrastructureProviders:   infrastructureProviders,
+			IPAMProviders:             ipamProviders,
+			RuntimeExtensionProviders: runtimeExtensionProviders,
 			LogFolder:                 filepath.Join(input.ArtifactFolder, "clusters", cluster.Name),
 		}, input.E2EConfig.GetIntervals(specName, "wait-controllers")...)
 
@@ -324,7 +367,7 @@ func ClusterctlUpgradeSpec(ctx context.Context, inputGetter func() ClusterctlUpg
 		Eventually(func() (int64, error) {
 			var n int64
 			machineList := &clusterv1alpha3.MachineList{}
-			if err := managementClusterProxy.GetClient().List(ctx, machineList, client.InNamespace(testNamespace.Name), client.MatchingLabels{clusterv1.ClusterLabelName: workLoadClusterName}); err == nil {
+			if err := managementClusterProxy.GetClient().List(ctx, machineList, client.InNamespace(testNamespace.Name), client.MatchingLabels{clusterv1.ClusterNameLabel: workLoadClusterName}); err == nil {
 				for _, machine := range machineList.Items {
 					if machine.Status.NodeRef != nil {
 						n++
@@ -349,7 +392,7 @@ func ClusterctlUpgradeSpec(ctx context.Context, inputGetter func() ClusterctlUpg
 			ctx,
 			preUpgradeMachineList,
 			client.InNamespace(testNamespace.Name),
-			client.MatchingLabels{clusterv1.ClusterLabelName: workLoadClusterName},
+			client.MatchingLabels{clusterv1.ClusterNameLabel: workLoadClusterName},
 		)
 		Expect(err).NotTo(HaveOccurred())
 		// Check if the user want a custom upgrade
@@ -393,6 +436,7 @@ func ClusterctlUpgradeSpec(ctx context.Context, inputGetter func() ClusterctlUpg
 		}
 
 		// After the upgrade check that there were no unexpected rollouts.
+		log.Logf("Verify there are no unexpected rollouts")
 		Consistently(func() bool {
 			postUpgradeMachineList := &unstructured.UnstructuredList{}
 			postUpgradeMachineList.SetGroupVersionKind(clusterv1.GroupVersion.WithKind("MachineList"))
@@ -400,7 +444,7 @@ func ClusterctlUpgradeSpec(ctx context.Context, inputGetter func() ClusterctlUpg
 				ctx,
 				postUpgradeMachineList,
 				client.InNamespace(testNamespace.Name),
-				client.MatchingLabels{clusterv1.ClusterLabelName: workLoadClusterName},
+				client.MatchingLabels{clusterv1.ClusterNameLabel: workLoadClusterName},
 			)
 			Expect(err).NotTo(HaveOccurred())
 			return matchUnstructuredLists(preUpgradeMachineList, postUpgradeMachineList)
@@ -679,13 +723,21 @@ func matchUnstructuredLists(l1 *unstructured.UnstructuredList, l2 *unstructured.
 	if len(l1.Items) != len(l2.Items) {
 		return false
 	}
-	s1 := sets.NewString()
+	s1 := sets.Set[string]{}
 	for _, i := range l1.Items {
 		s1.Insert(types.NamespacedName{Namespace: i.GetNamespace(), Name: i.GetName()}.String())
 	}
-	s2 := sets.NewString()
+	s2 := sets.Set[string]{}
 	for _, i := range l2.Items {
 		s2.Insert(types.NamespacedName{Namespace: i.GetNamespace(), Name: i.GetName()}.String())
 	}
 	return s1.Equal(s2)
+}
+
+// getValueOrFallback returns the input value unless it is empty, then it returns the fallback input.
+func getValueOrFallback(value []string, fallback []string) []string {
+	if value != nil {
+		return value
+	}
+	return fallback
 }
