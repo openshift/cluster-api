@@ -3,7 +3,7 @@
 envsubst_cmd = "./hack/tools/bin/envsubst"
 clusterctl_cmd = "./bin/clusterctl"
 kubectl_cmd = "kubectl"
-kubernetes_version = "v1.25.0"
+kubernetes_version = "v1.26.0"
 
 if str(local("command -v " + kubectl_cmd + " || true", quiet = True)) == "":
     fail("Required command '" + kubectl_cmd + "' not found in PATH")
@@ -167,7 +167,7 @@ def load_provider_tiltfiles():
 
 tilt_helper_dockerfile_header = """
 # Tilt image
-FROM golang:1.19.3 as tilt-helper
+FROM golang:1.19.5 as tilt-helper
 # Support live reloading with Tilt
 RUN go install github.com/go-delve/delve/cmd/dlv@latest
 RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/restart.sh  && \

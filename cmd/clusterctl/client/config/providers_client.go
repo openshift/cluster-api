@@ -61,6 +61,7 @@ const (
 	KubeKeyProviderName        = "kubekey"
 	VclusterProviderName       = "vcluster"
 	VirtinkProviderName        = "virtink"
+	CoxEdgeProviderName        = "coxedge"
 )
 
 // Bootstrap providers.
@@ -204,6 +205,11 @@ func (p *providersClient) defaults() []Provider {
 			providerType: clusterctlv1.InfrastructureProviderType,
 		},
 		&provider{
+			name:         CoxEdgeProviderName,
+			url:          "https://github.com/coxedge/cluster-api-provider-coxedge/releases/latest/infrastructure-components.yaml",
+			providerType: clusterctlv1.InfrastructureProviderType,
+		},
+		&provider{
 			name:         BYOHProviderName,
 			url:          "https://github.com/vmware-tanzu/cluster-api-provider-bringyourownhost/releases/latest/infrastructure-components.yaml",
 			providerType: clusterctlv1.InfrastructureProviderType,
@@ -215,7 +221,7 @@ func (p *providersClient) defaults() []Provider {
 		},
 		&provider{
 			name:         OutscaleProviderName,
-			url:          "https://github.com/outscale-dev/cluster-api-provider-outscale/releases/latest/infrastructure-components.yaml",
+			url:          "https://github.com/outscale/cluster-api-provider-outscale/releases/latest/infrastructure-components.yaml",
 			providerType: clusterctlv1.InfrastructureProviderType,
 		},
 		&provider{

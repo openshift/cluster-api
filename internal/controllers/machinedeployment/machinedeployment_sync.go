@@ -35,11 +35,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/controllers/machinedeployment/mdutil"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/cluster-api/util/labels"
 	"sigs.k8s.io/cluster-api/util/patch"
 )
 
@@ -164,9 +162,10 @@ func (r *Reconciler) getNewMachineSet(ctx context.Context, d *clusterv1.MachineD
 	newMS := clusterv1.MachineSet{
 		ObjectMeta: metav1.ObjectMeta{
 			// Make the name deterministic, to ensure idempotence
-			Name:            d.Name + "-" + apirand.SafeEncodeString(machineTemplateSpecHash),
-			Namespace:       d.Namespace,
-			Labels:          newMSTemplate.Labels,
+			Name:      d.Name + "-" + apirand.SafeEncodeString(machineTemplateSpecHash),
+			Namespace: d.Namespace,
+			Labels:    make(map[string]string),
+			// Note: by setting the ownerRef on creation we signal to the MachineSet controller that this is not a stand-alone MachineSet.
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(d, machineDeploymentKind)},
 		},
 		Spec: clusterv1.MachineSetSpec{
@@ -178,16 +177,17 @@ func (r *Reconciler) getNewMachineSet(ctx context.Context, d *clusterv1.MachineD
 		},
 	}
 
-	if feature.Gates.Enabled(feature.ClusterTopology) {
-		// If the MachineDeployment is owned by a Cluster Topology,
-		// add the finalizer to allow the topology controller to
-		// clean up resources when the MachineSet is deleted.
-		// MachineSets are deleted during rollout (e.g. template rotation) and
-		// after MachineDeployment deletion.
-		if labels.IsTopologyOwned(d) {
-			controllerutil.AddFinalizer(&newMS, clusterv1.MachineSetTopologyFinalizer)
-		}
+	// Set the labels from newMSTemplate as top-level labels for the new MS.
+	// Note: We can't just set `newMSTemplate.Labels` directly and thus "share" the labels map between top-level and
+	// .spec.template.metadata.labels. This would mean that adding the MachineDeploymentLabelName later top-level
+	// would also add the label to .spec.template.metadata.labels.
+	for k, v := range newMSTemplate.Labels {
+		newMS.Labels[k] = v
 	}
+
+	// Enforce that the MachineDeploymentLabelName label is set
+	// Note: the MachineDeploymentLabelName is added by the default webhook to MachineDeployment.spec.template.labels if spec.selector is empty.
+	newMS.Labels[clusterv1.MachineDeploymentLabelName] = d.Name
 
 	if d.Spec.Strategy.RollingUpdate.DeletePolicy != nil {
 		newMS.Spec.DeletePolicy = *d.Spec.Strategy.RollingUpdate.DeletePolicy

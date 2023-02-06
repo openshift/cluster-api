@@ -46,12 +46,12 @@ If you're new to the project and want to help, but don't know where to start, we
 should not need deep knowledge of the system. [Have a look and see if anything sounds
 interesting](https://github.com/kubernetes-sigs/cluster-api/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22).
 Before starting to work on the issue, make sure that it doesn't have a [lifecycle/active](https://github.com/kubernetes-sigs/cluster-api/labels/lifecycle%2Factive) label. If the issue has been assigned, reach out to the assignee.
-Alternatively, read some of the docs on other controllers and try to write your own, file and fix any/all issues that
+Alternatively, read some docs on other controllers and try to write your own, file and fix any/all issues that
 come up, including gaps in documentation!
 
 If you're a more experienced contributor, looking at unassigned issues in the next release milestone is a good way to find work that has been prioritized. For example, if the latest minor release is `v1.0`, the next release milestone is `v1.1`.
 
-Help and contributions are very welcome in the form of code contributions but also in helping to moderate office hours, triaging issues, fixing/investigating flaky tests, being part of the [release team](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/developer/release-team.md), helping new contributors with their questions, reviewing proposals, etc.
+Help and contributions are very welcome in the form of code contributions but also in helping to moderate office hours, triaging issues, fixing/investigating flaky tests, being part of the [release team](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/release/release-team.md), helping new contributors with their questions, reviewing proposals, etc.
 
 ## Versioning
 
@@ -116,19 +116,33 @@ this should generally not be the case.
 
 ### Support and guarantees
 
-Cluster API maintains the most recent release branch for all supported API and contract versions. Support for this section refers to the ability to backport and release patch versions.
-
-| API Version   | Branch      | Supported Until |
-| ------------- |-------------|-----------------|
-| **v1beta1**   | release-1.2 | current stable  |
-| **v1beta1**   | release-1.1 | 2022-09-15      |
-| **v1beta1**   | release-1.0 | 2022-02-02      |
-| **v1alpha4**  | release-0.4 | 2022-04-06      |
-| **v1alpha3**  | release-0.3 | 2022-02-23      |
+Cluster API maintains the most recent release/releases for all supported API and contract versions. Support for this section refers to the ability to backport and release patch versions;
+[backport policy](#backporting-a-patch) is defined above.
 
 - The API version is determined from the GroupVersion defined in the top-level `api/` package.
-- The EOL date is determined from the last release available once a new API version is published.
-- For each given API version only the most recent associated release branch is supported, older branches are immediately unsupported. Exceptions can be filed with maintainers and taken into consideration on a case-by-case basis.
+- The EOL date of each API Version is determined from the last release available once a new API version is published.
+
+| API Version  | Supported Until      |
+|--------------|----------------------|
+| **v1beta1**  | TBD (current stable) |
+| **v1alpha4** | EOL since 2022-04-06 |
+| **v1alpha3** | EOL since 2022-02-23 |
+
+- For the latest API version we support the two most recent minor releases; older minor releases are immediately unsupported when a new major/minor release is available. 
+- For older API versions we only support the most recent minor release until the API version reaches EOL.
+
+| Minor Release | API Version  | Supported Until                                      |
+|---------------|--------------|------------------------------------------------------|
+| v1.3.x        | **v1beta1**  | when v1.5.0 will be released                         |
+| v1.2.x        | **v1beta1**  | when v1.4.0 will be released, tentatively March 2023 |
+| v1.1.x        | **v1beta1**  | EOL since 2022-07-18 - v1.2.0 release date (*)       |
+| v1.0.x        | **v1beta1**  | EOL since 2022-02-02 - v1.1.0 release date (*)       |
+| v0.4.x        | **v1alpha4** | EOL since 2022-04-06 - API version EOL               |
+| v0.3.x        | **v1alpha3** | EOL since 2022-02-23 - API version EOL               |
+
+(*) Previous support policy applies, older minor releases were immediately unsupported when a new major/minor release was available
+
+- Exceptions can be filed with maintainers and taken into consideration on a case-by-case basis.
 
 ## Contributing a Patch
 
@@ -169,7 +183,7 @@ containing markdown files and we use [mdBook][] to build it into a static
 website.
 
 After making changes locally you can run `make serve-book` which will build the HTML version
-and start a web server so you can preview if the changes render correctly at
+and start a web server, so you can preview if the changes render correctly at
 http://localhost:3000; the preview auto-updates when changes are detected.
 
 Note: you don't need to have [mdBook][] installed, `make serve-book` will ensure
@@ -258,7 +272,7 @@ Code reviews should generally look at:
 - **Complexity**: Could the code be made simpler?  Would another developer be able to easily understand and use this code when they come across it in the future?
 - **Tests**: Does the code have correct and well-designed tests?
 - **Naming**: Did the developer choose clear names for variable, types, methods, functions, etc.?
-- **Comments**: Are the comments clear and useful? Do they explain the why rather than what?
+- **Comments**: Are the comments clear and useful? Do they explain why rather than what?
 - **Documentation**: Did the developer also update relevant documentation?
 
 See [Code Review in Cluster API](REVIEWING.md) for a more focused list of review items.
@@ -292,7 +306,7 @@ For big feature, API and contract amendments, we follow the CAEP process as outl
 Proof of concepts, code experiments, or other initiatives can live under the `exp` folder or behind a feature gate.
 
 - Experiments SHOULD not modify any of the publicly exposed APIs (e.g. CRDs).
-- Experiments SHOULD not modify any existing CRD types outside of the experimental API group(s).
+- Experiments SHOULD not modify any existing CRD types outside the experimental API group(s).
 - Experiments SHOULD not modify any existing command line contracts.
 - Experiments MUST not cause any breaking changes to existing (non-experimental) Go APIs.
 - Experiments SHOULD introduce utility helpers in the go APIs for experiments that cross multiple components
@@ -320,7 +334,7 @@ Proof of concepts, code experiments, or other initiatives can live under the `ex
 - Experiment Graduation checklist:
   - [ ] MAY provide a way to be disabled, any feature gates MUST be marked as 'GA'
   - [ ] MUST undergo a full Kubernetes-style API review and update the CAEP with the plan to address any issues raised
-  - [ ] CAEP MUST be in an implementable state and is fully up to date with the current implementation
+  - [ ] CAEP MUST be in an implementable state and is fully up-to-date with the current implementation
   - [ ] CAEP MUST define transition plan for moving out of the experimental api group and code directories
   - [ ] CAEP MUST define any upgrade steps required for Existing Management and Workload Clusters
   - [ ] CAEP MUST define any upgrade steps required to be implemented by out-of-tree bootstrap, control plane, and infrastructure providers.
@@ -334,7 +348,7 @@ There may be times, however, when `main` is closed for breaking changes. This is
 release of a new minor version.
 
 Breaking changes are not allowed in release branches, as these represent minor versions that have already been released.
-These versions have consumers who expect the APIs, behaviors, etc. to remain stable during the life time of the patch
+These versions have consumers who expect the APIs, behaviors, etc. to remain stable during the lifetime of the patch
 stream for the minor release.
 
 Examples of breaking changes include:
@@ -446,7 +460,7 @@ organization and can request membership by [opening an
 issue](https://github.com/kubernetes/org/issues/new?template=membership.md&title=REQUEST%3A%20New%20membership%20for%20%3Cyour-GH-handle%3E)
 against the kubernetes/org repo.
 
-However, if you are a member of any of the related Kubernetes GitHub organizations but not of the Kubernetes org, you
+However, if you are a member of the related Kubernetes GitHub organizations but not of the Kubernetes org, you
 will need explicit sponsorship for your membership request. You can read more about Kubernetes membership and
 sponsorship [here](https://git.k8s.io/community/community-membership.md).
 

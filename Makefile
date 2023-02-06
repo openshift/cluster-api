@@ -23,7 +23,7 @@ SHELL:=/usr/bin/env bash
 #
 # Go.
 #
-GO_VERSION ?= 1.19.3
+GO_VERSION ?= 1.19.5
 GO_CONTAINER_IMAGE ?= docker.io/library/golang:$(GO_VERSION)
 
 # Use GOPROXY environment variable if set
@@ -39,7 +39,7 @@ export GO111MODULE=on
 #
 # Kubebuilder.
 #
-export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.25.0
+export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.26.0
 export KUBEBUILDER_CONTROLPLANE_START_TIMEOUT ?= 60s
 export KUBEBUILDER_CONTROLPLANE_STOP_TIMEOUT ?= 60s
 
@@ -82,8 +82,8 @@ GINKGO_FOCUS ?=
 GINKGO_SKIP ?=
 GINKGO_NODES ?= 1
 GINKGO_TIMEOUT ?= 2h
-GINKGO_POLL_PROGRESS_AFTER ?= 10m
-GINKGO_POLL_PROGRESS_INTERVAL ?= 1m
+GINKGO_POLL_PROGRESS_AFTER ?= 60m
+GINKGO_POLL_PROGRESS_INTERVAL ?= 5m
 E2E_CONF_FILE ?= $(ROOT_DIR)/$(TEST_DIR)/e2e/config/docker.yaml
 SKIP_RESOURCE_CLEANUP ?= false
 USE_EXISTING_CLUSTER ?= false
@@ -138,6 +138,8 @@ GO_APIDIFF_PKG := github.com/joelanford/go-apidiff
 HADOLINT_VER := v2.10.0
 HADOLINT_FAILURE_THRESHOLD = warning
 
+SHELLCHECK_VER := v0.9.0
+
 KPROMO_VER := v3.4.5
 KPROMO_BIN := kpromo
 KPROMO :=  $(abspath $(TOOLS_BIN_DIR)/$(KPROMO_BIN)-$(KPROMO_VER))
@@ -148,7 +150,7 @@ YQ_BIN := yq
 YQ :=  $(abspath $(TOOLS_BIN_DIR)/$(YQ_BIN)-$(YQ_VER))
 YQ_PKG := github.com/mikefarah/yq/v4
 
-GINGKO_VER := v2.4.0
+GINGKO_VER := v2.5.0
 GINKGO_BIN := ginkgo
 GINKGO := $(abspath $(TOOLS_BIN_DIR)/$(GINKGO_BIN)-$(GINGKO_VER))
 GINKGO_PKG := github.com/onsi/ginkgo/v2/ginkgo
@@ -467,51 +469,41 @@ generate-modules: ## Run go mod tidy to ensure modules are up to date
 	cd $(TEST_DIR); go mod tidy
 
 .PHONY: generate-e2e-templates
-generate-e2e-templates: $(KUSTOMIZE) $(addprefix generate-e2e-templates-, v1alpha3 v1alpha4 v1.2 v1beta1) ## Generate cluster templates for all versions
+generate-e2e-templates: $(KUSTOMIZE) $(addprefix generate-e2e-templates-, v0.3 v0.4 v1.2 main) ## Generate cluster templates for all versions
 
 DOCKER_TEMPLATES := test/e2e/data/infrastructure-docker
 
-.PHONY: generate-e2e-templates-v1alpha3
-generate-e2e-templates-v1alpha3: $(KUSTOMIZE)
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha3/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha3/cluster-template.yaml
+.PHONY: generate-e2e-templates-v0.3
+generate-e2e-templates-v0.3: $(KUSTOMIZE)
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v0.3/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v0.3/cluster-template.yaml
 
-.PHONY: generate-e2e-templates-v1alpha4
-generate-e2e-templates-v1alpha4: $(KUSTOMIZE)
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-md-remediation --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-md-remediation.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-remediation --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-remediation.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-adoption/step1 --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-adoption.yaml
-	echo "---" >> $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-adoption.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-adoption/step2 --load-restrictor LoadRestrictionsNone >> $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-adoption.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-machine-pool --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-machine-pool.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-node-drain --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-node-drain.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-upgrades --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-upgrades.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-scale-in --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-kcp-scale-in.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-ipv6 --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1alpha4/cluster-template-ipv6.yaml
+.PHONY: generate-e2e-templates-v0.4
+generate-e2e-templates-v0.4: $(KUSTOMIZE)
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v0.4/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v0.4/cluster-template.yaml
 
 .PHONY: generate-e2e-templates-v1.2
 generate-e2e-templates-v1.2: $(KUSTOMIZE)
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/v1.2/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/v1.2/cluster-template.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/v1.2/cluster-template-topology --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/v1.2/cluster-template-topology.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1.2/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1.2/cluster-template.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1.2/cluster-template-topology --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1.2/cluster-template-topology.yaml
 
-.PHONY: generate-e2e-templates-v1beta1
-generate-e2e-templates-v1beta1: $(KUSTOMIZE)
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-md-remediation --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-md-remediation.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-remediation --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-remediation.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-adoption/step1 --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-adoption.yaml
-	echo "---" >> $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-adoption.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-adoption/step2 --load-restrictor LoadRestrictionsNone >> $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-adoption.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-machine-pool --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-machine-pool.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-node-drain --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-node-drain.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-upgrades --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-upgrades.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-upgrades-cgroupfs --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-upgrades-cgroupfs.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-upgrades-runtimesdk --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-upgrades-runtimesdk.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-scale-in --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-kcp-scale-in.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-ipv6 --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-ipv6.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-topology-single-node-cluster --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-topology-single-node-cluster.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-topology --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-topology.yaml
-	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-ignition --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1beta1/main/cluster-template-ignition.yaml
+.PHONY: generate-e2e-templates-main
+generate-e2e-templates-main: $(KUSTOMIZE)
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-md-remediation --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-md-remediation.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-kcp-remediation --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-kcp-remediation.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-kcp-adoption/step1 --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-kcp-adoption.yaml
+	echo "---" >> $(DOCKER_TEMPLATES)/main/cluster-template-kcp-adoption.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-kcp-adoption/step2 --load-restrictor LoadRestrictionsNone >> $(DOCKER_TEMPLATES)/main/cluster-template-kcp-adoption.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-machine-pool --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-machine-pool.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-node-drain --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-node-drain.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-upgrades --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-upgrades.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-upgrades-cgroupfs --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-upgrades-cgroupfs.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-upgrades-runtimesdk --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-upgrades-runtimesdk.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-kcp-scale-in --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-kcp-scale-in.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-ipv6 --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-ipv6.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-topology-single-node-cluster --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-topology-single-node-cluster.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-topology --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-topology.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/main/cluster-template-ignition --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/main/cluster-template-ignition.yaml
 
 .PHONY: generate-test-extension-deployment
 generate-test-extension-deployment: $(KUSTOMIZE)
@@ -608,11 +600,15 @@ verify-boilerplate: ## Verify boilerplate text exists in each file
 
 .PHONY: verify-shellcheck
 verify-shellcheck: ## Verify shell files
-	TRACE=$(TRACE) ./hack/verify-shellcheck.sh
+	TRACE=$(TRACE) ./hack/verify-shellcheck.sh $(SHELLCHECK_VER)
 
 .PHONY: verify-tiltfile
 verify-tiltfile: ## Verify Tiltfile format
 	TRACE=$(TRACE) ./hack/verify-starlark.sh
+
+.PHONY: verify-container-images
+verify-container-images: ## Verify container images
+	TRACE=$(TRACE) ./hack/verify-container-images.sh
 
 ## --------------------------------------
 ## Binaries
@@ -829,6 +825,11 @@ release: clean-release ## Build and push container images using the latest git t
 	git checkout "${RELEASE_TAG}"
 	# Build binaries first.
 	GIT_VERSION=$(RELEASE_TAG) $(MAKE) release-binaries
+	# Set the manifest images to the staging/production bucket and Builds the manifests to publish with a release.
+	$(MAKE) release-manifests-all
+
+.PHONY: release-manifests-all
+release-manifests-all: # Set the manifest images to the staging/production bucket and Builds the manifests to publish with a release.
 	# Set the manifest image to the production bucket.
 	$(MAKE) manifest-modification REGISTRY=$(PROD_REGISTRY)
 	## Build the manifests
