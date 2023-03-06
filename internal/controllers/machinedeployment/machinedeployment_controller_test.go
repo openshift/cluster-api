@@ -92,9 +92,10 @@ func TestMachineDeploymentReconciler(t *testing.T) {
 				Replicas:             pointer.Int32(2),
 				RevisionHistoryLimit: pointer.Int32(0),
 				Selector: metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						clusterv1.ClusterLabelName: testCluster.Name,
-					},
+					// We're using the same labels for spec.selector and spec.template.labels.
+					// The labels are later changed and we will use the initial labels later to
+					// verify that all original MachineSets have been deleted.
+					MatchLabels: labels,
 				},
 				Strategy: &clusterv1.MachineDeploymentStrategy{
 					Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
@@ -202,8 +203,16 @@ func TestMachineDeploymentReconciler(t *testing.T) {
 			})
 		}, timeout).Should(BeTrue())
 
-		// Verify that expected number of machines are created
-		t.Log("Verify expected number of machines are created")
+		t.Log("Verify MachineSet has expected replicas and version")
+		firstMachineSet := machineSets.Items[0]
+		g.Expect(*firstMachineSet.Spec.Replicas).To(BeEquivalentTo(2))
+		g.Expect(*firstMachineSet.Spec.Template.Spec.Version).To(BeEquivalentTo("v1.10.3"))
+
+		t.Log("Verify MachineSet has expected ClusterLabelName and MachineDeploymentLabelName")
+		g.Expect(firstMachineSet.Labels[clusterv1.ClusterLabelName]).To(Equal(testCluster.Name))
+		g.Expect(firstMachineSet.Labels[clusterv1.MachineDeploymentLabelName]).To(Equal(deployment.Name))
+
+		t.Log("Verify expected number of Machines are created")
 		machines := &clusterv1.MachineList{}
 		g.Eventually(func() int {
 			if err := env.List(ctx, machines, client.InNamespace(namespace.Name)); err != nil {
@@ -212,15 +221,12 @@ func TestMachineDeploymentReconciler(t *testing.T) {
 			return len(machines.Items)
 		}, timeout).Should(BeEquivalentTo(*deployment.Spec.Replicas))
 
-		// Verify that machines has MachineSetLabelName and MachineDeploymentLabelName labels
-		t.Log("Verify machines have expected MachineSetLabelName and MachineDeploymentLabelName")
+		t.Log("Verify Machines have expected ClusterLabelName, MachineDeploymentLabelName and MachineSetLabelName")
 		for _, m := range machines.Items {
 			g.Expect(m.Labels[clusterv1.ClusterLabelName]).To(Equal(testCluster.Name))
+			g.Expect(m.Labels[clusterv1.MachineDeploymentLabelName]).To(Equal(deployment.Name))
+			g.Expect(m.Labels[clusterv1.MachineSetLabelName]).To(Equal(firstMachineSet.Name))
 		}
-
-		firstMachineSet := machineSets.Items[0]
-		g.Expect(*firstMachineSet.Spec.Replicas).To(BeEquivalentTo(2))
-		g.Expect(*firstMachineSet.Spec.Template.Spec.Version).To(BeEquivalentTo("v1.10.3"))
 
 		//
 		// Delete firstMachineSet and expect Reconcile to be called to replace it.
@@ -340,14 +346,14 @@ func TestMachineDeploymentReconciler(t *testing.T) {
 		// expect old MachineSets with old labels to be deleted
 		//
 		oldLabels := deployment.Spec.Selector.MatchLabels
-		oldLabels[clusterv1.MachineDeploymentLabelName] = deployment.Name
 
+		// Change labels and selector to a new set of labels which doesn't have any overlap with the previous labels.
 		newLabels := map[string]string{
 			"new-key":                  "new-value",
 			clusterv1.ClusterLabelName: testCluster.Name,
 		}
 
-		t.Log("Updating MachineDeployment label")
+		t.Log("Updating MachineDeployment labels")
 		modifyFunc = func(d *clusterv1.MachineDeployment) {
 			d.Spec.Selector.MatchLabels = newLabels
 			d.Spec.Template.Labels = newLabels
@@ -398,7 +404,7 @@ func TestMachineDeploymentReconciler(t *testing.T) {
 			}
 
 			return len(machineSets.Items)
-		}, timeout*5).Should(BeEquivalentTo(0))
+		}, timeout*10).Should(BeEquivalentTo(0))
 
 		t.Log("Verifying MachineDeployment has correct Conditions")
 		g.Eventually(func() bool {

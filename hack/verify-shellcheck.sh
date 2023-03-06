@@ -21,7 +21,12 @@ if [[ "${TRACE-0}" == "1" ]]; then
     set -o xtrace
 fi
 
-VERSION="v0.8.0"
+if [ $# -ne 1 ]; then
+  echo 1>&2 "$0: usage: ./verify-shellcheck.sh <version>"
+  exit 2
+fi
+
+VERSION=${1}
 
 OS="unknown"
 if [[ "${OSTYPE}" == "linux"* ]]; then
@@ -68,7 +73,7 @@ fi
 
 echo "Running shellcheck..."
 cd "${ROOT_PATH}" || exit
-IGNORE_FILES=$(find . -name "*.sh" | grep "tilt_modules")
+IGNORE_FILES=$(find . -name "*.sh" | { grep "tilt_modules" || true; })
 echo "Ignoring shellcheck on ${IGNORE_FILES}"
 FILES=$(find . -name "*.sh" -not -path "./tilt_modules/*")
 while read -r file; do

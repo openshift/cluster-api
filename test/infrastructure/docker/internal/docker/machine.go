@@ -50,7 +50,7 @@ import (
 
 const (
 	defaultImageName = "kindest/node"
-	defaultImageTag  = "v1.25.0"
+	defaultImageTag  = "v1.26.0"
 )
 
 type nodeCreator interface {
@@ -254,7 +254,7 @@ func (m *Machine) Create(ctx context.Context, image string, role string, version
 		if err != nil {
 			log.Info("Failed running command", "command", "crictl ps")
 			logContainerDebugInfo(ctx, log, m.ContainerName())
-			return errors.Wrap(errors.WithStack(err), "failed to run crictl ps")
+			return errors.Wrap(err, "failed to run crictl ps")
 		}
 		return nil
 	}
@@ -357,7 +357,7 @@ func (m *Machine) ExecBootstrap(ctx context.Context, data string, format bootstr
 		if err != nil {
 			log.Info("Failed running command", "instance", m.Name(), "command", command, "stdout", outStd.String(), "stderr", outErr.String(), "bootstrap data", data)
 			logContainerDebugInfo(ctx, log, m.ContainerName())
-			return errors.Wrap(errors.WithStack(err), "failed to run cloud config")
+			return errors.Wrapf(err, "failed to run cloud config: stdout: %s stderr: %s", outStd.String(), outErr.String())
 		}
 	}
 
@@ -381,7 +381,7 @@ func (m *Machine) CheckForBootstrapSuccess(ctx context.Context, logResult bool) 
 		if logResult {
 			log.Info("Failed running command", "command", "test -f /run/cluster-api/bootstrap-success.complete", "stdout", outStd.String(), "stderr", outErr.String())
 		}
-		return errors.Wrap(errors.WithStack(err), "failed to run bootstrap check")
+		return errors.Wrap(err, "failed to run bootstrap check")
 	}
 	return nil
 }

@@ -173,7 +173,7 @@ kustomize_substitutions:
 {{#/tabs }}
 
 **deploy_observability** ([string], default=[]): If set, installs on the dev cluster one of more observability
-tools. 
+tools.
 Important! This feature requires the `helm` command to be available in the user's path.
 
 Supported values are:
@@ -303,7 +303,7 @@ Custom values for variable substitutions can be set using `kustomize_substitutio
 ```yaml
 kustomize_substitutions:
   NAMESPACE: default
-  KUBERNETES_VERSION: v1.25.0
+  KUBERNETES_VERSION: v1.26.0
   CONTROL_PLANE_MACHINE_COUNT: 1
   WORKER_MACHINE_COUNT: 3
 ```
@@ -353,8 +353,7 @@ A provider must supply a `tilt-provider.yaml` file describing how to build it. H
 ```yaml
 name: aws
 config:
-  image: "gcr.io/k8s-staging-cluster-api-aws/cluster-api-aws-controller",
-  label: CAPA
+  image: "gcr.io/k8s-staging-cluster-api-aws/cluster-api-aws-controller"
   live_reload_deps: ["main.go", "go.mod", "go.sum", "api", "cmd", "controllers", "pkg"]
   label: CAPA
 ```

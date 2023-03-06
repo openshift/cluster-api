@@ -84,6 +84,7 @@ k8s::resolveVersion() {
 
   resolveVersion=$version
   if [[ "$version" =~ ^v ]]; then
+    echo "+ $variableName=\"$version\" already a version, no need to resolve"
     return
   fi
 
@@ -200,9 +201,9 @@ EOL
 # the actual test run less sensible to the network speed.
 kind:prepullAdditionalImages () {
   # Pulling cert manager images so we can pre-load in kind nodes
-  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.10.0"
-  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.10.0"
-  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.10.0"
+  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.11.0"
+  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.11.0"
+  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.11.0"
 }
 
 # kind:prepullImage pre-pull a docker image if no already present locally.

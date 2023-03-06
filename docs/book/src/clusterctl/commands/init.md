@@ -117,6 +117,8 @@ API calls to the GitHub API. It is possible to configure the go proxy url using 
 for go itself (defaults to `https://proxy.golang.org`).
 To immediately fallback to the GitHub client and not use a go proxy, the environment variable could get set to
 `GOPROXY=off` or `GOPROXY=direct`.
+If a provider does not follow Go's semantic versioning, `clusterctl` may fail when detecting the correct version.
+In such cases, disabling the go proxy functionality via `GOPROXY=off` should be considered.
 
 See [clusterctl configuration](../configuration.md) for more info about provider repository configurations.
 
@@ -188,7 +190,7 @@ If this happens, there are no guarantees about the proper functioning of `cluste
 Cluster API providers require a cert-manager version supporting the `cert-manager.io/v1` API to be installed in the cluster.
 
 While doing init, clusterctl checks if there is a version of cert-manager already installed. If not, clusterctl will
-install a default version (currently cert-manager v1.10.0). See [clusterctl configuration](../configuration.md) for
+install a default version (currently cert-manager v1.11.0). See [clusterctl configuration](../configuration.md) for
 available options to customize this operation.
 
 <aside class="note warning">
