@@ -107,6 +107,8 @@ const (
 	MachineSkipRemediationAnnotation = "cluster.x-k8s.io/skip-remediation"
 
 	// ClusterSecretType defines the type of secret created by core components.
+	// Note: This is used by core CAPI, CAPBK, and KCP to determine whether a secret is created by the controllers
+	// themselves or supplied by the user (e.g. bring your own certificates).
 	ClusterSecretType corev1.SecretType = "cluster.x-k8s.io/secret" //nolint:gosec
 
 	// InterruptibleLabel is the label used to mark the nodes that run on interruptible instances.
@@ -128,6 +130,12 @@ const (
 	// any changes to the actual object because it is a dry run) and the topology controller
 	// will receive the resulting object.
 	TopologyDryRunAnnotation = "topology.cluster.x-k8s.io/dry-run"
+
+	// ReplicasManagedByAnnotation is an annotation that indicates external (non-Cluster API) management of infra scaling.
+	// The practical effect of this is that the capi "replica" count should be passively derived from the number of observed infra machines,
+	// instead of being a source of truth for eventual consistency.
+	// This annotation can be used to inform MachinePool status during in-progress scaling scenarios.
+	ReplicasManagedByAnnotation = "cluster.x-k8s.io/replicas-managed-by"
 )
 
 const (

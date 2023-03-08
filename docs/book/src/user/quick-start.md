@@ -61,7 +61,7 @@ a target [management cluster] on the selected [infrastructure provider].
    The installation procedure depends on the version of kind; if you are planning to use the Docker infrastructure provider,
    please follow the additional instructions in the dedicated tab:
 
-   {{#tabs name:"install-kind" tabs:"Default,Docker"}}
+   {{#tabs name:"install-kind" tabs:"Default,Docker,KubeVirt"}}
    {{#tab Default}}
 
    Create the kind cluster:
@@ -94,19 +94,83 @@ a target [management cluster] on the selected [infrastructure provider].
    to create the management cluster using the above file.
 
    {{#/tab }}
+   {{#tab KubeVirt}}
+
+   #### Create the Kind Cluster
+   [KubeVirt][KubeVirt] is a cloud native virtualization solution. The virtual machines we're going to create and use for
+   the workload cluster's nodes, are actually running within pods in the management cluster. In order to communicate with
+   the workload cluster's API server, we'll need to expose it. We are using Kind which is a limited environment. The
+   easiest way to expose the workload cluster's API server (a pod within a node running in a VM that is itself running
+   within a pod in the management cluster, that is running inside a docker container), is to use a LoadBalancer service.
+
+   To allow using a LoadBalancer service, we can't use the kind's default CNI (kindnet), but we'll need to install
+   another CNI, like Calico. In order to do that, we'll need first to initiate the kind cluster with two modifications:
+   1. Disable the default CNI
+   2. Add the docker credentials to the cluster, to avoid the docker hub pull rate limit of the calico images; read more
+      about it in the [docker documentation](https://docs.docker.com/docker-hub/download-rate-limit/), and in the
+      [kind documentation](https://kind.sigs.k8s.io/docs/user/private-registries/#mount-a-config-file-to-each-node).
+
+   Create a configuration file for kind. Please notice the docker config file path, and adjust it to your local setting:
+   ```bash
+   cat <<EOF > kind-config.yaml
+   kind: Cluster
+   apiVersion: kind.x-k8s.io/v1alpha4
+   networking:
+   # the default CNI will not be installed
+     disableDefaultCNI: true
+   nodes:
+   - role: control-plane
+     extraMounts:
+      - containerPath: /var/lib/kubelet/config.json
+        hostPath: <YOUR DOCKER CONFIG FILE PATH>
+   EOF
+   ```
+   Now, create the kind cluster with the configuration file:
+   ```bash
+   kind create cluster --config=kind-config.yaml
+   ```
+   Test to ensure the local kind cluster is ready:
+   ```bash
+   kubectl cluster-info
+   ```
+
+   #### Install the Calico CNI
+   Now we'll need to install a CNI. In this example, we're using calico, but other CNIs should work as well. Please see
+   [calico installation guide](https://projectcalico.docs.tigera.io/getting-started/kubernetes/self-managed-onprem/onpremises#install-calico)
+   for more details (use the "Manifest" tab). Below is an example of how to install calico version v3.24.4.
+
+   Use the Calico manifest to create the required resources; e.g.:
+   ```bash
+   kubectl create -f  https://raw.githubusercontent.com/projectcalico/calico/v3.24.4/manifests/calico.yaml
+   ```
+
+   {{#/tab }}
    {{#/tabs }}
 
 ### Install clusterctl
 The clusterctl CLI tool handles the lifecycle of a Cluster API management cluster.
 
-{{#tabs name:"install-clusterctl" tabs:"linux,macOS,homebrew,Windows"}}
-{{#tab linux}}
+{{#tabs name:"install-clusterctl" tabs:"Linux,macOS,homebrew,Windows"}}
+{{#tab Linux}}
 
-#### Install clusterctl binary with curl on linux
-Download the latest release; on linux, type:
+#### Install clusterctl binary with curl on Linux
+If you are unsure you can determine your computers architecture by running `uname -a`
+
+Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.2.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.3.x"}} -o clusterctl
 ```
+
+Download for ARM64:
+```bash
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-arm64" version:"1.3.x"}} -o clusterctl
+```
+
+Download for PPC64LE:
+```bash
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-ppc64le" version:"1.3.x"}} -o clusterctl
+```
+
 Install clusterctl:
 ```bash
 sudo install -o root -g root -m 0755 clusterctl /usr/local/bin/clusterctl
@@ -120,14 +184,16 @@ clusterctl version
 {{#tab macOS}}
 
 #### Install clusterctl binary with curl on macOS
-Download the latest release; on macOS, type:
+If you are unsure you can determine your computers architecture by running `uname -a`
+
+Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.2.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.3.x"}} -o clusterctl
 ```
 
-Or if your Mac has an M1 CPU ("Apple Silicon"):
+Download for M1 CPU ("Apple Silicon") / ARM64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.2.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.3.x"}} -o clusterctl
 ```
 
 Make the clusterctl binary executable.
@@ -145,7 +211,7 @@ clusterctl version
 {{#/tab }}
 {{#tab homebrew}}
 
-#### Install clusterctl with homebrew on macOS and linux
+#### Install clusterctl with homebrew on macOS and Linux
 
 Install the latest release using homebrew:
 
@@ -166,7 +232,7 @@ Go to the working directory where you want clusterctl downloaded.
 
 Download the latest release; on Windows, type:
 ```powershell
-curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.2.x"}} -o clusterctl.exe
+curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.3.x"}} -o clusterctl.exe
 ```
 Append or prepend the path of that directory to the `PATH` environment variable.
 
@@ -202,43 +268,17 @@ Additional documentation about experimental features can be found in [Experiment
 Depending on the infrastructure provider you are planning to use, some additional prerequisites should be satisfied
 before getting started with Cluster API. See below for the expected settings for common providers.
 
-{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,Hetzner,IBM Cloud,KubeKey,Kubevirt,Metal3,Nutanix,OCI,OpenStack,Outscale,VCD,vcluster,Virtink,vSphere"}}
+{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,Hetzner,IBM Cloud,KubeKey,KubeVirt,Metal3,Nutanix,OCI,OpenStack,Outscale,VCD,vcluster,Virtink,vSphere"}}
 {{#tab AWS}}
 
-Download the latest binary of `clusterawsadm` from the [AWS provider releases].
-{{#tabs name:"install-clusterawsadm" tabs:"linux,macOS,homebrew"}}
-{{#tab linux}}
+Download the latest binary of `clusterawsadm` from the [AWS provider releases]. The [clusterawsadm] command line utility assists with identity and access management (IAM) for [Cluster API Provider AWS][capa].
 
-Download the latest release; on linux, type:
-```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-linux-amd64" version:"1.x"}} -o clusterawsadm
-```
+{{#tabs name:"install-clusterawsadm" tabs:"Linux,macOS,homebrew,Windows"}}
+{{#tab Linux}}
 
-Make it executable
+Download the latest release; on Linux, type:
 ```
-chmod +x clusterawsadm
-```
-
-Move the binary to a directory present in your PATH
-```
-sudo mv clusterawsadm /usr/local/bin
-```
-
-Check version to confirm installation
-```
-clusterawsadm version
-```
-{{#/tab }}
-{{#tab macOS}}
-
-Download the latest release; on macOs, type:
-```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-amd64" version:"1.x"}} -o clusterawsadm
-```
-
-Or if your Mac has an M1 CPU (”Apple Silicon”):
-```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-arm64" version:"1.x"}} -o clusterawsadm
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-linux-amd64" version:">=2.0.0"}} -o clusterawsadm
 ```
 
 Make it executable
@@ -255,24 +295,8 @@ Check version to confirm installation
 ```
 clusterawsadm version
 ```
-{{#/tab }}
-{{#tab homebrew}}
 
-Install the latest release using homebrew:
-```
-brew install clusterawsadm
-```
-
-Check version to confirm installation
-```
-clusterawsadm version
-```
-
-{{#/tab }}
-{{#/tabs }}
-
-The [clusterawsadm] command line utility assists with identity and access management (IAM) for [Cluster API Provider AWS][capa].
-
+**Example Usage**
 ```bash
 export AWS_REGION=us-east-1 # This is used to help encode your environment variables
 export AWS_ACCESS_KEY_ID=<your-access-key>
@@ -292,6 +316,125 @@ export AWS_B64ENCODED_CREDENTIALS=$(clusterawsadm bootstrap credentials encode-a
 # Finally, initialize the management cluster
 clusterctl init --infrastructure aws
 ```
+
+{{#/tab }}
+{{#tab macOS}}
+
+Download the latest release; on macOs, type:
+```
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-amd64" version:">=2.0.0"}} -o clusterawsadm
+```
+
+Or if your Mac has an M1 CPU (”Apple Silicon”):
+```
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-arm64" version:">=2.0.0"}} -o clusterawsadm
+```
+
+Make it executable
+```
+chmod +x clusterawsadm
+```
+
+Move the binary to a directory present in your PATH
+```
+sudo mv clusterawsadm /usr/local/bin
+```
+
+Check version to confirm installation
+```
+clusterawsadm version
+```
+
+**Example Usage**
+```bash
+export AWS_REGION=us-east-1 # This is used to help encode your environment variables
+export AWS_ACCESS_KEY_ID=<your-access-key>
+export AWS_SECRET_ACCESS_KEY=<your-secret-access-key>
+export AWS_SESSION_TOKEN=<session-token> # If you are using Multi-Factor Auth.
+
+# The clusterawsadm utility takes the credentials that you set as environment
+# variables and uses them to create a CloudFormation stack in your AWS account
+# with the correct IAM resources.
+clusterawsadm bootstrap iam create-cloudformation-stack
+
+# Create the base64 encoded credentials using clusterawsadm.
+# This command uses your environment variables and encodes
+# them in a value to be stored in a Kubernetes Secret.
+export AWS_B64ENCODED_CREDENTIALS=$(clusterawsadm bootstrap credentials encode-as-profile)
+
+# Finally, initialize the management cluster
+clusterctl init --infrastructure aws
+```
+{{#/tab }}
+{{#tab homebrew}}
+
+Install the latest release using homebrew:
+```
+brew install clusterawsadm
+```
+
+Check version to confirm installation
+```
+clusterawsadm version
+```
+
+**Example Usage**
+```bash
+export AWS_REGION=us-east-1 # This is used to help encode your environment variables
+export AWS_ACCESS_KEY_ID=<your-access-key>
+export AWS_SECRET_ACCESS_KEY=<your-secret-access-key>
+export AWS_SESSION_TOKEN=<session-token> # If you are using Multi-Factor Auth.
+
+# The clusterawsadm utility takes the credentials that you set as environment
+# variables and uses them to create a CloudFormation stack in your AWS account
+# with the correct IAM resources.
+clusterawsadm bootstrap iam create-cloudformation-stack
+
+# Create the base64 encoded credentials using clusterawsadm.
+# This command uses your environment variables and encodes
+# them in a value to be stored in a Kubernetes Secret.
+export AWS_B64ENCODED_CREDENTIALS=$(clusterawsadm bootstrap credentials encode-as-profile)
+
+# Finally, initialize the management cluster
+clusterctl init --infrastructure aws
+```
+
+{{#/tab }}
+{{#tab Windows}}
+
+Download the latest release; on Windows, type:
+```
+curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-windows-amd64" version:">=2.0.0"}} -o clusterawsadm.exe
+```
+
+Append or prepend the path of that directory to the `PATH` environment variable.
+Check version to confirm installation
+```
+clusterawsadm.exe version
+```
+
+**Example Usage in Powershell**
+```bash
+$Env:AWS_REGION="us-east-1" # This is used to help encode your environment variables
+$Env:AWS_ACCESS_KEY_ID="<your-access-key>"
+$Env:AWS_SECRET_ACCESS_KEY="<your-secret-access-key>"
+$Env:AWS_SESSION_TOKEN="<session-token>" # If you are using Multi-Factor Auth.
+
+# The clusterawsadm utility takes the credentials that you set as environment
+# variables and uses them to create a CloudFormation stack in your AWS account
+# with the correct IAM resources.
+clusterawsadm bootstrap iam create-cloudformation-stack
+
+# Create the base64 encoded credentials using clusterawsadm.
+# This command uses your environment variables and encodes
+# them in a value to be stored in a Kubernetes Secret.
+$Env:AWS_B64ENCODED_CREDENTIALS=$(clusterawsadm bootstrap credentials encode-as-profile)
+
+# Finally, initialize the management cluster
+clusterctl init --infrastructure aws
+```
+{{#/tab }}
+{{#/tabs }}
 
 See the [AWS provider prerequisites] document for more details.
 
@@ -442,9 +585,61 @@ clusterctl init --infrastructure kubekey
 ```
 
 {{#/tab }}
-{{#tab Kubevirt}}
+{{#tab KubeVirt}}
 
-Please visit the [Kubevirt project][Kubevirt provider].
+Please visit the [KubeVirt project][KubeVirt provider] for more information.
+
+As described above, we want to use a LoadBalancer service in order to expose the workload cluster's API server. In the
+example below, we will use [MetalLB](https://metallb.universe.tf/) solution to implement load balancing to our kind
+cluster. Other solution should work as well.
+
+#### Install MetalLB for load balancing
+Install MetalLB, as described [here](https://metallb.universe.tf/installation/#installation-by-manifest); for example:
+```bash
+METALLB_VER=$(curl "https://api.github.com/repos/metallb/metallb/releases/latest" | jq -r ".tag_name")
+kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/${METALLB_VER}/config/manifests/metallb-native.yaml"
+kubectl wait pods -n metallb-system -l app=metallb,component=controller --for=condition=Ready --timeout=10m
+kubectl wait pods -n metallb-system -l app=metallb,component=speaker --for=condition=Ready --timeout=2m
+```
+
+Now, we'll create the `IPAddressPool` and the `L2Advertisement` custom resources. The script below creates the CRs with
+the right addresses, that match to the kind cluster addresses:
+```bash
+GW_IP=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' kind)
+NET_IP=$(echo ${GW_IP} | sed -E 's|^([0-9]+\.[0-9]+)\..*$|\1|g')
+cat <<EOF | sed -E "s|172.19|${NET_IP}|g" | kubectl apply -f -
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: capi-ip-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 172.19.255.200-172.19.255.250
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: empty
+  namespace: metallb-system
+EOF
+```
+
+#### Install KubeVirt on the kind cluster
+```bash
+# get KubeVirt version
+KV_VER=$(curl "https://api.github.com/repos/kubevirt/kubevirt/releases/latest" | jq -r ".tag_name")
+# deploy required CRDs
+kubectl apply -f "https://github.com/kubevirt/kubevirt/releases/download/${KV_VER}/kubevirt-operator.yaml"
+# deploy the KubeVirt custom resource
+kubectl apply -f "https://github.com/kubevirt/kubevirt/releases/download/${KV_VER}/kubevirt-cr.yaml"
+kubectl wait -n kubevirt kv kubevirt --for=condition=Available --timeout=10m
+```
+
+#### Initialize the management cluster with the KubeVirt Provider
+```bash
+clusterctl init --infrastructure kubevirt
+```
 
 {{#/tab }}
 {{#tab Metal3}}
@@ -480,7 +675,7 @@ export OSC_REGION=<you-region>
 # Create namespace
 kubectl create namespace cluster-api-provider-outscale-system
 # Create secret
-kubectl create secret generic cluster-api-provider-outscale --from-literal=access_key=${OSC_ACCESS_KEY} --from-literal=secret_key=${OSC_SECRET_KEY} --from-literal=region=${OSC_REGION}  -n cluster-api-provider-outscale-system 
+kubectl create secret generic cluster-api-provider-outscale --from-literal=access_key=${OSC_ACCESS_KEY} --from-literal=secret_key=${OSC_SECRET_KEY} --from-literal=region=${OSC_REGION}  -n cluster-api-provider-outscale-system
 # Initialize the management cluster
 clusterctl init --infrastructure outscale
 ```
@@ -539,7 +734,7 @@ The output of `clusterctl init` is similar to this:
 
 ```bash
 Fetching providers
-Installing cert-manager Version="v1.10.0"
+Installing cert-manager Version="v1.11.0"
 Waiting for cert-manager to be available...
 Installing Provider="cluster-api" Version="v1.0.0" TargetNamespace="capi-system"
 Installing Provider="bootstrap-kubeadm" Version="v1.0.0" TargetNamespace="capi-kubeadm-bootstrap-system"
@@ -601,7 +796,7 @@ before configuring a cluster with Cluster API. Instructions are provided for com
 Otherwise, you can look at the `clusterctl generate cluster` [command][clusterctl generate cluster] documentation for details about how to
 discover the list of variables required by a cluster templates.
 
-{{#tabs name:"tab-configuration-infrastructure" tabs:"AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,IBM Cloud,KubeKey,Kubevirt,Metal3,Nutanix,OpenStack,Outscale,VCD,vcluster,Virtink,vSphere"}}
+{{#tabs name:"tab-configuration-infrastructure" tabs:"AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,IBM Cloud,KubeKey,KubeVirt,Metal3,Nutanix,OpenStack,Outscale,VCD,vcluster,Virtink,vSphere"}}
 {{#tab AWS}}
 
 ```bash
@@ -716,7 +911,7 @@ export SERVICE_DOMAIN="k8s.test"
 
 It is also possible but **not recommended** to disable the per-default enabled [Pod Security Standard](../security/pod-security-standards.md):
 ```bash
-export ENABLE_POD_SECURITY_STANDARD="false"
+export POD_SECURITY_STANDARD_ENABLED="false"
 ```
 
 {{#/tab }}
@@ -809,7 +1004,7 @@ Please visit the [IBM Cloud provider] for more information.
 export KKZONE=""
 # The ssh name of the all instance Linux user. (e.g. root, ubuntu)
 export USER_NAME=<your-linux-user>
-# The ssh password of the all instance Linux user. 
+# The ssh password of the all instance Linux user.
 export PASSWORD=<your-linux-user-password>
 # The ssh IP address of the all instance. (e.g. "[{address: 192.168.100.3}, {address: 192.168.100.4}]")
 export INSTANCES=<your-linux-ip-address>
@@ -820,15 +1015,14 @@ export CONTROL_PLANE_ENDPOINT_IP=<your-control-plane-virtual-ip>
 Please visit the [KubeKey provider] for more information.
 
 {{#/tab }}
-{{#tab Kubevirt}}
+{{#tab KubeVirt}}
 
-A ClusterAPI compatible image must be available in your Kubevirt image library. For instructions on how to build a compatible image
-see [image-builder](https://image-builder.sigs.k8s.io/capi/capi.html).
-
-To see all required Kubevirt environment variables execute:
 ```bash
-clusterctl generate cluster --infrastructure kubevirt --list-variables capi-quickstart
+export CAPK_GUEST_K8S_VERSION="v1.23.10"
+export CRI_PATH="/var/run/containerd/containerd.sock"
+export NODE_VM_IMAGE_TEMPLATE="quay.io/capk/ubuntu-2004-container-disk:${CAPK_GUEST_K8S_VERSION}"
 ```
+Please visit the [KubeVirt project][KubeVirt provider] for more information.
 
 {{#/tab }}
 {{#tab Metal3}}
@@ -1007,7 +1201,7 @@ For more information about prerequisites, credentials management, or permissions
 
 For the purpose of this tutorial, we'll name our cluster capi-quickstart.
 
-{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Docker, vcluster, others..."}}
+{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Docker, vcluster, KubeVirt, others..."}}
 {{#tab Docker}}
 
 <aside class="note warning">
@@ -1020,7 +1214,7 @@ The Docker provider is not designed for production use and is intended for devel
 
 ```bash
 clusterctl generate cluster capi-quickstart --flavor development \
-  --kubernetes-version v1.25.0 \
+  --kubernetes-version v1.26.0 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1032,7 +1226,7 @@ clusterctl generate cluster capi-quickstart --flavor development \
 ```bash
 export CLUSTER_NAME=kind
 export CLUSTER_NAMESPACE=vcluster
-export KUBERNETES_VERSION=1.25.0
+export KUBERNETES_VERSION=1.26.0
 export HELM_VALUES="service:\n  type: NodePort"
 
 kubectl create namespace ${CLUSTER_NAMESPACE}
@@ -1043,11 +1237,27 @@ clusterctl generate cluster ${CLUSTER_NAME} \
 ```
 
 {{#/tab }}
+{{#tab KubeVirt}}
+
+As we described above, in this tutorial, we will use a LoadBalancer service in order to expose the API server of the
+workload cluster, so we want to use the load balancer (lb) template (rather than the default one). We'll use the
+clusterctl's `--flavor` flag for that:
+```bash
+clusterctl generate cluster capi-quickstart \
+  --infrastructure="kubevirt" \
+  --flavor lb \
+  --kubernetes-version ${CAPK_GUEST_K8S_VERSION} \
+  --control-plane-machine-count=1 \
+  --worker-machine-count=1 \
+  > capi-quickstart.yaml
+```
+
+{{#/tab }}
 {{#tab others...}}
 
 ```bash
 clusterctl generate cluster capi-quickstart \
-  --kubernetes-version v1.25.0 \
+  --kubernetes-version v1.26.0 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1107,7 +1317,7 @@ You should see an output is similar to this:
 
 ```bash
 NAME                    CLUSTER           INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE    VERSION
-capi-quickstart-g2trk   capi-quickstart   true                                 3                  3         3             4m7s   v1.25.0
+capi-quickstart-g2trk   capi-quickstart   true                                 3                  3         3             4m7s   v1.26.0
 ```
 
 <aside class="note warning">
@@ -1151,7 +1361,7 @@ Note: To use the default clusterctl method to retrieve kubeconfig for a workload
 
 Calico is used here as an example.
 
-{{#tabs name:"tab-deploy-cni" tabs:"Azure,vcluster,others..."}}
+{{#tabs name:"tab-deploy-cni" tabs:"Azure,vcluster,KubeVirt,others..."}}
 {{#tab Azure}}
 
 Azure [does not currently support Calico networking](https://docs.projectcalico.org/reference/public-cloud/azure). As a workaround, it is recommended that Azure clusters use the Calico spec below that uses VXLAN.
@@ -1174,6 +1384,126 @@ kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
 Calico not required for vcluster.
 
 {{#/tab }}
+{{#tab KubeVirt}}
+
+Before deploying the Calico CNI, make sure the VMs are running:
+```bash
+kubectl get vm
+```
+
+If our new VMs are running, we should see a response similar to this:
+
+```text
+NAME                                  AGE    STATUS    READY
+capi-quickstart-control-plane-7s945   167m   Running   True
+capi-quickstart-md-0-zht5j            164m   Running   True
+```
+
+We can also read the virtual machine instances:
+```bash
+kubectl get vmi
+```
+The output will be similar to:
+```text
+NAME                                  AGE    PHASE     IP             NODENAME             READY
+capi-quickstart-control-plane-7s945   167m   Running   10.244.82.16   kind-control-plane   True
+capi-quickstart-md-0-zht5j            164m   Running   10.244.82.17   kind-control-plane   True
+```
+
+Since our workload cluster is running within the kind cluster, we need to prevent conflicts between the kind
+(management) cluster's CNI, and the workload cluster CNI. The following modifications in the default Calico settings
+are enough for these two CNI to work on (actually) the same environment.
+
+* Change the CIDR to a non-conflicting range
+* Change the value of the `CLUSTER_TYPE` environment variable to `k8s`
+* Change the value of the `CALICO_IPV4POOL_IPIP` environment variable to `Never`
+* Change the value of the `CALICO_IPV4POOL_VXLAN` environment variable to `Always`
+* Add the `FELIX_VXLANPORT` environment variable with the value of a non-conflicting port, e.g. `"6789"`.
+
+The following script downloads the Calico manifest and modifies the required field. The CIDR and the port values are examples.
+```bash
+curl https://raw.githubusercontent.com/projectcalico/calico/v3.24.4/manifests/calico.yaml -o calico-workload.yaml
+
+sed -i -E 's|^( +)# (- name: CALICO_IPV4POOL_CIDR)$|\1\2|g;'\
+'s|^( +)# (  value: )"192.168.0.0/16"|\1\2"10.243.0.0/16"|g;'\
+'/- name: CLUSTER_TYPE/{ n; s/( +value: ").+/\1k8s"/g };'\
+'/- name: CALICO_IPV4POOL_IPIP/{ n; s/value: "Always"/value: "Never"/ };'\
+'/- name: CALICO_IPV4POOL_VXLAN/{ n; s/value: "Never"/value: "Always"/};'\
+'/# Set Felix endpoint to host default action to ACCEPT./a\            - name: FELIX_VXLANPORT\n              value: "6789"' \
+calico-workload.yaml
+```
+Now, deploy the Calico CNI on the workload cluster:
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig create -f calico-workload.yaml
+```
+
+After a short while, our nodes should be running and in `Ready` state, let’s check the status using `kubectl get nodes`:
+
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
+```
+
+<aside class="note">
+
+<h1>Troubleshooting</h1>
+
+If the nodes don't become ready after a long period, read the pods in the `kube-system` namespace
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig get pod -n kube-system
+```
+
+If the Calico pods are in image pull error state (`ErrImagePull`), it's probably because of the docker hub pull rate limit.
+We can try to fix that by adding a secret with our docker hub credentials, and use it;
+see [here](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/#registry-secret-existing-credentials)
+for details.
+
+First, create the secret. Please notice the docker config file path, and adjust it to your local setting.
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig create secret generic docker-creds \
+    --from-file=.dockerconfigjson=<YOUR DOCKER CONFIG FILE PATH> \
+    --type=kubernetes.io/dockerconfigjson \
+    -n kube-system
+```
+
+Now, if the `calico-node` pods are with status of `ErrImagePull`, patch their DaemonSet to make them use the new secret to pull images:
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig patch daemonset \
+    -n kube-system calico-node \
+    -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"docker-creds"}]}}}}'
+```
+
+After a short while, the calico-node pods will be with `Running` status. Now, if the calico-kube-controllers pod is also
+in `ErrImagePull` status, patch its deployment to fix the problem:
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig patch deployment \
+    -n kube-system calico-kube-controllers \
+    -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"docker-creds"}]}}}}'
+```
+
+Read the pods again
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig get pod -n kube-system
+```
+
+Eventually, all the pods in the kube-system namespace will run, and the result should be similar to this:
+```text
+NAME                                                          READY   STATUS    RESTARTS   AGE
+calico-kube-controllers-c969cf844-dgld6                       1/1     Running   0          50s
+calico-node-7zz7c                                             1/1     Running   0          54s
+calico-node-jmjd6                                             1/1     Running   0          54s
+coredns-64897985d-dspjm                                       1/1     Running   0          3m49s
+coredns-64897985d-pgtgz                                       1/1     Running   0          3m49s
+etcd-capi-quickstart-control-plane-kjjbb                      1/1     Running   0          3m57s
+kube-apiserver-capi-quickstart-control-plane-kjjbb            1/1     Running   0          3m57s
+kube-controller-manager-capi-quickstart-control-plane-kjjbb   1/1     Running   0          3m57s
+kube-proxy-b9g5m                                              1/1     Running   0          3m12s
+kube-proxy-p6xx8                                              1/1     Running   0          3m49s
+kube-scheduler-capi-quickstart-control-plane-kjjbb            1/1     Running   0          3m57s
+```
+
+</aside>
+
+{{#/tab }}
 {{#tab others...}}
 
 ```bash
@@ -1189,12 +1519,12 @@ kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
 ```
 ```bash
 NAME                                          STATUS   ROLES           AGE   VERSION
-capi-quickstart-g2trk-9xrjv                   Ready    control-plane   12m   v1.25.0
-capi-quickstart-g2trk-bmm9v                   Ready    control-plane   11m   v1.25.0
-capi-quickstart-g2trk-hvs9q                   Ready    control-plane   13m   v1.25.0
-capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          12m   v1.25.0
-capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          12m   v1.25.0
-capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          12m   v1.25.0
+capi-quickstart-g2trk-9xrjv                   Ready    control-plane   12m   v1.26.0
+capi-quickstart-g2trk-bmm9v                   Ready    control-plane   11m   v1.26.0
+capi-quickstart-g2trk-hvs9q                   Ready    control-plane   13m   v1.26.0
+capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          12m   v1.26.0
+capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          12m   v1.26.0
+capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          12m   v1.26.0
 ```
 
 {{#/tab }}
@@ -1244,7 +1574,8 @@ See the [clusterctl] documentation for more detail about clusterctl supported ac
 [Metal3 getting started guide]: https://github.com/metal3-io/cluster-api-provider-metal3/blob/master/docs/getting-started.md
 [Metal3 provider]: https://github.com/metal3-io/cluster-api-provider-metal3/
 [KubeKey provider]: https://github.com/kubesphere/kubekey
-[Kubevirt provider]: https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/
+[KubeVirt provider]: https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/
+[KubeVirt]: https://kubevirt.io/
 [oci-provider]: https://oracle.github.io/cluster-api-provider-oci/#getting-started
 [Equinix Metal getting started guide]: https://github.com/kubernetes-sigs/cluster-api-provider-packet#using
 [provider]:../reference/providers.md

@@ -81,16 +81,14 @@ The generated binary can be found at ./hack/tools/bin/envsubst
 You'll need to deploy [cert-manager] components on your [management cluster][mcluster], using `kubectl`
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.10.0/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml
 ```
 
 Ensure the cert-manager webhook service is ready before creating the Cluster API components.
 
-This can be done by running:
-
-```bash
-kubectl wait --for=condition=Available --timeout=300s apiservice v1beta1.webhook.cert-manager.io
-```
+This can be done by following instructions for [manual verification](https://cert-manager.io/docs/installation/verify/#manual-verification)
+from the [cert-manager] web site.
+Note: make sure to follow instructions for the release of cert-manager you are installing.
 
 [cert-manager]: https://github.com/cert-manager/cert-manager
 
@@ -133,12 +131,13 @@ information on each suite.
 Now you can [create CAPI objects][qs]!
 To test another iteration, you'll need to follow the steps to build, push, update the manifests, and apply.
 
-[qs]: ../user/quick-start.md#usage
+[qs]: ../user/quick-start.md
 
 ## Videos explaining CAPI architecture and code walkthroughs
 
 **CAPI components and architecture**
 
+* [Simplified Experience Of Building Cluster API Provider In Multitenant Cloud - October 2022](https://www.youtube.com/watch?v=1oj9BuV2dzA)
 * [Cluster API Intro and Deep Dive - May 2022 v1beta1](https://www.youtube.com/watch?v=9H8flXm_lKk)
 * [Cluster API Deep Dive - Dec 2020 v1alpha3](https://youtu.be/npFO5Fixqcc)
 * [Cluster API Deep Dive - Sept 2020 v1alpha3](https://youtu.be/9SfuQQeeK6Q)
@@ -147,8 +146,21 @@ To test another iteration, you'll need to follow the steps to build, push, updat
 
 **Additional ClusterAPI KubeCon talks**
 
+* [How Adobe Planned For Scale With Argo CD, Cluster API, And VCluster - October 2022](https://www.youtube.com/watch?v=p8BluR5WT5w)
+* [Bare-Metal Chronicles: Intertwinement Of Tinkerbell, Cluster API And GitOps - October 2022](https://www.youtube.com/watch?v=NCFUUjTw6hA)
+* [Running Isolated VirtualClusters With Kata & Cluster API - October 2022](https://www.youtube.com/watch?v=T6w3YrExorY)
+* [SIG Cluster Lifecycle Intro - October 2022](https://www.youtube.com/watch?v=0Zo0cWYU0fM)
 * [How to Migrate 700 Kubernetes Clusters to Cluster API with Zero Downtime - May 2022](https://www.youtube.com/watch?v=KzYV-fJ_wH0)
 * [Build Your Own Cluster API Provider the Easy Way - May 2022](https://www.youtube.com/watch?v=HSdgmcAAXa8)
+
+**Tutorials**
+
+* [kubectl Create Cluster: Production-ready Kubernetes with Cluster API 1.0 - October 2022](https://kccncna2022.sched.com/event/1BZDs)
+
+  [Source code](https://github.com/ykakarap/kubecon-na-22-capi-lab)
+* [So You Want To Develop a Cluster API Provider? - October 2022](https://kccncna2022.sched.com/event/182Ha)
+
+  [Source code](https://capi-samples.github.io/kubecon-na-2022-tutorial/)
 
 **Code walkthroughs**
 
