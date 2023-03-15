@@ -2,10 +2,15 @@
 component: "Cloud Compute"
 subcomponent: "Other Providers"
 approvers:
-  - damdo
-  - alexander-demichev
-  - JoelSpeed
-  - elmiko
-  - Fedosin
-  - enxebre
-  - lobziik
+- JoelSpeed
+- damdo
+- enxebre
+reviewers:
+- JoelSpeed
+- RadekManak
+- damdo
+- elmiko
+- lobziik
+- odvarkadaniel
+component: Cloud Compute
+subcomponent: Other Provider
