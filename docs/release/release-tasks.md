@@ -25,6 +25,7 @@ This document details the responsibilities and tasks for each role in the releas
       - [\[Track\] Bump dependencies](#track-bump-dependencies)
       - [Create a release branch](#create-a-release-branch)
       - [\[Continuously\] Maintain the GitHub release milestone](#continuously-maintain-the-github-release-milestone)
+      - [\[Continuously\] Bump the Go version](#continuously-bump-the-go-version)
       - [\[Repeatedly\] Cut a release](#repeatedly-cut-a-release)
       - [\[Optional\] \[Track\] Bump the Cluster API apiVersion](#optional-track-bump-the-cluster-api-apiversion)
       - [\[Optional\] \[Track\] Bump the Kubernetes version](#optional-track-bump-the-kubernetes-version)
@@ -167,6 +168,17 @@ This can be done by:
 1. Regularly checking in with folks implementing an issue in the milestone.
 2. If nobody is working on an issue in the milestone, drop it from the milestone.
 3. Ensuring we have a plan to get `release-blocking` issues implemented in time.
+
+#### [Continuously] Bump the Go version
+
+The goal of this task is to ensure we are always using the latest Go version for our releases.
+
+1. Keep track of new Go versions
+2. Bump the Go version in supported branches if necessary
+   <br>Prior art: [Bump to Go 1.19.5](https://github.com/kubernetes-sigs/cluster-api/pull/7981)
+
+Note: If the Go minor version of one of our supported branches goes out of supported, we should consider bumping 
+to a newer Go minor version according to our [backport policy](./../../CONTRIBUTING.md#backporting-a-patch).
 
 #### [Repeatedly] Cut a release
 
@@ -373,6 +385,7 @@ Stakeholders are: (TBD)
 #### Setup jobs and dashboards for a new release branch
 
 The goal of this task is to have test coverage for the new release branch and results in testgrid.
+While we add test coverage for the new release branch we will also drop the tests for old release branches if necessary.
 
 1. Create new jobs based on the jobs running against our `main` branch:
     1. Copy `config/jobs/kubernetes-sigs/cluster-api/cluster-api-periodics-main.yaml` to `config/jobs/kubernetes-sigs/cluster-api/cluster-api-periodics-release-1-4.yaml`.
@@ -387,7 +400,9 @@ The goal of this task is to have test coverage for the new release branch and re
             * Change interval (let's use the same as for `1.3`).
         5. For presubmits additionally: Adjust branches: `^main$` => `^release-1.4$`.
 2. Create a new dashboard for the new branch in: `test-infra/config/testgrids/kubernetes/sig-cluster-lifecycle/config.yaml` (`dashboard_groups` and `dashboards`).
-3. Verify the jobs and dashboards a day later by taking a look at: `https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-1.4`
+3. Remove tests for old release branches according to our policy documented in [Support and guarantees](../../CONTRIBUTING.md#support-and-guarantees)
+   For example, let's assume we just created tests for v1.4, then we can now drop test coverage for the release-1.1 branch.
+4. Verify the jobs and dashboards a day later by taking a look at: `https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-1.4`
 
 Prior art: [Add jobs for CAPI release 1.2](https://github.com/kubernetes/test-infra/pull/26621)
 
