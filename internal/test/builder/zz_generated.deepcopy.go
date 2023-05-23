@@ -148,6 +148,13 @@ func (in *ClusterClassBuilder) DeepCopyInto(out *ClusterClassBuilder) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.statusVariables != nil {
+		in, out := &in.statusVariables, &out.statusVariables
+		*out = make([]v1beta1.ClusterClassStatusVariable, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.patches != nil {
 		in, out := &in.patches, &out.patches
 		*out = make([]v1beta1.ClusterClassPatch, len(*in))
@@ -335,6 +342,11 @@ func (in *MachineDeploymentBuilder) DeepCopyInto(out *MachineDeploymentBuilder) 
 	if in.infrastructureTemplate != nil {
 		in, out := &in.infrastructureTemplate, &out.infrastructureTemplate
 		*out = (*in).DeepCopy()
+	}
+	if in.selector != nil {
+		in, out := &in.selector, &out.selector
+		*out = new(v1.LabelSelector)
+		(*in).DeepCopyInto(*out)
 	}
 	if in.version != nil {
 		in, out := &in.version, &out.version

@@ -91,14 +91,14 @@ func (r *Reconciler) reconcilePhase(_ context.Context, m *clusterv1.Machine) {
 func (r *Reconciler) reconcileExternal(ctx context.Context, cluster *clusterv1.Cluster, m *clusterv1.Machine, ref *corev1.ObjectReference) (external.ReconcileOutput, error) {
 	log := ctrl.LoggerFrom(ctx)
 
-	if err := utilconversion.UpdateReferenceAPIContract(ctx, r.Client, r.APIReader, ref); err != nil {
+	if err := utilconversion.UpdateReferenceAPIContract(ctx, r.Client, ref); err != nil {
 		return external.ReconcileOutput{}, err
 	}
 
 	obj, err := external.Get(ctx, r.Client, ref, m.Namespace)
 	if err != nil {
 		if apierrors.IsNotFound(errors.Cause(err)) {
-			log.Info("could not find external ref, requeueing", ref.Kind, klog.KRef(m.Namespace, ref.Name))
+			log.Info("could not find external ref, requeuing", ref.Kind, klog.KRef(m.Namespace, ref.Name))
 			return external.ReconcileOutput{RequeueAfter: externalReadyWait}, nil
 		}
 		return external.ReconcileOutput{}, err
@@ -133,7 +133,7 @@ func (r *Reconciler) reconcileExternal(ctx context.Context, cluster *clusterv1.C
 	if labels == nil {
 		labels = make(map[string]string)
 	}
-	labels[clusterv1.ClusterLabelName] = m.Spec.ClusterName
+	labels[clusterv1.ClusterNameLabel] = m.Spec.ClusterName
 	obj.SetLabels(labels)
 
 	// Always attempt to Patch the external object.
@@ -251,7 +251,7 @@ func (r *Reconciler) reconcileInfrastructure(ctx context.Context, cluster *clust
 			m.Status.FailureReason = capierrors.MachineStatusErrorPtr(capierrors.InvalidConfigurationMachineError)
 			m.Status.FailureMessage = pointer.String(fmt.Sprintf("Machine infrastructure resource %v with name %q has been deleted after being ready",
 				m.Spec.InfrastructureRef.GroupVersionKind(), m.Spec.InfrastructureRef.Name))
-			return ctrl.Result{}, errors.Errorf("could not find %v %q for Machine %q in namespace %q, requeueing", m.Spec.InfrastructureRef.GroupVersionKind().String(), m.Spec.InfrastructureRef.Name, m.Name, m.Namespace)
+			return ctrl.Result{}, errors.Errorf("could not find %v %q for Machine %q in namespace %q, requeuing", m.Spec.InfrastructureRef.GroupVersionKind().String(), m.Spec.InfrastructureRef.Name, m.Name, m.Namespace)
 		}
 		return ctrl.Result{RequeueAfter: infraReconcileResult.RequeueAfter}, nil
 	}
@@ -388,7 +388,7 @@ func removeOnCreateOwnerRefs(cluster *clusterv1.Cluster, m *clusterv1.Machine, o
 // This function checks that the Machine is managed by a control plane, and then retrieves the Kind from the Cluster's
 // .spec.controlPlaneRef.
 func getControlPlaneGVKForMachine(cluster *clusterv1.Cluster, machine *clusterv1.Machine) *schema.GroupVersionKind {
-	if _, ok := machine.GetLabels()[clusterv1.MachineControlPlaneLabelName]; ok {
+	if _, ok := machine.GetLabels()[clusterv1.MachineControlPlaneLabel]; ok {
 		if cluster.Spec.ControlPlaneRef != nil {
 			gvk := cluster.Spec.ControlPlaneRef.GroupVersionKind()
 			return &gvk

@@ -81,7 +81,7 @@ The generated binary can be found at ./hack/tools/bin/envsubst
 You'll need to deploy [cert-manager] components on your [management cluster][mcluster], using `kubectl`
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.1/cert-manager.yaml
 ```
 
 Ensure the cert-manager webhook service is ready before creating the Cluster API components.
@@ -114,8 +114,8 @@ make docker-push
 
 # Apply the manifests
 kustomize build config/default | ./hack/tools/bin/envsubst | kubectl apply -f -
-kustomize build bootstrap/kubeadm/config | ./hack/tools/bin/envsubst | kubectl apply -f -
-kustomize build controlplane/kubeadm/config | ./hack/tools/bin/envsubst | kubectl apply -f -
+kustomize build bootstrap/kubeadm/config/default | ./hack/tools/bin/envsubst | kubectl apply -f -
+kustomize build controlplane/kubeadm/config/default | ./hack/tools/bin/envsubst | kubectl apply -f -
 kustomize build test/infrastructure/docker/config/default | ./hack/tools/bin/envsubst | kubectl apply -f -
 ```
 

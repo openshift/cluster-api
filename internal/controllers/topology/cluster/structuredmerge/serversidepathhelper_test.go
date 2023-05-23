@@ -17,16 +17,32 @@ limitations under the License.
 package structuredmerge
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	. "github.com/onsi/gomega"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util/patch"
 )
 
@@ -57,7 +73,7 @@ func TestServerSideApply(t *testing.T) {
 		var original *unstructured.Unstructured
 		modified := obj.DeepCopy()
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient())
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache())
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeTrue())
@@ -68,7 +84,7 @@ func TestServerSideApply(t *testing.T) {
 		var original *clusterv1.MachineDeployment
 		modified := obj.DeepCopy()
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient())
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache())
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeTrue())
@@ -77,7 +93,7 @@ func TestServerSideApply(t *testing.T) {
 		g := NewWithT(t)
 
 		// Create a patch helper with original == nil and modified == obj, ensure this is detected as operation that triggers changes.
-		p0, err := NewServerSidePatchHelper(ctx, nil, obj.DeepCopy(), env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, nil, obj.DeepCopy(), env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeTrue())
@@ -112,7 +128,7 @@ func TestServerSideApply(t *testing.T) {
 
 		// Create a patch helper for a modified object with no changes.
 		modified := obj.DeepCopy()
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeFalse())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -129,7 +145,7 @@ func TestServerSideApply(t *testing.T) {
 		modified := obj.DeepCopy()
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed", "status", "foo")).To(Succeed())
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeFalse())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -146,7 +162,7 @@ func TestServerSideApply(t *testing.T) {
 		modified := obj.DeepCopy()
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed", "spec", "bar")).To(Succeed())
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeTrue())
@@ -163,7 +179,7 @@ func TestServerSideApply(t *testing.T) {
 		modified := obj.DeepCopy()
 		modified.SetLabels(map[string]string{"foo": "changed"})
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -180,7 +196,7 @@ func TestServerSideApply(t *testing.T) {
 		modified := obj.DeepCopy()
 		modified.SetAnnotations(map[string]string{"foo": "changed"})
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -204,7 +220,7 @@ func TestServerSideApply(t *testing.T) {
 			},
 		})
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -221,7 +237,7 @@ func TestServerSideApply(t *testing.T) {
 		modified := obj.DeepCopy()
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed", "spec", "foo")).To(Succeed())
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeFalse())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -254,7 +270,7 @@ func TestServerSideApply(t *testing.T) {
 		//       it here to be able to verify that managed field changes are ignored. This is the same situation as when
 		//       other controllers update .status (that is ignored) and the ServerSidePatchHelper then ignores the corresponding
 		//       managed field changes.
-		p0, err := NewServerSidePatchHelper(ctx, original, original, env.GetClient(), IgnorePaths{{"spec", "foo"}, {"spec", "bar"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, original, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}, {"spec", "bar"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeFalse())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -270,7 +286,7 @@ func TestServerSideApply(t *testing.T) {
 		// Create a patch helper for a modified object with no changes to what previously applied by th topology manager.
 		modified := obj.DeepCopy()
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeFalse())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -292,7 +308,7 @@ func TestServerSideApply(t *testing.T) {
 		v3, _, _ := unstructured.NestedString(got.Object, "status", "foo")
 		g.Expect(v3).To(Equal("changed"))
 		v4, _, _ := unstructured.NestedBool(got.Object, "status", "ready")
-		g.Expect(v4).To(Equal(true))
+		g.Expect(v4).To(BeTrue())
 
 		fieldV1 := getTopologyManagedFields(got)
 		g.Expect(fieldV1).ToNot(BeEmpty())
@@ -317,7 +333,7 @@ func TestServerSideApply(t *testing.T) {
 		modified := obj.DeepCopy()
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed", "spec", "controlPlaneEndpoint", "host")).To(Succeed())
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeTrue())
@@ -341,7 +357,7 @@ func TestServerSideApply(t *testing.T) {
 		v3, _, _ := unstructured.NestedString(got.Object, "status", "foo")
 		g.Expect(v3).To(Equal("changed"))
 		v4, _, _ := unstructured.NestedBool(got.Object, "status", "ready")
-		g.Expect(v4).To(Equal(true))
+		g.Expect(v4).To(BeTrue())
 	})
 	t.Run("Topology controller reconcile again with an opinion on a field managed by another controller (co-ownership)", func(t *testing.T) {
 		g := NewWithT(t)
@@ -355,7 +371,7 @@ func TestServerSideApply(t *testing.T) {
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed", "spec", "controlPlaneEndpoint", "host")).To(Succeed())
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed", "spec", "bar")).To(Succeed())
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -395,7 +411,7 @@ func TestServerSideApply(t *testing.T) {
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed", "spec", "controlPlaneEndpoint", "host")).To(Succeed())
 		g.Expect(unstructured.SetNestedField(modified.Object, "changed-by-topology-controller", "spec", "bar")).To(Succeed())
 
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), IgnorePaths{{"spec", "foo"}})
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache(), IgnorePaths{{"spec", "foo"}})
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeTrue())
 		g.Expect(p0.HasSpecChanges()).To(BeTrue())
@@ -443,7 +459,7 @@ func TestServerSideApply(t *testing.T) {
 		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(original), original)).To(Succeed())
 
 		// Create a patch helper for a modified object with which has no changes.
-		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient())
+		p0, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache())
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(p0.HasChanges()).To(BeFalse())
 		g.Expect(p0.HasSpecChanges()).To(BeFalse())
@@ -465,7 +481,7 @@ func TestServerSideApply(t *testing.T) {
 		modified.SetUID("")
 
 		// Create a patch helper which should fail because original's real UID changed.
-		_, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient())
+		_, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache())
 		g.Expect(err).To(HaveOccurred())
 	})
 	t.Run("Error on object which does not exist (anymore) but was expected to get updated", func(t *testing.T) {
@@ -482,59 +498,8 @@ func TestServerSideApply(t *testing.T) {
 		original.SetUID("does-not-exist")
 
 		// Create a patch helper which should fail because original does not exist.
-		_, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient())
+		_, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssa.NewCache())
 		g.Expect(err).To(HaveOccurred())
-	})
-}
-
-func TestServerSideApply_CleanupLegacyManagedFields(t *testing.T) {
-	g := NewWithT(t)
-	// Create a namespace for running the test
-	ns, err := env.CreateNamespace(ctx, "ssa")
-	g.Expect(err).ToNot(HaveOccurred())
-
-	// Build the test object to work with.
-	obj := builder.TestInfrastructureCluster(ns.Name, "obj1").WithSpecFields(map[string]interface{}{
-		"spec.foo": "",
-	}).Build()
-	obj.SetAnnotations(map[string]string{clusterv1.ClusterTopologyManagedFieldsAnnotation: "foo"})
-
-	t.Run("Server side apply cleanups legacy managed fields", func(t *testing.T) {
-		g := NewWithT(t)
-
-		// Create the object simulating reconcile with legacy managed fields
-		g.Expect(env.CreateAndWait(ctx, obj.DeepCopy(), client.FieldOwner("manager")))
-
-		// Gets the object and create SSA patch helper triggering cleanup.
-		original := builder.TestInfrastructureCluster("", "").Build()
-		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(obj), original)).To(Succeed())
-
-		modified := obj.DeepCopy()
-		_, err := NewServerSidePatchHelper(ctx, original, modified, env.GetClient())
-		g.Expect(err).ToNot(HaveOccurred())
-
-		// Get created object after cleanup
-		got := builder.TestInfrastructureCluster("", "").Build()
-		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(obj), got)).To(Succeed())
-
-		// Check annotation has been removed
-		g.Expect(got.GetAnnotations()).ToNot(HaveKey(clusterv1.ClusterTopologyManagedFieldsAnnotation))
-
-		// Check managed fields has been fixed
-		gotManagedFields := got.GetManagedFields()
-		gotLegacyManager, gotSSAManager := false, false
-		for i := range gotManagedFields {
-			if gotManagedFields[i].Manager == "manager" &&
-				gotManagedFields[i].Operation == metav1.ManagedFieldsOperationUpdate {
-				gotLegacyManager = true
-			}
-			if gotManagedFields[i].Manager == TopologyManagerName &&
-				gotManagedFields[i].Operation == metav1.ManagedFieldsOperationApply {
-				gotSSAManager = true
-			}
-		}
-		g.Expect(gotLegacyManager).To(BeFalse())
-		g.Expect(gotSSAManager).To(BeTrue())
 	})
 }
 
@@ -556,4 +521,354 @@ func getTopologyManagedFields(original client.Object) map[string]interface{} {
 		}
 	}
 	return r
+}
+
+// NOTE: This test ensures that ServerSideApply works as expected when new defaulting logic is introduced by a Cluster API update.
+func TestServerSideApplyWithDefaulting(t *testing.T) {
+	g := NewWithT(t)
+
+	// Create a namespace for running the test
+	ns, err := env.CreateNamespace(ctx, "ssa-defaulting")
+	g.Expect(err).ToNot(HaveOccurred())
+
+	// Setup webhook with the manager.
+	// Note: The webhooks is not active yet, as the MutatingWebhookConfiguration will be deployed later.
+	defaulter, mutatingWebhookConfiguration, err := setupWebhookWithManager(ns)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	// Calculate KubeadmConfigTemplate.
+	kct := &bootstrapv1.KubeadmConfigTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kct",
+			Namespace: ns.Name,
+		},
+		Spec: bootstrapv1.KubeadmConfigTemplateSpec{
+			Template: bootstrapv1.KubeadmConfigTemplateResource{
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					JoinConfiguration: &bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							KubeletExtraArgs: map[string]string{
+								"eviction-hard": "nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// The test does the following.
+	// 1. Create KubeadmConfigTemplate
+	// 2. Activate the new defaulting logic via the webhook
+	//   * This simulates the deployment of a new Cluster API version with new defaulting
+	// 3. Simulate defaulting on original and/or modified
+	//   * defaultOriginal will add a label to the KubeadmConfigTemplate which will trigger defaulting
+	//     * original is the KubeadmConfigTemplate referenced in a MachineDeployment of the Cluster topology
+	//   * defaultModified will simulate that defaulting was run on the KubeadmConfigTemplate referenced in the ClusterClass
+	//     * modified is the desired state calculated based on the KubeadmConfigTemplate referenced in the ClusterClass
+	//   * We are testing through all permutations as we don't want to assume on which objects defaulting was run.
+	// 4. Check patch helper results
+
+	// We have the following test cases:
+	// | original   | modified    | expect behavior                                           |
+	// |            |             | no-op                                                     |
+	// | defaulted  |             | no-op                                                     |
+	// |            | defaulted   | no spec changes, only take ownership of defaulted fields  |
+	// | defaulted  | defaulted   | no spec changes, only take ownership of defaulted fields  |
+	tests := []struct {
+		name                 string
+		defaultOriginal      bool
+		defaultModified      bool
+		expectChanges        bool
+		expectSpecChanges    bool
+		expectFieldOwnership bool
+	}{
+		{
+			name:            "no-op if neither is defaulted",
+			defaultOriginal: false,
+			defaultModified: false,
+			// Dry run results:
+			// * original: field will be defaulted by the webhook, capi-topology doesn't get ownership.
+			// * modified: field will be defaulted by the webhook, capi-topology doesn't get ownership.
+			expectChanges:        false,
+			expectSpecChanges:    false,
+			expectFieldOwnership: false,
+		},
+		{
+			name:            "no-op if original is defaulted",
+			defaultOriginal: true,
+			defaultModified: false,
+			// Dry run results:
+			// * original: no defaulting in dry run, as field has already been defaulted before, capi-topology doesn't get ownership.
+			// * modified: field will be defaulted by the webhook, capi-topology doesn't get ownership.
+			expectChanges:        false,
+			expectSpecChanges:    false,
+			expectFieldOwnership: false,
+		},
+		{
+			name:            "no spec changes, only take ownership of defaulted fields if modified is defaulted",
+			defaultOriginal: false,
+			defaultModified: true,
+			// Dry run results:
+			// * original: field will be defaulted by the webhook, capi-topology doesn't get ownership.
+			// * original: no defaulting in dry run, as field has already been defaulted before, capi-topology does get ownership as we explicitly set the field.
+			// => capi-topology takes ownership during Patch
+			expectChanges:        true,
+			expectSpecChanges:    false,
+			expectFieldOwnership: true,
+		},
+		{
+			name:            "no spec changes, only take ownership of defaulted fields if both are defaulted",
+			defaultOriginal: true,
+			defaultModified: true,
+			// Dry run results:
+			// * original: no defaulting in dry run, as field has already been defaulted before, capi-topology doesn't get ownership.
+			// * original: no defaulting in dry run, as field has already been defaulted before, capi-topology does get ownership as we explicitly set the field.
+			// => capi-topology takes ownership during Patch
+			expectChanges:        true,
+			expectSpecChanges:    false,
+			expectFieldOwnership: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			// Note: This is necessary because otherwise we could not create the webhook config
+			// in multiple test runs, because after the first test run it has a resourceVersion set.
+			mutatingWebhookConfiguration := mutatingWebhookConfiguration.DeepCopy()
+
+			// Create a cache to cache SSA requests.
+			ssaCache := ssa.NewCache()
+
+			// Create the initial KubeadmConfigTemplate (with the old defaulting logic).
+			p0, err := NewServerSidePatchHelper(ctx, nil, kct.DeepCopy(), env.GetClient(), ssaCache)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(p0.HasChanges()).To(BeTrue())
+			g.Expect(p0.HasSpecChanges()).To(BeTrue())
+			g.Expect(p0.Patch(ctx)).To(Succeed())
+			defer func() {
+				g.Expect(env.CleanupAndWait(ctx, kct.DeepCopy())).To(Succeed())
+			}()
+
+			// Enable the new defaulting logic (i.e. simulate the Cluster API update).
+			// The webhook will default the users field to `[{Name: "default-user"}]`.
+			g.Expect(env.Create(ctx, mutatingWebhookConfiguration)).To(Succeed())
+			defer func() {
+				g.Expect(env.CleanupAndWait(ctx, mutatingWebhookConfiguration)).To(Succeed())
+			}()
+
+			// Run defaulting on the KubeadmConfigTemplate (triggered by an "external controller")
+			// Note: We have to retry this with eventually as it seems to take a bit of time until
+			// the webhook is active.
+			if tt.defaultOriginal {
+				g.Eventually(ctx, func(g Gomega) {
+					patchKCT := &bootstrapv1.KubeadmConfigTemplate{}
+					g.Expect(env.Get(ctx, client.ObjectKeyFromObject(kct), patchKCT))
+
+					if patchKCT.Labels == nil {
+						patchKCT.Labels = map[string]string{}
+					}
+					patchKCT.Labels["trigger"] = "update"
+
+					g.Expect(env.Patch(ctx, patchKCT, client.MergeFrom(kct))).To(Succeed())
+
+					// Ensure patchKCT was defaulted.
+					g.Expect(env.Get(ctx, client.ObjectKeyFromObject(kct), patchKCT))
+					g.Expect(patchKCT.Spec.Template.Spec.Users).To(Equal([]bootstrapv1.User{{Name: "default-user"}}))
+				}, 5*time.Second).Should(Succeed())
+			}
+			// Get original for the update.
+			original := kct.DeepCopy()
+			g.Expect(env.Get(ctx, client.ObjectKeyFromObject(original), original))
+
+			// Calculate modified for the update.
+			modified := kct.DeepCopy()
+			// Run defaulting on modified
+			// Note: We just default the modified / desired locally as we are not simulating
+			// an entire ClusterClass. Defaulting on the template of the ClusterClass would
+			// lead to the modified object having the defaults.
+			if tt.defaultModified {
+				defaultKubeadmConfigTemplate(modified)
+			}
+
+			// Apply modified.
+			p0, err = NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssaCache)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(p0.HasChanges()).To(Equal(tt.expectChanges))
+			g.Expect(p0.HasSpecChanges()).To(Equal(tt.expectSpecChanges))
+			g.Expect(p0.Patch(ctx)).To(Succeed())
+
+			// Verify field ownership
+			// Note: It might take a bit for the cache to be up-to-date.
+			g.Eventually(func(g Gomega) {
+				got := original.DeepCopy()
+				g.Expect(env.Get(ctx, client.ObjectKeyFromObject(got), got))
+
+				// topology controller should express opinions on spec.template.spec.
+				fieldV1 := getTopologyManagedFields(got)
+				g.Expect(fieldV1).ToNot(BeEmpty())
+				g.Expect(fieldV1).To(HaveKey("f:spec"))
+				specFieldV1 := fieldV1["f:spec"].(map[string]interface{})
+				g.Expect(specFieldV1).ToNot(BeEmpty())
+				g.Expect(specFieldV1).To(HaveKey("f:template"))
+				specTemplateFieldV1 := specFieldV1["f:template"].(map[string]interface{})
+				g.Expect(specTemplateFieldV1).ToNot(BeEmpty())
+				g.Expect(specTemplateFieldV1).To(HaveKey("f:spec"))
+
+				specTemplateSpecFieldV1 := specTemplateFieldV1["f:spec"].(map[string]interface{})
+				if tt.expectFieldOwnership {
+					// topology controller should express opinions on spec.template.spec.users.
+					g.Expect(specTemplateSpecFieldV1).To(HaveKey("f:users"))
+				} else {
+					// topology controller should not express opinions on spec.template.spec.users.
+					g.Expect(specTemplateSpecFieldV1).ToNot(HaveKey("f:users"))
+				}
+			}, 2*time.Second).Should(Succeed())
+
+			if p0.HasChanges() {
+				// If there were changes the request should not be cached.
+				// Which means on the next call we should not hit the cache and thus
+				// send a request to the server.
+				// We verify this by checking the webhook call counter.
+
+				// Get original.
+				original = kct.DeepCopy()
+				g.Expect(env.Get(ctx, client.ObjectKeyFromObject(original), original))
+
+				countBefore := defaulter.Counter
+
+				// Apply modified again.
+				p0, err = NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssaCache)
+				g.Expect(err).ToNot(HaveOccurred())
+
+				// Expect no changes.
+				g.Expect(p0.HasChanges()).To(BeFalse())
+				g.Expect(p0.HasSpecChanges()).To(BeFalse())
+				g.Expect(p0.Patch(ctx)).To(Succeed())
+
+				// Expect webhook to be called.
+				g.Expect(defaulter.Counter).To(Equal(countBefore+2),
+					"request should not have been cached and thus we expect the webhook to be called twice (once for original and once for modified)")
+
+				// Note: Now the request is also cached, which we verify below.
+			}
+
+			// If there were no changes the request is now cached.
+			// Which means on the next call we should only hit the cache and thus
+			// don't send a request to the server.
+			// We verify this by checking the webhook call counter.
+
+			// Get original.
+			original = kct.DeepCopy()
+			g.Expect(env.Get(ctx, client.ObjectKeyFromObject(original), original))
+
+			countBefore := defaulter.Counter
+
+			// Apply modified again.
+			p0, err = NewServerSidePatchHelper(ctx, original, modified, env.GetClient(), ssaCache)
+			g.Expect(err).ToNot(HaveOccurred())
+
+			// Expect no changes.
+			g.Expect(p0.HasChanges()).To(BeFalse())
+			g.Expect(p0.HasSpecChanges()).To(BeFalse())
+			g.Expect(p0.Patch(ctx)).To(Succeed())
+
+			// Expect webhook to not be called.
+			g.Expect(defaulter.Counter).To(Equal(countBefore),
+				"request should have been cached and thus the webhook not called")
+		})
+	}
+}
+
+// setupWebhookWithManager configures the envtest manager / webhook server to serve the webhook.
+// It also calculates and returns the corresponding MutatingWebhookConfiguration.
+// Note: To activate the webhook, the MutatingWebhookConfiguration has to be deployed.
+func setupWebhookWithManager(ns *corev1.Namespace) (*KubeadmConfigTemplateTestDefaulter, *admissionv1.MutatingWebhookConfiguration, error) {
+	webhookServer := env.Manager.GetWebhookServer()
+
+	// Calculate webhook host and path.
+	// Note: This is done the same way as in our envtest package.
+	webhookPath := fmt.Sprintf("/%s/ssa-defaulting-webhook", ns.Name)
+	webhookHost := "127.0.0.1"
+	if host := os.Getenv("CAPI_WEBHOOK_HOSTNAME"); host != "" {
+		webhookHost = host
+	}
+
+	// Serve KubeadmConfigTemplateTestDefaulter on the webhook server.
+	// Note: This should only ever be called once with the same path, otherwise we get a panic.
+	defaulter := &KubeadmConfigTemplateTestDefaulter{}
+	webhookServer.Register(webhookPath,
+		admission.WithCustomDefaulter(&bootstrapv1.KubeadmConfigTemplate{}, defaulter))
+
+	// Calculate the MutatingWebhookConfiguration
+	caBundle, err := os.ReadFile(filepath.Join(webhookServer.CertDir, webhookServer.CertName))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sideEffectNone := admissionv1.SideEffectClassNone
+	webhookConfig := &admissionv1.MutatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ns.Name + "-webhook-config",
+		},
+		Webhooks: []admissionv1.MutatingWebhook{
+			{
+				Name: ns.Name + ".kubeadmconfigtemplate.bootstrap.cluster.x-k8s.io",
+				ClientConfig: admissionv1.WebhookClientConfig{
+					URL:      pointer.String(fmt.Sprintf("https://%s%s", net.JoinHostPort(webhookHost, strconv.Itoa(webhookServer.Port)), webhookPath)),
+					CABundle: caBundle,
+				},
+				Rules: []admissionv1.RuleWithOperations{
+					{
+						Operations: []admissionv1.OperationType{
+							admissionv1.Create,
+							admissionv1.Update,
+						},
+						Rule: admissionv1.Rule{
+							APIGroups:   []string{bootstrapv1.GroupVersion.Group},
+							APIVersions: []string{bootstrapv1.GroupVersion.Version},
+							Resources:   []string{"kubeadmconfigtemplates"},
+						},
+					},
+				},
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						corev1.LabelMetadataName: ns.Name,
+					},
+				},
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             &sideEffectNone,
+			},
+		},
+	}
+	return defaulter, webhookConfig, nil
+}
+
+var _ webhook.CustomDefaulter = &KubeadmConfigTemplateTestDefaulter{}
+
+type KubeadmConfigTemplateTestDefaulter struct {
+	Counter int
+}
+
+func (d *KubeadmConfigTemplateTestDefaulter) Default(_ context.Context, obj runtime.Object) error {
+	kct, ok := obj.(*bootstrapv1.KubeadmConfigTemplate)
+	if !ok {
+		return apierrors.NewBadRequest(fmt.Sprintf("expected a Cluster but got a %T", obj))
+	}
+
+	d.Counter++
+
+	defaultKubeadmConfigTemplate(kct)
+	return nil
+}
+
+func defaultKubeadmConfigTemplate(kct *bootstrapv1.KubeadmConfigTemplate) {
+	if len(kct.Spec.Template.Spec.Users) == 0 {
+		kct.Spec.Template.Spec.Users = []bootstrapv1.User{
+			{
+				Name: "default-user",
+			},
+		}
+	}
 }

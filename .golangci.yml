@@ -25,6 +25,7 @@ linters:
   - errchkjson
   - exportloopref
   - gci
+  - ginkgolinter
   - goconst
   - gocritic
   - godot
@@ -41,6 +42,7 @@ linters:
   - nilerr
   - noctx
   - nolintlint
+  - nosprintfhostport
   - prealloc
   - predeclared
   - revive
@@ -52,19 +54,52 @@ linters:
   - unconvert
   - unparam
   - unused
+  - usestdlibvars
   - whitespace
 
 linters-settings:
+  gci:
+    local-prefixes: "sigs.k8s.io/cluster-api"
+  ginkgolinter:
+    # Suppress the wrong length assertion warning.
+    suppress-len-assertion: false
+    # Suppress the wrong nil assertion warning.
+    suppress-nil-assertion: false
+    # Suppress the wrong error assertion warning.
+    suppress-err-assertion: true
   godot:
     #   declarations - for top level declaration comments (default);
     #   toplevel     - for top level comments;
     #   all          - for all comments.
     scope: toplevel
     exclude:
-    - '^ \+.*'
-    - '^ ANCHOR.*'
-  gci:
-    local-prefixes: "sigs.k8s.io/cluster-api"
+      - '^ \+.*'
+      - '^ ANCHOR.*'
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - performance
+    disabled-checks:
+      - appendAssign
+      - dupImport # https://github.com/go-critic/go-critic/issues/845
+      - evalOrder
+      - ifElseChain
+      - octalLiteral
+      - regexpSimplify
+      - sloppyReassign
+      - truncateCmp
+      - typeDefFirst
+      - unnamedResult
+      - unnecessaryDefer
+      - whyNoLint
+      - wrapperFunc
+      - rangeValCopy
+      - hugeParam
+  gosec:
+    excludes:
+    - G307 # Deferring unsafe method "Close" on type "\*os.File"
+    - G108 # Profiling endpoint is automatically exposed on /debug/pprof
   importas:
     no-unaliased: true
     alias:
@@ -163,7 +198,7 @@ linters-settings:
       - name: error-strings
       - name: error-naming
       - name: exported
-      #- name: if-return  # TODO This is a recommended rule with many findings which may require it's own pr.
+      - name: if-return
       - name: increment-decrement
       - name: var-naming
       - name: var-declaration
@@ -184,31 +219,6 @@ linters-settings:
       #
       - name: bool-literal-in-expr
       - name: constant-logical-expr
-  gosec:
-    excludes:
-    - G307 # Deferring unsafe method "Close" on type "\*os.File"
-    - G108 # Profiling endpoint is automatically exposed on /debug/pprof
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - performance
-    disabled-checks:
-    - appendAssign
-    - dupImport # https://github.com/go-critic/go-critic/issues/845
-    - evalOrder
-    - ifElseChain
-    - octalLiteral
-    - regexpSimplify
-    - sloppyReassign
-    - truncateCmp
-    - typeDefFirst
-    - unnamedResult
-    - unnecessaryDefer
-    - whyNoLint
-    - wrapperFunc
-    - rangeValCopy
-    - hugeParam
 
 issues:
   max-same-issues: 0
@@ -217,10 +227,21 @@ issues:
   # changes in PRs and avoid nitpicking.
   exclude-use-default: false
   exclude-rules:
-  # Specific exclude rules for deprecated fields that are still part of the codebase. These should be removed as the referenced deprecated item is removed from the project.
+  # Specific exclude rules for deprecated fields that are still part of the codebase. These
+  # should be removed as the referenced deprecated item is removed from the project.
   - linters:
       - staticcheck
-    text: "SA1019: (bootstrapv1.ClusterStatus|clusterv1.ClusterTopologyManagedFieldsAnnotation|scope.Config.Spec.UseExperimentalRetryJoin|DockerMachine.Spec.Bootstrapped|machineStatus.Bootstrapped) is deprecated"
+    text: "SA1019: (bootstrapv1.ClusterStatus|scope.Config.Spec.UseExperimentalRetryJoin|DockerMachine.Spec.Bootstrapped|machineStatus.Bootstrapped) is deprecated"
+  # Specific exclude rules for deprecated packages that are still part of the codebase. These
+  # should be removed as the referenced deprecated packages are removed from the project.
+  - linters:
+    - staticcheck
+    text: "SA1019: .* is deprecated: This package will be removed in one of the next releases."
+  # Specific exclude rules for deprecated types that are still part of the codebase. These
+  # should be removed as the referenced deprecated types are removed from the project.
+  - linters:
+    - staticcheck
+    text: "SA1019: (clusterv1alpha3.*|clusterv1alpha4.*) is deprecated: This type will be removed in one of the next releases."
   - linters:
     - revive
     text: "exported: exported method .*\\.(Reconcile|SetupWithManager|SetupWebhookWithManager) should have comment or be unexported"
@@ -249,11 +270,13 @@ issues:
   - linters:
     - unparam
     text: always receives
-  # Dot imports for gomega or ginkgo are allowed
-  # within test files.
+  # Dot imports for gomega and ginkgo are allowed
+  # within test files and test utils.
   - path: _test\.go
     text: should not use dot imports
   - path: (framework|e2e)/.*.go
+    text: should not use dot imports
+  - path: util/defaulting/defaulting.go
     text: should not use dot imports
   - path: _test\.go
     text: cyclomatic complexity
@@ -267,16 +290,28 @@ issues:
     text: "SA1019: in.(.+) is deprecated"
     path: .*(api|types)\/.*\/conversion.*\.go$
   - linters:
+      - revive
+    # Checking if an error is nil to just after return the error or nil is redundant
+    text: "if-return: redundant if ...; err != nil check, just return error instead"
+    # Ignoring stylistic checks for generated code
+    path: .*(api|types|test)\/.*\/conversion.*\.go$
+  - linters:
     - revive
+    # Exported function and methods should have comments. This warns on undocumented exported functions and methods.
     text: exported (method|function|type|const) (.+) should have comment or be unexported
+    # Ignoring stylistic checks for generated code
     path: .*(api|types|test)\/.*\/conversion.*\.go$
   - linters:
     - revive
+    # This rule warns when initialism, variable or package naming conventions are not followed.
     text: "var-naming: don't use underscores in Go names;"
+    # Ignoring stylistic checks for generated code
     path: .*(api|types|test)\/.*\/conversion.*\.go$
   - linters:
     - revive
+    # By convention, receiver names in a method should reflect their identity.
     text: "receiver-naming: receiver name"
+    # Ignoring stylistic checks for generated code
     path: .*(api|types)\/.*\/conversion.*\.go$
   - linters:
     - stylecheck

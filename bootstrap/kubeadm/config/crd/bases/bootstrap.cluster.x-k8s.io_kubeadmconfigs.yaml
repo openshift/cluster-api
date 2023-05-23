@@ -3,8 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.10.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   name: kubeadmconfigs.bootstrap.cluster.x-k8s.io
 spec:
   group: bootstrap.cluster.x-k8s.io
@@ -20,7 +19,8 @@ spec:
   - name: v1alpha3
     schema:
       openAPIV3Schema:
-        description: KubeadmConfig is the Schema for the kubeadmconfigs API.
+        description: "KubeadmConfig is the Schema for the kubeadmconfigs API. \n Deprecated:
+          This type will be removed in one of the next releases."
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -1013,7 +1013,8 @@ spec:
     name: v1alpha4
     schema:
       openAPIV3Schema:
-        description: KubeadmConfig is the Schema for the kubeadmconfigs API.
+        description: "KubeadmConfig is the Schema for the kubeadmconfigs API. \n Deprecated:
+          This type will be removed in one of the next releases."
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -2598,6 +2599,17 @@ spec:
                         items:
                           type: string
                         type: array
+                      imagePullPolicy:
+                        description: ImagePullPolicy specifies the policy for image
+                          pulling during kubeadm "init" and "join" operations. The
+                          value of this field must be one of "Always", "IfNotPresent"
+                          or "Never". Defaults to "IfNotPresent". This can be used
+                          only with Kubernetes version equal to 1.22 and later.
+                        enum:
+                        - Always
+                        - IfNotPresent
+                        - Never
+                        type: string
                       kubeletExtraArgs:
                         additionalProperties:
                           type: string
@@ -2809,6 +2821,17 @@ spec:
                         items:
                           type: string
                         type: array
+                      imagePullPolicy:
+                        description: ImagePullPolicy specifies the policy for image
+                          pulling during kubeadm "init" and "join" operations. The
+                          value of this field must be one of "Always", "IfNotPresent"
+                          or "Never". Defaults to "IfNotPresent". This can be used
+                          only with Kubernetes version equal to 1.22 and later.
+                        enum:
+                        - Always
+                        - IfNotPresent
+                        - Never
+                        type: string
                       kubeletExtraArgs:
                         additionalProperties:
                           type: string

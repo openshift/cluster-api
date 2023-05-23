@@ -79,7 +79,6 @@ func InitFlags(fs *pflag.FlagSet) {
 	// Initialize logs flags using Kubernetes component-base machinery.
 	// NOTE: it is not mandatory to use Kubernetes component-base machinery in custom RuntimeExtension, but it is
 	// recommended because it helps in ensuring consistency across different components in the cluster.
-	logs.AddFlags(fs, logs.SkipLoggingConfigurationFlags())
 	logsv1.AddFlags(logOptions, fs)
 
 	// Add test-extension specific flags
@@ -174,6 +173,15 @@ func main() {
 		Hook:        runtimehooksv1.ValidateTopology,
 		Name:        "validate-topology",
 		HandlerFunc: topologyMutationExtensionHandlers.ValidateTopology,
+	}); err != nil {
+		setupLog.Error(err, "error adding handler")
+		os.Exit(1)
+	}
+
+	if err := webhookServer.AddExtensionHandler(server.ExtensionHandler{
+		Hook:        runtimehooksv1.DiscoverVariables,
+		Name:        "discover-variables",
+		HandlerFunc: topologyMutationExtensionHandlers.DiscoverVariables,
 	}); err != nil {
 		setupLog.Error(err, "error adding handler")
 		os.Exit(1)

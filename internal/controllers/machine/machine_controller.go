@@ -34,6 +34,7 @@ import (
 	"k8s.io/klog/v2"
 	kubedrain "k8s.io/kubectl/pkg/drain"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -46,6 +47,7 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/controllers/noderefutil"
 	"sigs.k8s.io/cluster-api/controllers/remote"
+	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/collections"
@@ -91,6 +93,7 @@ type Reconciler struct {
 	// nodeDeletionRetryTimeout determines how long the controller will retry deleting a node
 	// during a single reconciliation.
 	nodeDeletionRetryTimeout time.Duration
+	ssaCache                 ssa.Cache
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -103,37 +106,35 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 		r.nodeDeletionRetryTimeout = 10 * time.Second
 	}
 
-	controller, err := ctrl.NewControllerManagedBy(mgr).
+	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&clusterv1.Machine{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
+		Watches(
+			&source.Kind{Type: &clusterv1.Cluster{}},
+			handler.EnqueueRequestsFromMapFunc(clusterToMachines),
+			builder.WithPredicates(
+				// TODO: should this wait for Cluster.Status.InfrastructureReady similar to Infra Machine resources?
+				predicates.All(ctrl.LoggerFrom(ctx),
+					predicates.Any(ctrl.LoggerFrom(ctx),
+						predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
+						predicates.ClusterControlPlaneInitialized(ctrl.LoggerFrom(ctx)),
+					),
+					predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
+				),
+			)).
 		Build(r)
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
 	}
 
-	err = controller.Watch(
-		&source.Kind{Type: &clusterv1.Cluster{}},
-		handler.EnqueueRequestsFromMapFunc(clusterToMachines),
-		// TODO: should this wait for Cluster.Status.InfrastructureReady similar to Infra Machine resources?
-		predicates.All(ctrl.LoggerFrom(ctx),
-			predicates.Any(ctrl.LoggerFrom(ctx),
-				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
-				predicates.ClusterControlPlaneInitialized(ctrl.LoggerFrom(ctx)),
-			),
-			predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
-		),
-	)
-	if err != nil {
-		return errors.Wrap(err, "failed to add Watch for Clusters to controller manager")
-	}
-
-	r.controller = controller
+	r.controller = c
 
 	r.recorder = mgr.GetEventRecorderFor("machine-controller")
 	r.externalTracker = external.ObjectTracker{
-		Controller: controller,
+		Controller: c,
 	}
+	r.ssaCache = ssa.NewCache()
 	return nil
 }
 
@@ -197,7 +198,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 	if m.Labels == nil {
 		m.Labels = make(map[string]string)
 	}
-	m.Labels[clusterv1.ClusterLabelName] = m.Spec.ClusterName
+	m.Labels[clusterv1.ClusterNameLabel] = m.Spec.ClusterName
 
 	// Add finalizer first if not exist to avoid the race condition between init and delete
 	if !controllerutil.ContainsFinalizer(m, clusterv1.MachineFinalizer) {
@@ -211,7 +212,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 		// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
 		// the current cluster because of concurrent access.
 		if errors.Is(err, remote.ErrClusterLocked) {
-			log.V(5).Info("Requeueing because another worker has the lock on the ClusterCacheTracker")
+			log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
 			return ctrl.Result{Requeue: true}, nil
 		}
 		return res, err
@@ -222,7 +223,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 	// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
 	// the current cluster because of concurrent access.
 	if errors.Is(err, remote.ErrClusterLocked) {
-		log.V(5).Info("Requeueing because another worker has the lock on the ClusterCacheTracker")
+		log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
 		return ctrl.Result{Requeue: true}, nil
 	}
 	return res, err
@@ -267,19 +268,15 @@ func patchMachine(ctx context.Context, patchHelper *patch.Helper, machine *clust
 }
 
 func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, m *clusterv1.Machine) (ctrl.Result, error) {
-	if err := r.watchClusterNodes(ctx, cluster); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// If the machine is a stand-alone one, meaning not originated from a MachineDeployment, then set it as directly
 	// owned by the Cluster (if not already present).
 	if r.shouldAdopt(m) {
-		m.OwnerReferences = util.EnsureOwnerRef(m.OwnerReferences, metav1.OwnerReference{
+		m.SetOwnerReferences(util.EnsureOwnerRef(m.GetOwnerReferences(), metav1.OwnerReference{
 			APIVersion: clusterv1.GroupVersion.String(),
 			Kind:       "Cluster",
 			Name:       cluster.Name,
 			UID:        cluster.UID,
-		})
+		}))
 	}
 
 	phases := []func(context.Context, *clusterv1.Cluster, *clusterv1.Machine) (ctrl.Result, error){
@@ -367,8 +364,6 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Clu
 		// After node draining is completed, and if isNodeVolumeDetachingAllowed returns True, make sure all
 		// volumes are detached before proceeding to delete the Node.
 		if r.isNodeVolumeDetachingAllowed(m) {
-			log.Info("Waiting for node volumes to be detached", "Node", klog.KRef("", m.Status.NodeRef.Name))
-
 			// The VolumeDetachSucceededCondition never exists before we wait for volume detachment for the first time,
 			// so its transition time can be used to record the first time we wait for volume detachment.
 			// This `if` condition prevents the transition time to be changed more than once.
@@ -410,12 +405,22 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Clu
 		return ctrl.Result{}, errors.Wrap(err, "failed to patch Machine")
 	}
 
-	if ok, err := r.reconcileDeleteInfrastructure(ctx, m); !ok || err != nil {
+	infrastructureDeleted, err := r.reconcileDeleteInfrastructure(ctx, m)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if !infrastructureDeleted {
+		log.Info("Waiting for infrastructure to be deleted", m.Spec.InfrastructureRef.Kind, klog.KRef(m.Spec.InfrastructureRef.Namespace, m.Spec.InfrastructureRef.Name))
+		return ctrl.Result{}, nil
+	}
 
-	if ok, err := r.reconcileDeleteBootstrap(ctx, m); !ok || err != nil {
+	bootstrapDeleted, err := r.reconcileDeleteBootstrap(ctx, m)
+	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if !bootstrapDeleted {
+		log.Info("Waiting for bootstrap to be deleted", m.Spec.Bootstrap.ConfigRef.Kind, klog.KRef(m.Spec.Bootstrap.ConfigRef.Namespace, m.Spec.Bootstrap.ConfigRef.Name))
+		return ctrl.Result{}, nil
 	}
 
 	// We only delete the node after the underlying infrastructure is gone.
@@ -756,7 +761,7 @@ func (r *Reconciler) reconcileDeleteExternal(ctx context.Context, m *clusterv1.M
 // shouldAdopt returns true if the Machine should be adopted as a stand-alone Machine directly owned by the Cluster.
 func (r *Reconciler) shouldAdopt(m *clusterv1.Machine) bool {
 	// if the machine is controlled by something (MS or KCP), or if it is a stand-alone machine directly owned by the Cluster, then no-op.
-	if metav1.GetControllerOf(m) != nil || util.HasOwner(m.OwnerReferences, clusterv1.GroupVersion.String(), []string{"Cluster"}) {
+	if metav1.GetControllerOf(m) != nil || util.HasOwner(m.GetOwnerReferences(), clusterv1.GroupVersion.String(), []string{"Cluster"}) {
 		return false
 	}
 
@@ -764,7 +769,7 @@ func (r *Reconciler) shouldAdopt(m *clusterv1.Machine) bool {
 	// MachineSet/ControlPlane controller are racing to adopt Machines, see https://github.com/kubernetes-sigs/cluster-api/issues/7529
 
 	// If the Machine is originated by a MachineSet, it should not be adopted directly by the Cluster as a stand-alone Machine.
-	if _, ok := m.Labels[clusterv1.MachineSetLabelName]; ok {
+	if _, ok := m.Labels[clusterv1.MachineSetNameLabel]; ok {
 		return false
 	}
 
@@ -807,7 +812,7 @@ func (r *Reconciler) nodeToMachine(o client.Object) []reconcile.Request {
 	// Match by clusterName when the node has the annotation.
 	if clusterName, ok := node.GetAnnotations()[clusterv1.ClusterNameAnnotation]; ok {
 		filters = append(filters, client.MatchingLabels{
-			clusterv1.ClusterLabelName: clusterName,
+			clusterv1.ClusterNameLabel: clusterName,
 		})
 	}
 

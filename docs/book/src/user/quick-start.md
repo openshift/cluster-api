@@ -16,6 +16,7 @@ If using a [provider] that does not support v1beta1 or v1alpha4 yet, please foll
 
 - Install and setup [kubectl] in your local environment
 - Install [kind] and [Docker]
+- Install [Helm]
 
 ### Install and/or configure a Kubernetes cluster
 
@@ -45,7 +46,7 @@ a target [management cluster] on the selected [infrastructure provider].
 
    [kind] is not designed for production use.
 
-   **Minimum [kind] supported version**: v0.17.0
+   **Minimum [kind] supported version**: v0.18.0
 
    **Help with common issues can be found in the [Troubleshooting Guide](./troubleshooting.md).**
 
@@ -101,16 +102,16 @@ a target [management cluster] on the selected [infrastructure provider].
    the workload cluster's nodes, are actually running within pods in the management cluster. In order to communicate with
    the workload cluster's API server, we'll need to expose it. We are using Kind which is a limited environment. The
    easiest way to expose the workload cluster's API server (a pod within a node running in a VM that is itself running
-   within a pod in the management cluster, that is running inside a docker container), is to use a LoadBalancer service.
+   within a pod in the management cluster, that is running inside a Docker container), is to use a LoadBalancer service.
 
    To allow using a LoadBalancer service, we can't use the kind's default CNI (kindnet), but we'll need to install
    another CNI, like Calico. In order to do that, we'll need first to initiate the kind cluster with two modifications:
    1. Disable the default CNI
-   2. Add the docker credentials to the cluster, to avoid the docker hub pull rate limit of the calico images; read more
+   2. Add the Docker credentials to the cluster, to avoid the Docker Hub pull rate limit of the calico images; read more
       about it in the [docker documentation](https://docs.docker.com/docker-hub/download-rate-limit/), and in the
       [kind documentation](https://kind.sigs.k8s.io/docs/user/private-registries/#mount-a-config-file-to-each-node).
 
-   Create a configuration file for kind. Please notice the docker config file path, and adjust it to your local setting:
+   Create a configuration file for kind. Please notice the Docker config file path, and adjust it to your local setting:
    ```bash
    cat <<EOF > kind-config.yaml
    kind: Cluster
@@ -158,17 +159,17 @@ If you are unsure you can determine your computers architecture by running `unam
 
 Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.3.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.4.x"}} -o clusterctl
 ```
 
 Download for ARM64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-arm64" version:"1.3.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-arm64" version:"1.4.x"}} -o clusterctl
 ```
 
 Download for PPC64LE:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-ppc64le" version:"1.3.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-ppc64le" version:"1.4.x"}} -o clusterctl
 ```
 
 Install clusterctl:
@@ -188,12 +189,12 @@ If you are unsure you can determine your computers architecture by running `unam
 
 Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.3.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.4.x"}} -o clusterctl
 ```
 
 Download for M1 CPU ("Apple Silicon") / ARM64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.3.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.4.x"}} -o clusterctl
 ```
 
 Make the clusterctl binary executable.
@@ -232,7 +233,7 @@ Go to the working directory where you want clusterctl downloaded.
 
 Download the latest release; on Windows, type:
 ```powershell
-curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.3.x"}} -o clusterctl.exe
+curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.4.x"}} -o clusterctl.exe
 ```
 Append or prepend the path of that directory to the `PATH` environment variable.
 
@@ -835,17 +836,17 @@ export AZURE_RESOURCE_GROUP="<ResourceGroupName>"
 {{#/tab }}
 {{#tab CloudStack}}
 
-A ClusterAPI compatible image must be available in your Cloudstack installation. For instructions on how to build a compatible image
-see [image-builder (Cloudstack)](https://image-builder.sigs.k8s.io/capi/providers/cloudstack.html)
+A Cluster API compatible image must be available in your CloudStack installation. For instructions on how to build a compatible image
+see [image-builder (CloudStack)](https://image-builder.sigs.k8s.io/capi/providers/cloudstack.html)
 
 Prebuilt images can be found [here](http://packages.shapeblue.com/cluster-api-provider-cloudstack/images/)
 
-To see all required Cloudstack environment variables execute:
+To see all required CloudStack environment variables execute:
 ```bash
 clusterctl generate cluster --infrastructure cloudstack --list-variables capi-quickstart
 ```
 
-Apart from the script, the following Cloudstack environment variables are required.
+Apart from the script, the following CloudStack environment variables are required.
 ```bash
 # Set this to the name of the zone in which to deploy the cluster
 export CLOUDSTACK_ZONE_NAME=<zone name>
@@ -951,7 +952,7 @@ export KUBE_VIP_VERSION="v0.5.0"
 # Name of the GCP datacenter location. Change this value to your desired location
 export GCP_REGION="<GCP_REGION>"
 export GCP_PROJECT="<GCP_PROJECT>"
-# Make sure to use same kubernetes version here as building the GCE image
+# Make sure to use same Kubernetes version here as building the GCE image
 export KUBERNETES_VERSION=1.23.3
 # This is the image you built. See https://github.com/kubernetes-sigs/image-builder
 export IMAGE_ID=projects/$GCP_PROJECT/global/images/<built image>
@@ -1214,7 +1215,7 @@ The Docker provider is not designed for production use and is intended for devel
 
 ```bash
 clusterctl generate cluster capi-quickstart --flavor development \
-  --kubernetes-version v1.26.0 \
+  --kubernetes-version v1.27.0 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1226,7 +1227,7 @@ clusterctl generate cluster capi-quickstart --flavor development \
 ```bash
 export CLUSTER_NAME=kind
 export CLUSTER_NAMESPACE=vcluster
-export KUBERNETES_VERSION=1.26.0
+export KUBERNETES_VERSION=1.27.0
 export HELM_VALUES="service:\n  type: NodePort"
 
 kubectl create namespace ${CLUSTER_NAMESPACE}
@@ -1257,7 +1258,7 @@ clusterctl generate cluster capi-quickstart \
 
 ```bash
 clusterctl generate cluster capi-quickstart \
-  --kubernetes-version v1.26.0 \
+  --kubernetes-version v1.27.0 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1307,6 +1308,13 @@ You can also get an "at glance" view of the cluster and its resources by running
 clusterctl describe cluster capi-quickstart
 ```
 
+and see an output similar to this:
+
+```bash
+NAME              PHASE         AGE   VERSION
+capi-quickstart   Provisioned   8s    v1.27.0
+```
+
 To verify the first control plane is up:
 
 ```bash
@@ -1317,7 +1325,7 @@ You should see an output is similar to this:
 
 ```bash
 NAME                    CLUSTER           INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE    VERSION
-capi-quickstart-g2trk   capi-quickstart   true                                 3                  3         3             4m7s   v1.26.0
+capi-quickstart-g2trk   capi-quickstart   true                                 3                  3         3             4m7s   v1.27.0
 ```
 
 <aside class="note warning">
@@ -1357,6 +1365,24 @@ Note: To use the default clusterctl method to retrieve kubeconfig for a workload
 {{#/tab }}
 {{#/tabs }}
 
+### Install a Cloud Provider
+
+The Kubernetes in-tree cloud provider implementations are being [removed](https://github.com/kubernetes/enhancements/tree/master/keps/sig-cloud-provider/2395-removing-in-tree-cloud-providers) in favor of external cloud providers (also referred to as "out-of-tree"). This requires deploying a new component called the cloud-controller-manager which is responsible for running all the cloud specific controllers that were previously run in the kube-controller-manager. To learn more, see [this blog post](https://kubernetes.io/blog/2019/04/17/the-future-of-cloud-providers-in-kubernetes/).
+
+{{#tabs name:"tab-install-cloud-provider" tabs:"Azure"}}
+{{#tab Azure}}
+
+Install the official cloud-provider-azure Helm chart on the workload cluster:
+
+```bash
+helm install --kubeconfig=./capi-quickstart.kubeconfig --repo https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo cloud-provider-azure --generate-name --set infra.clusterName=capi-quickstart --set cloudControllerManager.clusterCIDR="192.168.0.0/16"
+```
+
+For more information, see the [CAPZ book](https://capz.sigs.k8s.io/topics/addons.html).
+
+{{#/tab }}
+{{#/tabs }}
+
 ### Deploy a CNI solution
 
 Calico is used here as an example.
@@ -1364,11 +1390,11 @@ Calico is used here as an example.
 {{#tabs name:"tab-deploy-cni" tabs:"Azure,vcluster,KubeVirt,others..."}}
 {{#tab Azure}}
 
-Azure [does not currently support Calico networking](https://docs.projectcalico.org/reference/public-cloud/azure). As a workaround, it is recommended that Azure clusters use the Calico spec below that uses VXLAN.
+Install the official Calico Helm chart on the workload cluster:
 
 ```bash
-kubectl --kubeconfig=./capi-quickstart.kubeconfig \
-  apply -f https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-azure/main/templates/addons/calico.yaml
+helm repo add projectcalico https://docs.tigera.io/calico/charts --kubeconfig=./capi-quickstart.kubeconfig && \
+helm install calico projectcalico/tigera-operator --kubeconfig=./capi-quickstart.kubeconfig -f https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-azure/main/templates/addons/calico/values.yaml --namespace tigera-operator --create-namespace
 ```
 
 After a short while, our nodes should be running and in `Ready` state,
@@ -1452,12 +1478,12 @@ If the nodes don't become ready after a long period, read the pods in the `kube-
 kubectl --kubeconfig=./capi-quickstart.kubeconfig get pod -n kube-system
 ```
 
-If the Calico pods are in image pull error state (`ErrImagePull`), it's probably because of the docker hub pull rate limit.
-We can try to fix that by adding a secret with our docker hub credentials, and use it;
+If the Calico pods are in image pull error state (`ErrImagePull`), it's probably because of the Docker Hub pull rate limit.
+We can try to fix that by adding a secret with our Docker Hub credentials, and use it;
 see [here](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/#registry-secret-existing-credentials)
 for details.
 
-First, create the secret. Please notice the docker config file path, and adjust it to your local setting.
+First, create the secret. Please notice the Docker config file path, and adjust it to your local setting.
 ```bash
 kubectl --kubeconfig=./capi-quickstart.kubeconfig create secret generic docker-creds \
     --from-file=.dockerconfigjson=<YOUR DOCKER CONFIG FILE PATH> \
@@ -1518,13 +1544,13 @@ let's check the status using `kubectl get nodes`:
 kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
 ```
 ```bash
-NAME                                          STATUS   ROLES           AGE   VERSION
-capi-quickstart-g2trk-9xrjv                   Ready    control-plane   12m   v1.26.0
-capi-quickstart-g2trk-bmm9v                   Ready    control-plane   11m   v1.26.0
-capi-quickstart-g2trk-hvs9q                   Ready    control-plane   13m   v1.26.0
-capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          12m   v1.26.0
-capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          12m   v1.26.0
-capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          12m   v1.26.0
+NAME                                          STATUS   ROLES           AGE    VERSION
+capi-quickstart-vs89t-gmbld                   Ready    control-plane   5m33s  v1.27.0
+capi-quickstart-vs89t-kf9l5                   Ready    control-plane   6m20s  v1.27.0
+capi-quickstart-vs89t-t8cfn                   Ready    control-plane   7m10s  v1.27.0
+capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          6m5s   v1.27.0
+capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          6m9s   v1.27.0
+capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          6m9s   v1.27.0
 ```
 
 {{#/tab }}
@@ -1548,7 +1574,9 @@ kind delete cluster
 
 ## Next steps
 
-See the [clusterctl] documentation for more detail about clusterctl supported actions.
+- Create a second workload cluster. Simply follow the steps outlined above, but remember to provide a different name for your second workload cluster.
+- Deploy applications to your workload cluster. Use the [CNI deployment steps](#deploy-a-cni-solution) for pointers.
+- See the [clusterctl] documentation for more detail about clusterctl supported actions.
 
 <!-- links -->
 [Experimental Features]: ../tasks/experimental-features/experimental-features.md
@@ -1564,6 +1592,7 @@ See the [clusterctl] documentation for more detail about clusterctl supported ac
 [clusterctl]: ../clusterctl/overview.md
 [Docker]: https://www.docker.com/
 [GCP provider]: https://github.com/kubernetes-sigs/cluster-api-provider-gcp
+[Helm]: https://helm.sh/docs/intro/install/
 [Hetzner provider]: https://github.com/syself/cluster-api-provider-hetzner
 [IBM Cloud provider]: https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud
 [infrastructure provider]: ../reference/glossary.md#infrastructure-provider

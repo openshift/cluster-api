@@ -42,6 +42,8 @@ import (
 )
 
 func (r *Reconciler) reconcilePhase(_ context.Context, cluster *clusterv1.Cluster) {
+	preReconcilePhase := cluster.Status.GetTypedPhase()
+
 	if cluster.Status.Phase == "" {
 		cluster.Status.SetTypedPhase(clusterv1.ClusterPhasePending)
 	}
@@ -61,13 +63,23 @@ func (r *Reconciler) reconcilePhase(_ context.Context, cluster *clusterv1.Cluste
 	if !cluster.DeletionTimestamp.IsZero() {
 		cluster.Status.SetTypedPhase(clusterv1.ClusterPhaseDeleting)
 	}
+
+	// Only record the event if the status has changed
+	if preReconcilePhase != cluster.Status.GetTypedPhase() {
+		// Failed clusters should get a Warning event
+		if cluster.Status.GetTypedPhase() == clusterv1.ClusterPhaseFailed {
+			r.recorder.Eventf(cluster, corev1.EventTypeWarning, string(cluster.Status.GetTypedPhase()), "Cluster %s is %s: %s", cluster.Name, string(cluster.Status.GetTypedPhase()), pointer.StringDeref(cluster.Status.FailureMessage, "unknown"))
+		} else {
+			r.recorder.Eventf(cluster, corev1.EventTypeNormal, string(cluster.Status.GetTypedPhase()), "Cluster %s is %s", cluster.Name, string(cluster.Status.GetTypedPhase()))
+		}
+	}
 }
 
 // reconcileExternal handles generic unstructured objects referenced by a Cluster.
 func (r *Reconciler) reconcileExternal(ctx context.Context, cluster *clusterv1.Cluster, ref *corev1.ObjectReference) (external.ReconcileOutput, error) {
 	log := ctrl.LoggerFrom(ctx)
 
-	if err := utilconversion.UpdateReferenceAPIContract(ctx, r.Client, r.APIReader, ref); err != nil {
+	if err := utilconversion.UpdateReferenceAPIContract(ctx, r.Client, ref); err != nil {
 		return external.ReconcileOutput{}, err
 	}
 
@@ -102,7 +114,7 @@ func (r *Reconciler) reconcileExternal(ctx context.Context, cluster *clusterv1.C
 	if labels == nil {
 		labels = make(map[string]string)
 	}
-	labels[clusterv1.ClusterLabelName] = cluster.Name
+	labels[clusterv1.ClusterNameLabel] = cluster.Name
 	obj.SetLabels(labels)
 
 	// Always attempt to Patch the external object.
@@ -163,11 +175,16 @@ func (r *Reconciler) reconcileInfrastructure(ctx context.Context, cluster *clust
 	}
 
 	// Determine if the infrastructure provider is ready.
+	preReconcileInfrastructureReady := cluster.Status.InfrastructureReady
 	ready, err := external.IsReady(infraConfig)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	cluster.Status.InfrastructureReady = ready
+	// Only record the event if the status has changed
+	if preReconcileInfrastructureReady != cluster.Status.InfrastructureReady {
+		r.recorder.Eventf(cluster, corev1.EventTypeNormal, "InfrastructureReady", "Cluster %s InfrastructureReady is now %t", cluster.Name, cluster.Status.InfrastructureReady)
+	}
 
 	// Report a summary of current status of the infrastructure object defined for this cluster.
 	conditions.SetMirror(cluster, clusterv1.InfrastructureReadyCondition,
@@ -225,12 +242,17 @@ func (r *Reconciler) reconcileControlPlane(ctx context.Context, cluster *cluster
 		return ctrl.Result{}, nil
 	}
 
+	preReconcileControlPlaneReady := cluster.Status.ControlPlaneReady
 	// Determine if the control plane provider is ready.
 	ready, err := external.IsReady(controlPlaneConfig)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	cluster.Status.ControlPlaneReady = ready
+	// Only record the event if the status has changed
+	if preReconcileControlPlaneReady != cluster.Status.ControlPlaneReady {
+		r.recorder.Eventf(cluster, corev1.EventTypeNormal, "ControlPlaneReady", "Cluster %s ControlPlaneReady is now %t", cluster.Name, cluster.Status.ControlPlaneReady)
+	}
 
 	// Report a summary of current status of the control plane object defined for this cluster.
 	conditions.SetMirror(cluster, clusterv1.ControlPlaneReadyCondition,

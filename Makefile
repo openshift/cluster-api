@@ -23,7 +23,7 @@ SHELL:=/usr/bin/env bash
 #
 # Go.
 #
-GO_VERSION ?= 1.19.5
+GO_VERSION ?= 1.19.6
 GO_CONTAINER_IMAGE ?= docker.io/library/golang:$(GO_VERSION)
 
 # Use GOPROXY environment variable if set
@@ -94,6 +94,9 @@ ifneq ($(strip $(GINKGO_SKIP)),)
 _SKIP_ARGS := $(foreach arg,$(strip $(GINKGO_SKIP)),-skip="$(arg)")
 endif
 
+# Helper function to get dependency version from go.mod
+get_go_version = $(shell go list -m $1 | awk '{print $$2}')
+
 #
 # Binaries.
 #
@@ -108,7 +111,7 @@ SETUP_ENVTEST_BIN := setup-envtest
 SETUP_ENVTEST := $(abspath $(TOOLS_BIN_DIR)/$(SETUP_ENVTEST_BIN)-$(SETUP_ENVTEST_VER))
 SETUP_ENVTEST_PKG := sigs.k8s.io/controller-runtime/tools/setup-envtest
 
-CONTROLLER_GEN_VER := v0.10.0
+CONTROLLER_GEN_VER := v0.11.4
 CONTROLLER_GEN_BIN := controller-gen
 CONTROLLER_GEN := $(abspath $(TOOLS_BIN_DIR)/$(CONTROLLER_GEN_BIN)-$(CONTROLLER_GEN_VER))
 CONTROLLER_GEN_PKG := sigs.k8s.io/controller-tools/cmd/controller-gen
@@ -118,19 +121,19 @@ GOTESTSUM_BIN := gotestsum
 GOTESTSUM := $(abspath $(TOOLS_BIN_DIR)/$(GOTESTSUM_BIN)-$(GOTESTSUM_VER))
 GOTESTSUM_PKG := gotest.tools/gotestsum
 
-CONVERSION_GEN_VER := v0.25.0
+CONVERSION_GEN_VER := v0.26.0
 CONVERSION_GEN_BIN := conversion-gen
 # We are intentionally using the binary without version suffix, to avoid the version
 # in generated files.
 CONVERSION_GEN := $(abspath $(TOOLS_BIN_DIR)/$(CONVERSION_GEN_BIN))
 CONVERSION_GEN_PKG := k8s.io/code-generator/cmd/conversion-gen
 
-ENVSUBST_VER := v2.0.0-20210730161058-179042472c46
 ENVSUBST_BIN := envsubst
+ENVSUBST_VER := $(call get_go_version,github.com/drone/envsubst/v2)
 ENVSUBST := $(abspath $(TOOLS_BIN_DIR)/$(ENVSUBST_BIN)-$(ENVSUBST_VER))
 ENVSUBST_PKG := github.com/drone/envsubst/v2/cmd/envsubst
 
-GO_APIDIFF_VER := v0.5.0
+GO_APIDIFF_VER := v0.6.0
 GO_APIDIFF_BIN := go-apidiff
 GO_APIDIFF := $(abspath $(TOOLS_BIN_DIR)/$(GO_APIDIFF_BIN)-$(GO_APIDIFF_VER))
 GO_APIDIFF_PKG := github.com/joelanford/go-apidiff
@@ -140,7 +143,7 @@ HADOLINT_FAILURE_THRESHOLD = warning
 
 SHELLCHECK_VER := v0.9.0
 
-KPROMO_VER := v3.4.5
+KPROMO_VER := v3.5.1
 KPROMO_BIN := kpromo
 KPROMO :=  $(abspath $(TOOLS_BIN_DIR)/$(KPROMO_BIN)-$(KPROMO_VER))
 KPROMO_PKG := sigs.k8s.io/promo-tools/v3/cmd/kpromo
@@ -150,8 +153,8 @@ YQ_BIN := yq
 YQ :=  $(abspath $(TOOLS_BIN_DIR)/$(YQ_BIN)-$(YQ_VER))
 YQ_PKG := github.com/mikefarah/yq/v4
 
-GINGKO_VER := v2.5.0
 GINKGO_BIN := ginkgo
+GINGKO_VER := $(call get_go_version,github.com/onsi/ginkgo/v2)
 GINKGO := $(abspath $(TOOLS_BIN_DIR)/$(GINKGO_BIN)-$(GINGKO_VER))
 GINKGO_PKG := github.com/onsi/ginkgo/v2/ginkgo
 
@@ -469,7 +472,7 @@ generate-modules: ## Run go mod tidy to ensure modules are up to date
 	cd $(TEST_DIR); go mod tidy
 
 .PHONY: generate-e2e-templates
-generate-e2e-templates: $(KUSTOMIZE) $(addprefix generate-e2e-templates-, v0.3 v0.4 v1.2 main) ## Generate cluster templates for all versions
+generate-e2e-templates: $(KUSTOMIZE) $(addprefix generate-e2e-templates-, v0.3 v0.4 v1.0 v1.2 v1.3 main) ## Generate cluster templates for all versions
 
 DOCKER_TEMPLATES := test/e2e/data/infrastructure-docker
 
@@ -481,10 +484,19 @@ generate-e2e-templates-v0.3: $(KUSTOMIZE)
 generate-e2e-templates-v0.4: $(KUSTOMIZE)
 	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v0.4/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v0.4/cluster-template.yaml
 
+.PHONY: generate-e2e-templates-v1.0
+generate-e2e-templates-v1.0: $(KUSTOMIZE)
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1.0/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1.0/cluster-template.yaml
+
 .PHONY: generate-e2e-templates-v1.2
 generate-e2e-templates-v1.2: $(KUSTOMIZE)
 	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1.2/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1.2/cluster-template.yaml
 	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1.2/cluster-template-topology --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1.2/cluster-template-topology.yaml
+
+.PHONY: generate-e2e-templates-v1.3
+generate-e2e-templates-v1.3: $(KUSTOMIZE)
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1.3/cluster-template --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1.3/cluster-template.yaml
+	$(KUSTOMIZE) build $(DOCKER_TEMPLATES)/v1.3/cluster-template-topology --load-restrictor LoadRestrictionsNone > $(DOCKER_TEMPLATES)/v1.3/cluster-template-topology.yaml
 
 .PHONY: generate-e2e-templates-main
 generate-e2e-templates-main: $(KUSTOMIZE)
@@ -516,7 +528,7 @@ generate-metrics-config: $(ENVSUBST_BIN) ## Generate ./hack/observability/kube-s
 	METRICS_DIR="${OBSERVABILITY_DIR}/kube-state-metrics/metrics"; \
 	echo "# This file was auto-generated via: make generate-metrics-config" > "$${OUTPUT_FILE}"; \
 	cat "$${METRICS_DIR}/header.yaml" >> "$${OUTPUT_FILE}"; \
-	for resource in cluster kubeadmcontrolplane machine machinedeployment machinehealthcheck machineset; do \
+	for resource in cluster kubeadmcontrolplane machine machinedeployment machinehealthcheck machineset machinepool; do \
 		cat "$${METRICS_DIR}/$${resource}.yaml"; \
 		RESOURCE="$${resource}" ${ENVSUBST_BIN} < "$${METRICS_DIR}/common_metrics.yaml"; \
 		if [[ "$${resource}" != "cluster" ]]; then \
@@ -719,6 +731,10 @@ ARTIFACTS ?= ${ROOT_DIR}/_artifacts
 
 KUBEBUILDER_ASSETS ?= $(shell $(SETUP_ENVTEST) use --use-env -p path $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION))
 
+.PHONY: setup-envtest
+setup-envtest: $(SETUP_ENVTEST) ## Set up envtest (download kubebuilder assets)
+	@echo KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS)
+
 .PHONY: test
 test: $(SETUP_ENVTEST) ## Run unit and integration tests
 	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test ./... $(TEST_ARGS)
@@ -807,7 +823,10 @@ PREVIOUS_TAG ?= $(shell git tag -l | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$$" | sort
 RELEASE_ALIAS_TAG := $(PULL_BASE_REF)
 RELEASE_DIR := out
 RELEASE_NOTES_DIR := _releasenotes
-USER_FORK ?= $(shell git config --get remote.origin.url | cut -d/ -f4)
+USER_FORK ?= $(shell git config --get remote.origin.url | cut -d/ -f4) # only works on https://github.com/<username>/cluster-api.git style URLs
+ifeq ($(USER_FORK),)
+USER_FORK := $(shell git config --get remote.origin.url | cut -d: -f2 | cut -d/ -f1) # for git@github.com:<username>/cluster-api.git style URLs
+endif
 IMAGE_REVIEWERS ?= $(shell ./hack/get-project-maintainers.sh)
 
 .PHONY: $(RELEASE_DIR)
@@ -862,6 +881,11 @@ manifest-modification-dev: # Set the manifest images to the staging bucket.
 		MANIFEST_IMG=$(REGISTRY)/$(CAPD_IMAGE_NAME) MANIFEST_TAG=$(RELEASE_TAG) \
 		TARGET_RESOURCE="$(CAPD_DIR)/config/default/manager_image_patch.yaml"
 	$(MAKE) set-manifest-pull-policy PULL_POLICY=IfNotPresent TARGET_RESOURCE="$(CAPD_DIR)/config/default/manager_pull_policy.yaml"
+	$(MAKE) set-manifest-image \
+		MANIFEST_IMG=$(REGISTRY)/$(TEST_EXTENSION_IMAGE_NAME) MANIFEST_TAG=$(RELEASE_TAG) \
+		TARGET_RESOURCE="$(TEST_EXTENSION_DIR)/config/default/manager_image_patch.yaml"
+	$(MAKE) set-manifest-pull-policy PULL_POLICY=IfNotPresent TARGET_RESOURCE="$(CAPD_DIR)/config/default/manager_pull_policy.yaml"
+
 
 
 .PHONY: release-manifests
@@ -889,6 +913,9 @@ release-manifests: $(RELEASE_DIR) $(KUSTOMIZE) $(RUNTIME_OPENAPI_GEN) ## Build t
 release-manifests-dev: $(RELEASE_DIR) $(KUSTOMIZE) ## Build the development manifests and copies them in the release folder
 	cd $(CAPD_DIR); $(KUSTOMIZE) build config/default > ../../../$(RELEASE_DIR)/infrastructure-components-development.yaml
 	cp $(CAPD_DIR)/templates/* $(RELEASE_DIR)/
+	cd $(TEST_EXTENSION_DIR); $(KUSTOMIZE) build config/default > ../../$(RELEASE_DIR)/runtime-extension-components-development.yaml
+	cp $(CAPD_DIR)/templates/* $(RELEASE_DIR)/
+
 
 .PHONY: release-binaries
 release-binaries: ## Build the binaries to publish with a release
@@ -906,6 +933,8 @@ release-binary: $(RELEASE_DIR)
 		-e CGO_ENABLED=0 \
 		-e GOOS=$(GOOS) \
 		-e GOARCH=$(GOARCH) \
+		-e GOCACHE=/tmp/ \
+		--user $$(id -u):$$(id -g) \
 		-v "$$(pwd):/workspace$(DOCKER_VOL_OPTS)" \
 		-w /workspace \
 		golang:$(GO_VERSION) \
@@ -939,6 +968,7 @@ release-alias-tag: ## Add the release alias tag to the last build tag
 	gcloud container images add-tag $(KUBEADM_CONTROL_PLANE_CONTROLLER_IMG):$(TAG) $(KUBEADM_CONTROL_PLANE_CONTROLLER_IMG):$(RELEASE_ALIAS_TAG)
 	gcloud container images add-tag $(CLUSTERCTL_IMG):$(TAG) $(CLUSTERCTL_IMG):$(RELEASE_ALIAS_TAG)
 	gcloud container images add-tag $(CAPD_CONTROLLER_IMG):$(TAG) $(CAPD_CONTROLLER_IMG):$(RELEASE_ALIAS_TAG)
+	gcloud container images add-tag $(TEST_EXTENSION_IMG):$(TAG) $(TEST_EXTENSION_IMG):$(RELEASE_ALIAS_TAG)
 
 .PHONY: release-notes
 release-notes: $(RELEASE_NOTES_DIR) $(RELEASE_NOTES)
@@ -962,6 +992,7 @@ docker-push-all: $(addprefix docker-push-,$(ALL_ARCH))  ## Push the docker image
 	$(MAKE) docker-push-manifest-kubeadm-bootstrap
 	$(MAKE) docker-push-manifest-kubeadm-control-plane
 	$(MAKE) docker-push-manifest-docker-infrastructure
+	$(MAKE) docker-push-manifest-test-extension
 	$(MAKE) docker-push-clusterctl
 
 docker-push-%:
@@ -974,10 +1005,10 @@ docker-push: ## Push the docker images to be included in the release
 	docker push $(KUBEADM_CONTROL_PLANE_CONTROLLER_IMG)-$(ARCH):$(TAG)
 	docker push $(CLUSTERCTL_IMG)-$(ARCH):$(TAG)
 	docker push $(CAPD_CONTROLLER_IMG)-$(ARCH):$(TAG)
+	docker push $(TEST_EXTENSION_IMG)-$(ARCH):$(TAG)
 
 .PHONY: docker-push-manifest-core
 docker-push-manifest-core: ## Push the multiarch manifest for the core docker images
-	## Minimum docker version 18.06.0 is required for creating and pushing manifest images.
 	docker manifest create --amend $(CONTROLLER_IMG):$(TAG) $(shell echo $(ALL_ARCH) | sed -e "s~[^ ]*~$(CONTROLLER_IMG)\-&:$(TAG)~g")
 	@for arch in $(ALL_ARCH); do docker manifest annotate --arch $${arch} ${CONTROLLER_IMG}:${TAG} ${CONTROLLER_IMG}-$${arch}:${TAG}; done
 	docker manifest push --purge $(CONTROLLER_IMG):$(TAG)
@@ -986,7 +1017,6 @@ docker-push-manifest-core: ## Push the multiarch manifest for the core docker im
 
 .PHONY: docker-push-manifest-kubeadm-bootstrap
 docker-push-manifest-kubeadm-bootstrap: ## Push the multiarch manifest for the kubeadm bootstrap docker images
-	## Minimum docker version 18.06.0 is required for creating and pushing manifest images.
 	docker manifest create --amend $(KUBEADM_BOOTSTRAP_CONTROLLER_IMG):$(TAG) $(shell echo $(ALL_ARCH) | sed -e "s~[^ ]*~$(KUBEADM_BOOTSTRAP_CONTROLLER_IMG)\-&:$(TAG)~g")
 	@for arch in $(ALL_ARCH); do docker manifest annotate --arch $${arch} ${KUBEADM_BOOTSTRAP_CONTROLLER_IMG}:${TAG} ${KUBEADM_BOOTSTRAP_CONTROLLER_IMG}-$${arch}:${TAG}; done
 	docker manifest push --purge $(KUBEADM_BOOTSTRAP_CONTROLLER_IMG):$(TAG)
@@ -995,7 +1025,6 @@ docker-push-manifest-kubeadm-bootstrap: ## Push the multiarch manifest for the k
 
 .PHONY: docker-push-manifest-kubeadm-control-plane
 docker-push-manifest-kubeadm-control-plane: ## Push the multiarch manifest for the kubeadm control plane docker images
-	## Minimum docker version 18.06.0 is required for creating and pushing manifest images.
 	docker manifest create --amend $(KUBEADM_CONTROL_PLANE_CONTROLLER_IMG):$(TAG) $(shell echo $(ALL_ARCH) | sed -e "s~[^ ]*~$(KUBEADM_CONTROL_PLANE_CONTROLLER_IMG)\-&:$(TAG)~g")
 	@for arch in $(ALL_ARCH); do docker manifest annotate --arch $${arch} ${KUBEADM_CONTROL_PLANE_CONTROLLER_IMG}:${TAG} ${KUBEADM_CONTROL_PLANE_CONTROLLER_IMG}-$${arch}:${TAG}; done
 	docker manifest push --purge $(KUBEADM_CONTROL_PLANE_CONTROLLER_IMG):$(TAG)
@@ -1004,16 +1033,23 @@ docker-push-manifest-kubeadm-control-plane: ## Push the multiarch manifest for t
 
 .PHONY: docker-push-manifest-docker-infrastructure
 docker-push-manifest-docker-infrastructure: ## Push the multiarch manifest for the docker infrastructure provider images
-	## Minimum docker version 18.06.0 is required for creating and pushing manifest images.
 	docker manifest create --amend $(CAPD_CONTROLLER_IMG):$(TAG) $(shell echo $(ALL_ARCH) | sed -e "s~[^ ]*~$(CAPD_CONTROLLER_IMG)\-&:$(TAG)~g")
 	@for arch in $(ALL_ARCH); do docker manifest annotate --arch $${arch} ${CAPD_CONTROLLER_IMG}:${TAG} ${CAPD_CONTROLLER_IMG}-$${arch}:${TAG}; done
 	docker manifest push --purge $(CAPD_CONTROLLER_IMG):$(TAG)
 	$(MAKE) set-manifest-image MANIFEST_IMG=$(CAPD_CONTROLLER_IMG) MANIFEST_TAG=$(TAG) TARGET_RESOURCE="$(CAPD_DIR)/config/default/manager_image_patch.yaml"
 	$(MAKE) set-manifest-pull-policy TARGET_RESOURCE="$(CAPD_DIR)/config/default/manager_pull_policy.yaml"
 
+
+.PHONY: docker-push-manifest-test-extension
+docker-push-manifest-test-extension: ## Push the multiarch manifest for the test extension provider images
+	docker manifest create --amend $(TEST_EXTENSION_IMG):$(TAG) $(shell echo $(ALL_ARCH) | sed -e "s~[^ ]*~$(TEST_EXTENSION_IMG)\-&:$(TAG)~g")
+	@for arch in $(ALL_ARCH); do docker manifest annotate --arch $${arch} ${TEST_EXTENSION_IMG}:${TAG} ${TEST_EXTENSION_IMG}-$${arch}:${TAG}; done
+	docker manifest push --purge $(TEST_EXTENSION_IMG):$(TAG)
+	$(MAKE) set-manifest-image MANIFEST_IMG=$(TEST_EXTENSION_IMG) MANIFEST_TAG=$(TAG) TARGET_RESOURCE="./test/extension/config/default/manager_image_patch.yaml"
+	$(MAKE) set-manifest-pull-policy TARGET_RESOURCE="./test/extension/config/default/manager_pull_policy.yaml"
+
 .PHONY: docker-push-clusterctl
 docker-push-clusterctl: ## Push the clusterctl images
-	## Minimum docker version 18.06.0 is required for creating and pushing manifest images.
 	docker manifest create --amend $(CLUSTERCTL_IMG):$(TAG) $(shell echo $(ALL_ARCH) | sed -e "s~[^ ]*~$(CLUSTERCTL_IMG)\-&:$(TAG)~g")
 	@for arch in $(ALL_ARCH); do docker manifest annotate --arch $${arch} ${CLUSTERCTL_IMG}:${TAG} ${CLUSTERCTL_IMG}-$${arch}:${TAG}; done
 	docker manifest push --purge $(CLUSTERCTL_IMG):$(TAG)
@@ -1193,7 +1229,16 @@ $(YQ):
 $(GOLANGCI_LINT): .github/workflows/golangci-lint.yml # Download golangci-lint using hack script into tools folder.
 	hack/ensure-golangci-lint.sh \
 		-b $(TOOLS_BIN_DIR) \
-		$(shell cat .github/workflows/golangci-lint.yml | grep [[:space:]]version | sed 's/.*version: //')
+		$(shell cat .github/workflows/golangci-lint.yml | grep [[:space:]]version: | sed 's/.*version: //')
 
 $(GINKGO): # Build ginkgo from tools folder.
 	GOBIN=$(TOOLS_BIN_DIR) $(GO_INSTALL) $(GINKGO_PKG) $(GINKGO_BIN) $(GINGKO_VER)
+
+## --------------------------------------
+## Helpers
+## --------------------------------------
+
+##@ helpers:
+
+go-version: ## Print the go version we use to compile our binaries and images
+	@echo $(GO_VERSION)

@@ -17,14 +17,17 @@ limitations under the License.
 package builder
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
@@ -252,6 +255,7 @@ type ClusterClassBuilder struct {
 	controlPlaneNodeDeletionTimeout           *metav1.Duration
 	machineDeploymentClasses                  []clusterv1.MachineDeploymentClass
 	variables                                 []clusterv1.ClusterClassVariable
+	statusVariables                           []clusterv1.ClusterClassStatusVariable
 	patches                                   []clusterv1.ClusterClassPatch
 }
 
@@ -314,9 +318,15 @@ func (c *ClusterClassBuilder) WithControlPlaneNodeDeletionTimeout(t *metav1.Dura
 	return c
 }
 
-// WithVariables adds the Variables the ClusterClassBuilder.
+// WithVariables adds the Variables to the ClusterClassBuilder.
 func (c *ClusterClassBuilder) WithVariables(vars ...clusterv1.ClusterClassVariable) *ClusterClassBuilder {
 	c.variables = vars
+	return c
+}
+
+// WithStatusVariables adds the ClusterClassStatusVariables to the ClusterClassBuilder.
+func (c *ClusterClassBuilder) WithStatusVariables(vars ...clusterv1.ClusterClassStatusVariable) *ClusterClassBuilder {
+	c.statusVariables = vars
 	return c
 }
 
@@ -349,6 +359,9 @@ func (c *ClusterClassBuilder) Build() *clusterv1.ClusterClass {
 		Spec: clusterv1.ClusterClassSpec{
 			Variables: c.variables,
 			Patches:   c.patches,
+		},
+		Status: clusterv1.ClusterClassStatus{
+			Variables: c.statusVariables,
 		},
 	}
 	if c.infrastructureClusterTemplate != nil {
@@ -1134,6 +1147,7 @@ type MachineDeploymentBuilder struct {
 	clusterName            string
 	bootstrapTemplate      *unstructured.Unstructured
 	infrastructureTemplate *unstructured.Unstructured
+	selector               *metav1.LabelSelector
 	version                *string
 	replicas               *int32
 	defaulter              bool
@@ -1159,6 +1173,12 @@ func (m *MachineDeploymentBuilder) WithBootstrapTemplate(ref *unstructured.Unstr
 // WithInfrastructureTemplate adds the passed unstructured object to the MachineDeployment builder as an infrastructureMachineTemplate.
 func (m *MachineDeploymentBuilder) WithInfrastructureTemplate(ref *unstructured.Unstructured) *MachineDeploymentBuilder {
 	m.infrastructureTemplate = ref
+	return m
+}
+
+// WithSelector adds the passed selector to the MachineDeployment as the selector.
+func (m *MachineDeploymentBuilder) WithSelector(selector metav1.LabelSelector) *MachineDeploymentBuilder {
+	m.selector = &selector
 	return m
 }
 
@@ -1230,21 +1250,36 @@ func (m *MachineDeploymentBuilder) Build() *clusterv1.MachineDeployment {
 	if m.infrastructureTemplate != nil {
 		obj.Spec.Template.Spec.InfrastructureRef = *objToRef(m.infrastructureTemplate)
 	}
+	if m.selector != nil {
+		obj.Spec.Selector = *m.selector
+	}
 	if m.status != nil {
 		obj.Status = *m.status
 	}
 	if m.clusterName != "" {
 		obj.Spec.Template.Spec.ClusterName = m.clusterName
 		obj.Spec.ClusterName = m.clusterName
-		obj.Spec.Selector.MatchLabels = map[string]string{
-			clusterv1.ClusterLabelName: m.clusterName,
+		if obj.Spec.Selector.MatchLabels == nil {
+			obj.Spec.Selector.MatchLabels = map[string]string{}
 		}
+		obj.Spec.Selector.MatchLabels[clusterv1.ClusterNameLabel] = m.clusterName
 		obj.Spec.Template.Labels = map[string]string{
-			clusterv1.ClusterLabelName: m.clusterName,
+			clusterv1.ClusterNameLabel: m.clusterName,
 		}
 	}
 	if m.defaulter {
-		obj.Default()
+		scheme, err := clusterv1.SchemeBuilder.Build()
+		if err != nil {
+			panic(err)
+		}
+		ctx := admission.NewContextWithRequest(context.Background(), admission.Request{
+			AdmissionRequest: admissionv1.AdmissionRequest{
+				Operation: admissionv1.Create,
+			},
+		})
+		if err := clusterv1.MachineDeploymentDefaulter(scheme).Default(ctx, obj); err != nil {
+			panic(err)
+		}
 	}
 	return obj
 }
@@ -1396,7 +1431,7 @@ func (m *MachineBuilder) Build() *clusterv1.Machine {
 		if len(m.labels) == 0 {
 			machine.Labels = map[string]string{}
 		}
-		machine.ObjectMeta.Labels[clusterv1.ClusterLabelName] = m.clusterName
+		machine.ObjectMeta.Labels[clusterv1.ClusterNameLabel] = m.clusterName
 	}
 	return machine
 }
@@ -1532,7 +1567,7 @@ func (m *MachineHealthCheckBuilder) Build() *clusterv1.MachineHealthCheck {
 		},
 	}
 	if m.clusterName != "" {
-		mhc.Labels = map[string]string{clusterv1.ClusterLabelName: m.clusterName}
+		mhc.Labels = map[string]string{clusterv1.ClusterNameLabel: m.clusterName}
 	}
 	if m.defaulter {
 		mhc.Default()

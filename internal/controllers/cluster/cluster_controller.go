@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -76,7 +77,7 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
-	controller, err := ctrl.NewControllerManagedBy(mgr).
+	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&clusterv1.Cluster{}).
 		Watches(
 			&source.Kind{Type: &clusterv1.Machine{}},
@@ -92,7 +93,7 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 
 	r.recorder = mgr.GetEventRecorderFor("cluster-controller")
 	r.externalTracker = external.ObjectTracker{
-		Controller: controller,
+		Controller: c,
 	}
 	return nil
 }
@@ -331,6 +332,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Clu
 	}
 
 	controllerutil.RemoveFinalizer(cluster, clusterv1.ClusterFinalizer)
+	r.recorder.Eventf(cluster, corev1.EventTypeNormal, "Deleted", "Cluster %s has been deleted", cluster.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -399,7 +401,7 @@ func (r *Reconciler) listDescendants(ctx context.Context, cluster *clusterv1.Clu
 
 	listOptions := []client.ListOption{
 		client.InNamespace(cluster.Namespace),
-		client.MatchingLabels(map[string]string{clusterv1.ClusterLabelName: cluster.Name}),
+		client.MatchingLabels(map[string]string{clusterv1.ClusterNameLabel: cluster.Name}),
 	}
 
 	if err := r.Client.List(ctx, &descendants.machineDeployments, listOptions...); err != nil {

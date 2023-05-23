@@ -436,7 +436,7 @@ that are compliant with one of the following rules:
   * The object is directly or indirectly linked to a `ClusterResourceSet` object (through the `OwnerReference` chain).
   * The object is directly or indirectly linked to another object with the `clusterctl.cluster.x-k8s.io/move-hierarchy`
     label, e.g. the infrastructure Provider ClusterIdentity objects (linked through the `OwnerReference` chain).
-  * The object hase the `clusterctl.cluster.x-k8s.io/move` label or the `clusterctl.cluster.x-k8s.io/move-hierarchy` label,
+  * The object has the `clusterctl.cluster.x-k8s.io/move` label or the `clusterctl.cluster.x-k8s.io/move-hierarchy` label,
     e.g. the CPI config secret.
 
 Note. `clusterctl.cluster.x-k8s.io/move` and `clusterctl.cluster.x-k8s.io/move-hierarchy` labels could be applied
@@ -465,6 +465,19 @@ exact move sequence to be executed by the user.
 
 Additionally, provider authors should be aware that `clusterctl move` assumes all the provider's Controllers respect the
 `Cluster.Spec.Paused` field introduced in the v1alpha3 Cluster API specification.
+
+<aside class="note warning">
+
+<h1> Warning: Status subresource is never restored </h1>
+
+Every object's `Status` subresource, including every nested field (e.g. `Status.Conditions`), is never 
+restored during a `move` operation. A `Status` subresource should never contain fields that cannot 
+be recreated or derived from information in spec, metadata, or external systems.
+
+Provider implementers should not store non-ephemeral data in the `Status`. 
+`Status` should be able to be fully rebuilt by controllers by observing the current state of resources.
+
+</aside>
 
 <!--LINKS-->
 [drone-envsubst]: https://github.com/drone/envsubst

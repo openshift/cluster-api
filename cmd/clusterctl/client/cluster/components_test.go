@@ -37,7 +37,7 @@ import (
 
 func Test_providerComponents_Delete(t *testing.T) {
 	labels := map[string]string{
-		clusterv1.ProviderLabelName: "infrastructure-infra",
+		clusterv1.ProviderNameLabel: "infrastructure-infra",
 	}
 
 	crd := unstructured.Unstructured{}
@@ -326,7 +326,7 @@ func Test_providerComponents_DeleteCoreProviderWebhookNamespace(t *testing.T) {
 
 		// assert length before deleting
 		_ = proxyClient.List(ctx, &nsList)
-		g.Expect(len(nsList.Items)).Should(Equal(1))
+		g.Expect(nsList.Items).Should(HaveLen(1))
 
 		c := newComponentsClient(proxy)
 		err := c.DeleteWebhookNamespace()
@@ -334,13 +334,13 @@ func Test_providerComponents_DeleteCoreProviderWebhookNamespace(t *testing.T) {
 
 		// assert length after deleting
 		_ = proxyClient.List(ctx, &nsList)
-		g.Expect(len(nsList.Items)).Should(Equal(0))
+		g.Expect(nsList.Items).Should(BeEmpty())
 	})
 }
 
 func Test_providerComponents_Create(t *testing.T) {
 	labelsOne := map[string]string{
-		clusterv1.ProviderLabelName: "infrastructure-infra",
+		clusterv1.ProviderNameLabel: "infrastructure-infra",
 	}
 	commonObjects := []client.Object{
 		// Namespace for the provider
