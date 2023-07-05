@@ -12,6 +12,7 @@ FROM registry.ci.openshift.org/ocp/4.15:base
 LABEL description="Cluster API Controller Manager"
 
 COPY --from=builder /build/cluster-api-controller-manager /bin/cluster-api-controller-manager
+COPY --from=builder /build/openshift/manifests /manifests
 
 ENTRYPOINT [ "/bin/cluster-api-controller-manager" ]
 
