@@ -95,6 +95,8 @@ but in this case the distinctive value of the two layers of testing is determine
 
 Run `make test` to execute all unit and integration tests.
 
+Integration tests use the [envtest](https://github.com/kubernetes-sigs/controller-runtime/blob/main/pkg/envtest/doc.go) test framework. The tests need to know the location of the executables called by the framework. The `make test` target installs these executables, and passes this location to the tests as an environment variable.
+
 <aside class="note">
 
 <h1>Tips</h1>
@@ -107,7 +109,35 @@ When running individual tests, it could happen that a testenv is started if this
 However, if the tests you are running don't require testenv (i.e. they are only using fake client), you can skip the testenv
 creation by setting the environment variable `CAPI_DISABLE_TEST_ENV` (to any non-empty value).
 
+To debug testenv unit tests it is possible to use:
+* `CAPI_TEST_ENV_KUBECONFIG` to write out a kubeconfig for the testenv to a file location.
+* `CAPI_TEST_ENV_SKIP_STOP` to skip stopping the testenv after test execution.
+
 </aside>
+
+### Test execution via IDE
+
+Your IDE needs to know the location of the executables called by the framework, so that it can pass the location to the tests as an environment variable.
+
+<aside class="note warning">
+
+<h1>Warning</h1>
+
+If you see this error when running a test in your IDE, the test uses the envtest framework, and probably does not know the location of the envtest executables.
+
+```console
+E0210 16:11:04.222471  132945 server.go:329] controller-runtime/test-env "msg"="unable to start the controlplane" "error"="fork/exec /usr/local/kubebuilder/bin/etcd: no such file or directory" "tries"=0
+```
+
+</aside>
+
+#### VSCode
+
+The `dev/vscode-example-configuration` directory in the repository contains an example configuration that integrates VSCode with the envtest framework.
+
+To use the example configuration, copy the files to the `.vscode` directory in the repository, and restart VSCode.
+
+The configuration works as follows: Whenever the project is opened in VSCode, a VSCode task runs that installs the executables, and writes the location to a file. A setting tells [vscode-go] to initialize the environment from this file.
 
 ## End-to-end tests
 
@@ -163,11 +193,11 @@ kind images). This can be done by executing the `./scripts/ci-e2e.sh` script.
 GINKGO_FOCUS="\[PR-Blocking\]" ./scripts/ci-e2e.sh
 ```
 
-Now, the tests can be run in an IDE. The following describes how this can be done in Intellij IDEA and VS Code. It should work
+Now, the tests can be run in an IDE. The following describes how this can be done in IntelliJ IDEA and VS Code. It should work
 roughly the same way in all other IDEs. We assume the `cluster-api` repository has been checked
 out into `/home/user/code/src/sigs.k8s.io/cluster-api`.
 
-#### Intellij
+#### IntelliJ
 
 Create a new run configuration and fill in:
 * Test framework: `gotest`
@@ -237,6 +267,7 @@ kustomize_substitutions:
   EXP_CLUSTER_RESOURCE_SET: "true"
   EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION: "true"
   EXP_RUNTIME_SDK: "true"
+  EXP_LAZY_RESTMAPPER: "true"
 ```
 
 </aside>
@@ -525,10 +556,12 @@ In Cluster API Unit and integration test MUST use [go test].
 [Cluster API quick start]: ../user/quick-start.md
 [Cluster API test framework]: https://pkg.go.dev/sigs.k8s.io/cluster-api/test/framework?tab=doc
 [e2e development]: ./e2e.md
-[Ginkgo]: http://onsi.github.io/ginkgo/
-[Gomega]: http://onsi.github.io/gomega/
+[Ginkgo]: https://onsi.github.io/ginkgo/
+[Gomega]: https://onsi.github.io/gomega/
 [go test]: https://golang.org/pkg/testing/
 [controller-runtime]: https://github.com/kubernetes-sigs/controller-runtime
-[envtest]: https://github.com/kubernetes-sigs/controller-runtime/tree/master/pkg/envtest
-[fakeclient]: https://github.com/kubernetes-sigs/controller-runtime/tree/master/pkg/client/fake
+[envtest]: https://github.com/kubernetes-sigs/controller-runtime/tree/main/pkg/envtest
+[fakeclient]: https://github.com/kubernetes-sigs/controller-runtime/tree/main/pkg/client/fake
 [test/helpers]: https://github.com/kubernetes-sigs/cluster-api/tree/main/test/helpers
+
+[vscode-go]: https://marketplace.visualstudio.com/items?itemName=golang.Go

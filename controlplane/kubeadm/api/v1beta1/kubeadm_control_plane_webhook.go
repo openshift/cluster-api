@@ -141,16 +141,22 @@ func (in *KubeadmControlPlane) ValidateUpdate(old runtime.Object) error {
 		{"metadata", "*"},
 		{spec, kubeadmConfigSpec, clusterConfiguration, "etcd", "local", "imageRepository"},
 		{spec, kubeadmConfigSpec, clusterConfiguration, "etcd", "local", "imageTag"},
+		{spec, kubeadmConfigSpec, clusterConfiguration, "etcd", "local", "extraArgs"},
 		{spec, kubeadmConfigSpec, clusterConfiguration, "etcd", "local", "extraArgs", "*"},
 		{spec, kubeadmConfigSpec, clusterConfiguration, "dns", "imageRepository"},
 		{spec, kubeadmConfigSpec, clusterConfiguration, "dns", "imageTag"},
 		{spec, kubeadmConfigSpec, clusterConfiguration, "imageRepository"},
+		{spec, kubeadmConfigSpec, clusterConfiguration, apiServer},
 		{spec, kubeadmConfigSpec, clusterConfiguration, apiServer, "*"},
+		{spec, kubeadmConfigSpec, clusterConfiguration, controllerManager},
 		{spec, kubeadmConfigSpec, clusterConfiguration, controllerManager, "*"},
+		{spec, kubeadmConfigSpec, clusterConfiguration, scheduler},
 		{spec, kubeadmConfigSpec, clusterConfiguration, scheduler, "*"},
+		{spec, kubeadmConfigSpec, initConfiguration, nodeRegistration},
 		{spec, kubeadmConfigSpec, initConfiguration, nodeRegistration, "*"},
 		{spec, kubeadmConfigSpec, initConfiguration, patches, directory},
 		{spec, kubeadmConfigSpec, initConfiguration, skipPhases},
+		{spec, kubeadmConfigSpec, joinConfiguration, nodeRegistration},
 		{spec, kubeadmConfigSpec, joinConfiguration, nodeRegistration, "*"},
 		{spec, kubeadmConfigSpec, joinConfiguration, patches, directory},
 		{spec, kubeadmConfigSpec, joinConfiguration, skipPhases},
@@ -159,9 +165,15 @@ func (in *KubeadmControlPlane) ValidateUpdate(old runtime.Object) error {
 		{spec, kubeadmConfigSpec, files},
 		{spec, kubeadmConfigSpec, "verbosity"},
 		{spec, kubeadmConfigSpec, users},
+		{spec, kubeadmConfigSpec, ntp},
 		{spec, kubeadmConfigSpec, ntp, "*"},
+		{spec, kubeadmConfigSpec, ignition},
 		{spec, kubeadmConfigSpec, ignition, "*"},
+		{spec, kubeadmConfigSpec, diskSetup},
 		{spec, kubeadmConfigSpec, diskSetup, "*"},
+		{spec, kubeadmConfigSpec, "format"},
+		{spec, kubeadmConfigSpec, "mounts"},
+		{spec, "machineTemplate", "metadata"},
 		{spec, "machineTemplate", "metadata", "*"},
 		{spec, "machineTemplate", "infrastructureRef", "apiVersion"},
 		{spec, "machineTemplate", "infrastructureRef", "name"},
@@ -171,8 +183,12 @@ func (in *KubeadmControlPlane) ValidateUpdate(old runtime.Object) error {
 		{spec, "machineTemplate", "nodeDeletionTimeout"},
 		{spec, "replicas"},
 		{spec, "version"},
+		{spec, "remediationStrategy"},
+		{spec, "remediationStrategy", "*"},
 		{spec, "rolloutAfter"},
+		{spec, "rolloutBefore"},
 		{spec, "rolloutBefore", "*"},
+		{spec, "rolloutStrategy"},
 		{spec, "rolloutStrategy", "*"},
 	}
 
@@ -181,12 +197,6 @@ func (in *KubeadmControlPlane) ValidateUpdate(old runtime.Object) error {
 	prev, ok := old.(*KubeadmControlPlane)
 	if !ok {
 		return apierrors.NewBadRequest(fmt.Sprintf("expecting KubeadmControlPlane but got a %T", old))
-	}
-
-	// NOTE: Defaulting for the format field has been added in v1.1.0 after implementing ignition support.
-	// This allows existing KCP objects to pick up the new default.
-	if prev.Spec.KubeadmConfigSpec.Format == "" && in.Spec.KubeadmConfigSpec.Format == bootstrapv1.CloudConfig {
-		allowedPaths = append(allowedPaths, []string{spec, kubeadmConfigSpec, "format"})
 	}
 
 	originalJSON, err := json.Marshal(prev)

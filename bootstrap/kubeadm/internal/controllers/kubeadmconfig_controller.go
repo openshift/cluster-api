@@ -34,6 +34,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -124,26 +125,23 @@ func (r *KubeadmConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 		b = b.Watches(
 			&source.Kind{Type: &expv1.MachinePool{}},
 			handler.EnqueueRequestsFromMapFunc(r.MachinePoolToBootstrapMapFunc),
-		).WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue))
+		)
 	}
 
-	c, err := b.Build(r)
-	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
-	}
-
-	err = c.Watch(
+	b = b.Watches(
 		&source.Kind{Type: &clusterv1.Cluster{}},
 		handler.EnqueueRequestsFromMapFunc(r.ClusterToKubeadmConfigs),
-		predicates.All(ctrl.LoggerFrom(ctx),
-			predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
-			predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
+		builder.WithPredicates(
+			predicates.All(ctrl.LoggerFrom(ctx),
+				predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
+				predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
+			),
 		),
 	)
-	if err != nil {
-		return errors.Wrap(err, "failed adding Watch for Clusters to controller manager")
-	}
 
+	if err := b.Complete(r); err != nil {
+		return errors.Wrap(err, "failed setting up with a controller manager")
+	}
 	return nil
 }
 
@@ -368,7 +366,7 @@ func (r *KubeadmConfigReconciler) handleClusterNotInitialized(ctx context.Contex
 
 	// if the machine has not ClusterConfiguration and InitConfiguration, requeue
 	if scope.Config.Spec.InitConfiguration == nil && scope.Config.Spec.ClusterConfiguration == nil {
-		scope.Info("Control plane is not ready, requeing joining control planes until ready.")
+		scope.Info("Control plane is not ready, requeuing joining control planes until ready.")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
@@ -381,7 +379,7 @@ func (r *KubeadmConfigReconciler) handleClusterNotInitialized(ctx context.Contex
 	// as control plane get processed here
 	// if not the first, requeue
 	if !r.KubeadmInitLock.Lock(ctx, scope.Cluster, machine) {
-		scope.Info("A control plane is already being initialized, requeing until control plane is ready")
+		scope.Info("A control plane is already being initialized, requeuing until control plane is ready")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
@@ -415,6 +413,7 @@ func (r *KubeadmConfigReconciler) handleClusterNotInitialized(ctx context.Contex
 			},
 		}
 	}
+
 	initdata, err := kubeadmtypes.MarshalInitConfigurationForVersion(scope.Config.Spec.InitConfiguration, parsedVersion)
 	if err != nil {
 		scope.Error(err, "Failed to marshal init configuration")
@@ -551,7 +550,16 @@ func (r *KubeadmConfigReconciler) joinWorker(ctx context.Context, scope *Scope) 
 		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", kubernetesVersion)
 	}
 
-	joinData, err := kubeadmtypes.MarshalJoinConfigurationForVersion(scope.Config.Spec.JoinConfiguration, parsedVersion)
+	// Add the node uninitialized taint to the list of taints.
+	// DeepCopy the JoinConfiguration to prevent updating the actual KubeadmConfig.
+	// Do not modify the KubeadmConfig in etcd as this is a temporary taint that will be dropped after the node
+	// is initialized by ClusterAPI.
+	joinConfiguration := scope.Config.Spec.JoinConfiguration.DeepCopy()
+	if !hasTaint(joinConfiguration.NodeRegistration.Taints, clusterv1.NodeUninitializedTaint) {
+		joinConfiguration.NodeRegistration.Taints = append(joinConfiguration.NodeRegistration.Taints, clusterv1.NodeUninitializedTaint)
+	}
+
+	joinData, err := kubeadmtypes.MarshalJoinConfigurationForVersion(joinConfiguration, parsedVersion)
 	if err != nil {
 		scope.Error(err, "Failed to marshal join configuration")
 		return ctrl.Result{}, err
@@ -810,7 +818,7 @@ func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(o client.Object) []ctr
 	selectors := []client.ListOption{
 		client.InNamespace(c.Namespace),
 		client.MatchingLabels{
-			clusterv1.ClusterLabelName: c.Name,
+			clusterv1.ClusterNameLabel: c.Name,
 		},
 	}
 
@@ -999,7 +1007,7 @@ func (r *KubeadmConfigReconciler) storeBootstrapData(ctx context.Context, scope 
 			Name:      scope.Config.Name,
 			Namespace: scope.Config.Namespace,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: scope.Cluster.Name,
+				clusterv1.ClusterNameLabel: scope.Cluster.Name,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -1051,18 +1059,27 @@ func (r *KubeadmConfigReconciler) ensureBootstrapSecretOwnersRef(ctx context.Con
 		return errors.Wrapf(err, "failed to add KubeadmConfig %s as ownerReference to bootstrap Secret %s", scope.ConfigOwner.GetName(), secret.GetName())
 	}
 	if c := metav1.GetControllerOf(secret); c != nil && c.Kind != "KubeadmConfig" {
-		secret.OwnerReferences = util.RemoveOwnerRef(secret.OwnerReferences, *c)
+		secret.SetOwnerReferences(util.RemoveOwnerRef(secret.GetOwnerReferences(), *c))
 	}
-	secret.OwnerReferences = util.EnsureOwnerRef(secret.OwnerReferences, metav1.OwnerReference{
+	secret.SetOwnerReferences(util.EnsureOwnerRef(secret.GetOwnerReferences(), metav1.OwnerReference{
 		APIVersion: bootstrapv1.GroupVersion.String(),
 		Kind:       "KubeadmConfig",
 		UID:        scope.Config.UID,
 		Name:       scope.Config.Name,
 		Controller: pointer.Bool(true),
-	})
+	}))
 	err = patchHelper.Patch(ctx, secret)
 	if err != nil {
 		return errors.Wrapf(err, "could not add KubeadmConfig %s as ownerReference to bootstrap Secret %s", scope.ConfigOwner.GetName(), secret.GetName())
 	}
 	return nil
+}
+
+func hasTaint(taints []corev1.Taint, targetTaint corev1.Taint) bool {
+	for _, taint := range taints {
+		if taint.MatchTaint(&targetTaint) {
+			return true
+		}
+	}
+	return false
 }

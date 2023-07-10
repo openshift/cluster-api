@@ -35,6 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -45,6 +46,7 @@ import (
 	"k8s.io/klog/v2/klogr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
@@ -103,11 +105,15 @@ type RunInput struct {
 //	because our tests require access to the *Environment. We use this field to make the created Environment available
 //	to the consumer.
 //
-// Note: Test environment creation can be skipped by setting the environment variable `CAPI_DISABLE_TEST_ENV`. This only
-//
-//	makes sense when executing tests which don't require the test environment, e.g. tests using only the fake client.
+// Note: Test environment creation can be skipped by setting the environment variable `CAPI_DISABLE_TEST_ENV`
+// to a non-empty value. This only makes sense when executing tests which don't require the test environment,
+// e.g. tests using only the fake client.
+// Note: It's possible to write a kubeconfig for the test environment to a file by setting `CAPI_TEST_ENV_KUBECONFIG`.
+// Note: It's possible to skip stopping the test env after the tests have been run by setting `CAPI_TEST_ENV_SKIP_STOP`
+// to a non-empty value.
 func Run(ctx context.Context, input RunInput) int {
 	if os.Getenv("CAPI_DISABLE_TEST_ENV") != "" {
+		klog.Info("Skipping test env start as CAPI_DISABLE_TEST_ENV is set")
 		return input.M.Run()
 	}
 
@@ -124,6 +130,16 @@ func Run(ctx context.Context, input RunInput) int {
 	// Start the environment.
 	env.start(ctx)
 
+	if kubeconfigPath := os.Getenv("CAPI_TEST_ENV_KUBECONFIG"); kubeconfigPath != "" {
+		klog.Infof("Writing test env kubeconfig to %q", kubeconfigPath)
+		config := kubeconfig.FromEnvTestConfig(env.Config, &clusterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		})
+		if err := os.WriteFile(kubeconfigPath, config, 0600); err != nil {
+			panic(errors.Wrapf(err, "failed to write the test env kubeconfig"))
+		}
+	}
+
 	if input.MinK8sVersion != "" {
 		if err := version.CheckKubernetesVersion(env.Config, input.MinK8sVersion); err != nil {
 			fmt.Printf("[IMPORTANT] skipping tests after failing version check: %v\n", err)
@@ -139,6 +155,11 @@ func Run(ctx context.Context, input RunInput) int {
 
 	// Run tests
 	code := input.M.Run()
+
+	if skipStop := os.Getenv("CAPI_TEST_ENV_SKIP_STOP"); skipStop != "" {
+		klog.Info("Skipping test env stop as CAPI_TEST_ENV_SKIP_STOP is set")
+		return code
+	}
 
 	// Tearing down the test environment
 	if err := env.stop(); err != nil {
@@ -236,6 +257,9 @@ func newEnvironment(uncachedObjs ...client.Object) *Environment {
 		Port:                  env.WebhookInstallOptions.LocalServingPort,
 		ClientDisableCacheFor: objs,
 		Host:                  host,
+		MapperProvider: func(c *rest.Config) (meta.RESTMapper, error) {
+			return apiutil.NewDynamicRESTMapper(c, apiutil.WithExperimentalLazyMapper)
+		},
 	}
 
 	mgr, err := ctrl.NewManager(env.Config, options)
@@ -278,6 +302,9 @@ func newEnvironment(uncachedObjs ...client.Object) *Environment {
 	}
 	if err := (&addonsv1.ClusterResourceSet{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for crs: %+v", err)
+	}
+	if err := (&addonsv1.ClusterResourceSetBinding{}).SetupWebhookWithManager(mgr); err != nil {
+		klog.Fatalf("unable to create webhook for ClusterResourceSetBinding: %+v", err)
 	}
 	if err := (&expv1.MachinePool{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for machinepool: %+v", err)

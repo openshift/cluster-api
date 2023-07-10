@@ -108,14 +108,6 @@ func (f fakeClient) Move(options MoveOptions) error {
 	return f.internalClient.Move(options)
 }
 
-func (f fakeClient) Backup(options BackupOptions) error {
-	return f.internalClient.Backup(options)
-}
-
-func (f fakeClient) Restore(options RestoreOptions) error {
-	return f.internalClient.Restore(options)
-}
-
 func (f fakeClient) PlanUpgrade(options PlanUpgradeOptions) ([]UpgradePlan, error) {
 	return f.internalClient.PlanUpgrade(options)
 }
@@ -132,7 +124,7 @@ func (f fakeClient) ProcessYAML(options ProcessYAMLOptions) (YamlPrinter, error)
 	return f.internalClient.ProcessYAML(options)
 }
 
-func (f fakeClient) RolloutRestart(options RolloutOptions) error {
+func (f fakeClient) RolloutRestart(options RolloutRestartOptions) error {
 	return f.internalClient.RolloutRestart(options)
 }
 
@@ -140,15 +132,15 @@ func (f fakeClient) DescribeCluster(options DescribeClusterOptions) (*tree.Objec
 	return f.internalClient.DescribeCluster(options)
 }
 
-func (f fakeClient) RolloutPause(options RolloutOptions) error {
+func (f fakeClient) RolloutPause(options RolloutPauseOptions) error {
 	return f.internalClient.RolloutPause(options)
 }
 
-func (f fakeClient) RolloutResume(options RolloutOptions) error {
+func (f fakeClient) RolloutResume(options RolloutResumeOptions) error {
 	return f.internalClient.RolloutResume(options)
 }
 
-func (f fakeClient) RolloutUndo(options RolloutOptions) error {
+func (f fakeClient) RolloutUndo(options RolloutUndoOptions) error {
 	return f.internalClient.RolloutUndo(options)
 }
 

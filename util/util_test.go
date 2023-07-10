@@ -551,7 +551,7 @@ func TestIsExternalManagedControlPlane(t *testing.T) {
 			},
 		}
 		result := IsExternalManagedControlPlane(controlPlane)
-		g.Expect(result).Should(Equal(true))
+		g.Expect(result).Should(BeTrue())
 	})
 
 	t.Run("should return false if control plane status externalManagedControlPlane is false", func(t *testing.T) {
@@ -563,7 +563,7 @@ func TestIsExternalManagedControlPlane(t *testing.T) {
 			},
 		}
 		result := IsExternalManagedControlPlane(controlPlane)
-		g.Expect(result).Should(Equal(false))
+		g.Expect(result).Should(BeFalse())
 	})
 
 	t.Run("should return false if control plane status externalManagedControlPlane is not set", func(t *testing.T) {
@@ -575,7 +575,7 @@ func TestIsExternalManagedControlPlane(t *testing.T) {
 			},
 		}
 		result := IsExternalManagedControlPlane(controlPlane)
-		g.Expect(result).Should(Equal(false))
+		g.Expect(result).Should(BeFalse())
 	})
 }
 
@@ -666,7 +666,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "machine1",
 						Labels: map[string]string{
-							clusterv1.ClusterLabelName: "test1",
+							clusterv1.ClusterNameLabel: "test1",
 						},
 					},
 				},
@@ -674,7 +674,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "machine2",
 						Labels: map[string]string{
-							clusterv1.ClusterLabelName: "test1",
+							clusterv1.ClusterNameLabel: "test1",
 						},
 					},
 				},
@@ -692,7 +692,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "md1",
 						Labels: map[string]string{
-							clusterv1.ClusterLabelName: "test1",
+							clusterv1.ClusterNameLabel: "test1",
 						},
 					},
 				},
@@ -700,7 +700,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "md2",
 						Labels: map[string]string{
-							clusterv1.ClusterLabelName: "test2",
+							clusterv1.ClusterNameLabel: "test2",
 						},
 					},
 				},
@@ -708,7 +708,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "md3",
 						Labels: map[string]string{
-							clusterv1.ClusterLabelName: "test1",
+							clusterv1.ClusterNameLabel: "test1",
 						},
 					},
 				},

@@ -52,9 +52,19 @@ while doing the move operation, and possible race conditions happening while the
 remediating etc. has never been investigated nor addressed.
 
 In order to avoid further confusion about this point, `clusterctl backup` and `clusterctl restore` commands have been
-deprecated because they were built on top of `clusterctl move` logic and they were sharing he same limitations. 
+removed because they were built on top of `clusterctl move` logic and they were sharing the same limitations.
 User can use `clusterctl move --to-directory` and `clusterctl move --from-directory` instead; this will hopefully
 make it clear those operation have the same limitations of the move command.
+
+</aside>
+
+<aside class="note warning">
+
+<h1> Warning: Status subresource is never restored </h1>
+
+Every object's `Status` subresource, including every nested field (e.g. `Status.Conditions`), is never restored during a `move` operation. A `Status` subresource should never contain fields that cannot be recreated or derived from information in spec, metadata, or external systems.
+Provider implementers should not store non-ephemeral data in the `Status`. 
+`Status` should be able to be fully rebuilt by controllers by observing the current state of resources.
 
 </aside>
 

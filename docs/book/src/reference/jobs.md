@@ -27,7 +27,7 @@ Prow Presubmits:
   * GINKGO_FOCUS: `[IPv6] [PR-Informing]`, IP_FAMILY: `IPv6`
 * ✳️️ ✴️ [pull-cluster-api-e2e-full-main] `./scripts/ci-e2e.sh`
   * GINKGO_SKIP: `[PR-Blocking] [Conformance] [K8s-Upgrade] [IPv6]` (i.e. "no tags")
-* ✳️️ ✴️ [pull-cluster-api-e2e-workload-upgrade-1-26-latest-main] `./scripts/ci-e2e.sh` FROM: `stable-1.26` TO: `ci/latest-1.27`
+* ✳️️ ✴️ [pull-cluster-api-e2e-workload-upgrade-1-27-latest-main] `./scripts/ci-e2e.sh` FROM: `stable-1.27` TO: `ci/latest-1.28`
   * GINKGO_FOCUS: `[K8s-Upgrade]`
 
 GitHub Presubmit Workflows:
@@ -60,20 +60,12 @@ Prow Postsubmits:
 Prow Periodics:
 * [periodic-cluster-api-test-main] `./scripts/ci-test.sh`
 * [periodic-cluster-api-test-mink8s-main] `./scripts/ci-test.sh`
-  * KUBEBUILDER_ENVTEST_KUBERNETES_VERSION: `1.20.2`
+  * KUBEBUILDER_ENVTEST_KUBERNETES_VERSION: `1.23.5`
 * [periodic-cluster-api-e2e-main] `./scripts/ci-e2e.sh`
   * GINKGO_SKIP: `[Conformance] [K8s-Upgrade]|[IPv6]`
 * [periodic-cluster-api-e2e-mink8s-main] `./scripts/ci-e2e.sh`
-  * GINKGO_SKIP: `[Conformance] [K8s-Upgrade]|[IPv6]|[ClusterClass]`
-  * KUBERNETES_VERSION_MANAGEMENT: `stable-1.20`, CLUSTER_TOPOLOGY: `false`
-* [periodic-cluster-api-e2e-workload-upgrade-1-18-1-19-main] `./scripts/ci-e2e.sh` FROM: `stable-1.18` TO: `stable-1.19`
-  * GINKGO_FOCUS: `[K8s-Upgrade]`
-* [periodic-cluster-api-e2e-workload-upgrade-1-19-1-20-main] `./scripts/ci-e2e.sh` FROM: `stable-1.19` TO: `stable-1.20`
-  * GINKGO_FOCUS: `[K8s-Upgrade]`
-* [periodic-cluster-api-e2e-workload-upgrade-1-20-1-21-main] `./scripts/ci-e2e.sh` FROM: `stable-1.20` TO: `stable-1.21`
-  * GINKGO_FOCUS: `[K8s-Upgrade]`
-* [periodic-cluster-api-e2e-workload-upgrade-1-21-1-22-main] `./scripts/ci-e2e.sh` FROM: `stable-1.21` TO: `stable-1.22`
-  * GINKGO_FOCUS: `[K8s-Upgrade]`
+  * GINKGO_SKIP: `[Conformance] [K8s-Upgrade]|[IPv6]`
+  * KUBERNETES_VERSION_MANAGEMENT: `stable-1.23`
 * [periodic-cluster-api-e2e-workload-upgrade-1-22-1-23-main] `./scripts/ci-e2e.sh` FROM: `stable-1.22` TO: `stable-1.23`
   * GINKGO_FOCUS: `[K8s-Upgrade]`
 * [periodic-cluster-api-e2e-workload-upgrade-1-23-1-24-main] `./scripts/ci-e2e.sh` FROM: `stable-1.23` TO: `stable-1.24`
@@ -82,7 +74,9 @@ Prow Periodics:
   * GINKGO_FOCUS: `[K8s-Upgrade]`
 * [periodic-cluster-api-e2e-workload-upgrade-1-25-1-26-main] `./scripts/ci-e2e.sh` FROM: `stable-1.25` TO: `stable-1.26`
   * GINKGO_FOCUS: `[K8s-Upgrade]`
-* [periodic-cluster-api-e2e-workload-upgrade-1-26-latest-main] `./scripts/ci-e2e.sh` FROM: `stable-1.26` TO: `ci/latest-1.27`
+* [periodic-cluster-api-e2e-workload-upgrade-1-26-1-27-main] `./scripts/ci-e2e.sh` FROM: `stable-1.26` TO: `stable-1.27`
+  * GINKGO_FOCUS: `[K8s-Upgrade]`
+* [periodic-cluster-api-e2e-workload-upgrade-1-27-latest-main] `./scripts/ci-e2e.sh` FROM: `stable-1.27` TO: `ci/latest-1.28`
   * GINKGO_FOCUS: `[K8s-Upgrade]`
 * [cluster-api-push-images-nightly] Google Cloud Build: `make release-staging-nightly`
 
@@ -118,21 +112,18 @@ Prow Periodics:
 [pull-cluster-api-e2e-informing-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-pr-e2e-informing-main
 [pull-cluster-api-e2e-informing-ipv6-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-pr-e2e-informing-ipv6-main
 [pull-cluster-api-e2e-full-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-pr-e2e-full-main
-[pull-cluster-api-e2e-workload-upgrade-1-26-latest-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-pr-e2e-main-1-26-latest
+[pull-cluster-api-e2e-workload-upgrade-1-27-latest-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-pr-e2e-main-1-27-latest
 [periodic-cluster-api-test-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-test-main
 [periodic-cluster-api-test-mink8s-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-test-mink8s-main
 [periodic-cluster-api-e2e-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main
 [periodic-cluster-api-e2e-upgrade-v0-3-to-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-upgrade-v0-3-to-main
 [periodic-cluster-api-e2e-upgrade-v1-0-to-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-upgrade-v1-0-to-main
 [periodic-cluster-api-e2e-mink8s-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-mink8s-main
-[periodic-cluster-api-e2e-workload-upgrade-1-18-1-19-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-18-1-19
-[periodic-cluster-api-e2e-workload-upgrade-1-19-1-20-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-19-1-20
-[periodic-cluster-api-e2e-workload-upgrade-1-20-1-21-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-20-1-21
-[periodic-cluster-api-e2e-workload-upgrade-1-21-1-22-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-21-1-22
 [periodic-cluster-api-e2e-workload-upgrade-1-22-1-23-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-22-1-23
 [periodic-cluster-api-e2e-workload-upgrade-1-23-1-24-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-23-1-24
 [periodic-cluster-api-e2e-workload-upgrade-1-24-1-25-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-24-1-25
 [periodic-cluster-api-e2e-workload-upgrade-1-25-1-26-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-25-1-26
-[periodic-cluster-api-e2e-workload-upgrade-1-26-latest-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-26-latest
+[periodic-cluster-api-e2e-workload-upgrade-1-26-1-27-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-26-1-27
+[periodic-cluster-api-e2e-workload-upgrade-1-27-latest-main]: https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api#capi-e2e-main-1-27-latest
 [cluster-api-push-images-nightly]: https://testgrid.k8s.io/sig-cluster-lifecycle-image-pushes#cluster-api-push-images-nightly
 [post-cluster-api-push-images]: https://testgrid.k8s.io/sig-cluster-lifecycle-image-pushes#post-cluster-api-push-images

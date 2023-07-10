@@ -47,6 +47,7 @@ import (
 	"sigs.k8s.io/cluster-api/internal/hooks"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/internal/util/ssa"
 )
 
 var (
@@ -87,7 +88,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -130,7 +131,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -180,7 +181,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -231,7 +232,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -272,7 +273,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             nil,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(nil),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(nil, ssa.NewCache()),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -760,6 +761,44 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			wantError:          false,
 		},
 		{
+			name: "hook should not be called if the control plane is stable at desired version but MDs upgrade is deferred - hook is marked",
+			s: &scope.Scope{
+				Blueprint: &scope.ClusterBlueprint{
+					Topology: &clusterv1.Topology{
+						ControlPlane: clusterv1.ControlPlaneTopology{
+							Replicas: pointer.Int32(2),
+						},
+					},
+				},
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-cluster",
+							Namespace: "test-ns",
+							Annotations: map[string]string{
+								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
+							},
+						},
+						Spec: clusterv1.ClusterSpec{},
+					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneStableAtTopologyVersion,
+					},
+				},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+				UpgradeTracker: func() *scope.UpgradeTracker {
+					ut := scope.NewUpgradeTracker()
+					ut.ControlPlane.PendingUpgrade = false
+					ut.MachineDeployments.MarkDeferredUpgrade("md1")
+					return ut
+				}(),
+			},
+			wantMarked:         true,
+			hookResponse:       successResponse,
+			wantHookToBeCalled: false,
+			wantError:          false,
+		},
+		{
 			name: "hook should be called if the control plane and MDs are stable at the topology version - success response should unmark the hook",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
@@ -924,7 +963,7 @@ func TestReconcileCluster(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			err = r.reconcileCluster(ctx, s)
@@ -1049,7 +1088,7 @@ func TestReconcileInfrastructureCluster(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			err = r.reconcileInfrastructureCluster(ctx, s)
@@ -1303,7 +1342,7 @@ func TestReconcileControlPlane(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -1563,7 +1602,7 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -1676,8 +1715,8 @@ func TestReconcileMachineDeployments(t *testing.T) {
 	infrastructureMachineTemplate9m := builder.TestInfrastructureMachineTemplate(metav1.NamespaceDefault, "infrastructure-machine-9m").Build()
 	bootstrapTemplate9m := builder.TestBootstrapTemplate(metav1.NamespaceDefault, "bootstrap-config-9m").Build()
 	md9 := newFakeMachineDeploymentTopologyState("md-9m", infrastructureMachineTemplate9m, bootstrapTemplate9m, nil)
-	md9.Object.Spec.Template.ObjectMeta.Labels = map[string]string{clusterv1.ClusterLabelName: "cluster-1", "foo": "bar"}
-	md9.Object.Spec.Selector.MatchLabels = map[string]string{clusterv1.ClusterLabelName: "cluster-1", "foo": "bar"}
+	md9.Object.Spec.Template.ObjectMeta.Labels = map[string]string{clusterv1.ClusterNameLabel: "cluster-1", "foo": "bar"}
+	md9.Object.Spec.Selector.MatchLabels = map[string]string{clusterv1.ClusterNameLabel: "cluster-1", "foo": "bar"}
 	md9WithInstanceSpecificTemplateMetadataAndSelector := newFakeMachineDeploymentTopologyState("md-9m", infrastructureMachineTemplate9m, bootstrapTemplate9m, nil)
 	md9WithInstanceSpecificTemplateMetadataAndSelector.Object.Spec.Template.ObjectMeta.Labels = map[string]string{"foo": "bar"}
 	md9WithInstanceSpecificTemplateMetadataAndSelector.Object.Spec.Selector.MatchLabels = map[string]string{"foo": "bar"}
@@ -1812,7 +1851,7 @@ func TestReconcileMachineDeployments(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			err = r.reconcileMachineDeployments(ctx, s)
@@ -1831,7 +1870,7 @@ func TestReconcileMachineDeployments(t *testing.T) {
 					if wantMachineDeploymentState.Object.Name != gotMachineDeployment.Name {
 						continue
 					}
-					currentMachineDeploymentTopologyName := wantMachineDeploymentState.Object.ObjectMeta.Labels[clusterv1.ClusterTopologyMachineDeploymentLabelName]
+					currentMachineDeploymentTopologyName := wantMachineDeploymentState.Object.ObjectMeta.Labels[clusterv1.ClusterTopologyMachineDeploymentNameLabel]
 					currentMachineDeploymentState := currentMachineDeploymentStates[currentMachineDeploymentTopologyName]
 
 					// Copy over the name of the newly created InfrastructureRef and Bootsrap.ConfigRef because they get a generated name
@@ -2291,7 +2330,7 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -2406,7 +2445,7 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 	md := builder.MachineDeployment(metav1.NamespaceDefault, "md-1").WithLabels(
 		map[string]string{
-			clusterv1.ClusterTopologyMachineDeploymentLabelName: "machine-deployment-one",
+			clusterv1.ClusterTopologyMachineDeploymentNameLabel: "machine-deployment-one",
 		}).
 		Build()
 
@@ -2557,7 +2596,7 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -2568,7 +2607,7 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 			g.Expect(env.GetAPIReader().List(ctx, &gotMachineHealthCheckList, &client.ListOptions{Namespace: namespace.GetName()})).To(Succeed())
 			g.Expect(gotMachineHealthCheckList.Items).To(HaveLen(len(tt.want)))
 
-			g.Expect(len(tt.want)).To(Equal(len(gotMachineHealthCheckList.Items)))
+			g.Expect(tt.want).To(HaveLen(len(gotMachineHealthCheckList.Items)))
 
 			for _, wantMHC := range tt.want {
 				for _, gotMHC := range gotMachineHealthCheckList.Items {
@@ -2592,7 +2631,7 @@ func newFakeMachineDeploymentTopologyState(name string, infrastructureMachineTem
 		Object: builder.MachineDeployment(metav1.NamespaceDefault, name).
 			WithInfrastructureTemplate(infrastructureMachineTemplate).
 			WithBootstrapTemplate(bootstrapTemplate).
-			WithLabels(map[string]string{clusterv1.ClusterTopologyMachineDeploymentLabelName: name + "-topology"}).
+			WithLabels(map[string]string{clusterv1.ClusterTopologyMachineDeploymentNameLabel: name + "-topology"}).
 			WithClusterName("cluster-1").
 			WithReplicas(1).
 			WithDefaulter(true).
@@ -2606,7 +2645,7 @@ func newFakeMachineDeploymentTopologyState(name string, infrastructureMachineTem
 func toMachineDeploymentTopologyStateMap(states []*scope.MachineDeploymentState) map[string]*scope.MachineDeploymentState {
 	ret := map[string]*scope.MachineDeploymentState{}
 	for _, state := range states {
-		ret[state.Object.Labels[clusterv1.ClusterTopologyMachineDeploymentLabelName]] = state
+		ret[state.Object.Labels[clusterv1.ClusterTopologyMachineDeploymentNameLabel]] = state
 	}
 	return ret
 }
@@ -2703,7 +2742,7 @@ func TestReconciler_reconcileMachineHealthCheck(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			if tt.current != nil {

@@ -33,8 +33,8 @@ func ControlPlaneMachineLabelsForCluster(kcp *controlplanev1.KubeadmControlPlane
 	}
 
 	// Always force these labels over the ones coming from the spec.
-	labels[clusterv1.ClusterLabelName] = clusterName
-	labels[clusterv1.MachineControlPlaneLabelName] = ""
+	labels[clusterv1.ClusterNameLabel] = clusterName
+	labels[clusterv1.MachineControlPlaneLabel] = ""
 	// Note: MustFormatValue is used here as the label value can be a hash if the control plane name is longer than 63 characters.
 	labels[clusterv1.MachineControlPlaneNameLabel] = capilabels.MustFormatValue(kcp.Name)
 	return labels

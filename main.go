@@ -31,8 +31,10 @@ import (
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
@@ -41,6 +43,7 @@ import (
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	clusterv1alpha3 "sigs.k8s.io/cluster-api/api/v1alpha3"
@@ -131,7 +134,6 @@ func init() {
 
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
-	logs.AddFlags(fs, logs.SkipLoggingConfigurationFlags())
 	logsv1.AddFlags(logOptions, fs)
 
 	fs.StringVar(&metricsBindAddr, "metrics-bind-addr", "localhost:8080",
@@ -250,7 +252,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
+	ctrlOptions := ctrl.Options{
 		Scheme:                     scheme,
 		MetricsBindAddress:         metricsBindAddr,
 		LeaderElection:             enableLeaderElection,
@@ -269,7 +271,15 @@ func main() {
 		CertDir:                webhookCertDir,
 		HealthProbeBindAddress: healthAddr,
 		TLSOpts:                tlsOptionOverrides,
-	})
+	}
+
+	if feature.Gates.Enabled(feature.LazyRestmapper) {
+		ctrlOptions.MapperProvider = func(c *rest.Config) (meta.RESTMapper, error) {
+			return apiutil.NewDynamicRESTMapper(c, apiutil.WithExperimentalLazyMapper)
+		}
+	}
+
+	mgr, err := ctrl.NewManager(restConfig, ctrlOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -363,6 +373,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		if err := (&controllers.ClusterClassReconciler{
 			Client:                    mgr.GetClient(),
 			APIReader:                 mgr.GetAPIReader(),
+			RuntimeClient:             runtimeClient,
 			UnstructuredCachingClient: unstructuredCachingClient,
 			WatchFilterValue:          watchFilterValue,
 		}).SetupWithManager(ctx, mgr, concurrency(clusterClassConcurrency)); err != nil {
@@ -450,6 +461,8 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	if feature.Gates.Enabled(feature.MachinePool) {
 		if err := (&expcontrollers.MachinePoolReconciler{
 			Client:           mgr.GetClient(),
+			APIReader:        mgr.GetAPIReader(),
+			Tracker:          tracker,
 			WatchFilterValue: watchFilterValue,
 		}).SetupWithManager(ctx, mgr, concurrency(machinePoolConcurrency)); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "MachinePool")
@@ -526,6 +539,12 @@ func setupWebhooks(mgr ctrl.Manager) {
 	// is going to prevent creating or updating new objects in case the feature flag is disabled
 	if err := (&addonsv1.ClusterResourceSet{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "ClusterResourceSet")
+		os.Exit(1)
+	}
+	// NOTE: ClusterResourceSetBinding is behind ClusterResourceSet feature gate flag; the webhook
+	// is going to prevent creating or updating new objects in case the feature flag is disabled
+	if err := (&addonsv1.ClusterResourceSetBinding{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "ClusterResourceSetBinding")
 		os.Exit(1)
 	}
 

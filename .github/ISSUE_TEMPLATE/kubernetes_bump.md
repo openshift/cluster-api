@@ -25,15 +25,20 @@ changes should be cherry-picked to all release series that will support the new 
   * Bump the Kubernetes version in:
     * `test/*`: search for occurrences of the previous Kubernetes version
     * `Tiltfile`
-  * Ensure the latest available kind version is used as well.
+  * Ensure the latest available kind version is used (including the latest images for this kind release)
   * Verify the quickstart manually
   * Prior art: #7156
-  * bump `InitWithKubernetesVersion` in `clusterctl_upgrade_test.go`
-* [ ] Job configurations:
-  * For all releases which will support the new Kubernetes version:
-    * Update `INIT_WITH_KUBERNETES_VERSION`.
-    * Add new periodic upgrade jobs .
+  * bump `InitWithKubernetesVersion` and `WorkloadKubernetesVersion` in `clusterctl_upgrade_test.go`
+* [ ] Ensure the jobs are adjusted to provide test coverage according to our [support policy](https://cluster-api.sigs.k8s.io/reference/versions.html#supported-kubernetes-versions):
+  * For the main branch and the release branch of the latest supported Cluster API minor release:
+    * Add new periodic upgrade job.
     * Adjust presubmit jobs so that we have the latest upgrade jobs available on PRs.
+  * For the main branch:
+    * periodics & presubmits: 
+      * Bump `KUBEBUILDER_ENVTEST_KUBERNETES_VERSION` of the `test-mink8s` jobs to the new minimum supported management cluster version.
+    * periodics:
+      * Bump `KUBERNETES_VERSION_MANAGEMENT` of the `e2e-mink8s` job to the new minimum supported management cluster version.
+      * Drop the oldest upgrade job as the oldest Kubernetes minor version is now out of support.
   * Prior art: https://github.com/kubernetes/test-infra/pull/27421
 * [ ] Update book:
   * Update supported versions in `versions.md`
@@ -54,10 +59,10 @@ run the Cluster API controllers on the new Kubernetes version.
 * [ ] Update our Prow jobs for the `main` branch to use the correct `kubekins-e2e` image
   * It is recommended to have one PR for presubmit and one for periodic jobs to reduce the risk of breaking the periodic jobs.
   * Prior art: presubmit jobs: https://github.com/kubernetes/test-infra/pull/27311
-  * Prior art: periodic jobs: https://github.com/kubernetes/test-infra/pull/27311
+  * Prior art: periodic jobs: https://github.com/kubernetes/test-infra/pull/27326
 * [ ] Bump the Go version in Cluster API: (if Kubernetes is using a new Go minor version)
   * Search for the currently used Go version across the repository and update it
-  * We have to at least modify it in: `.github/workflows`, `hack/ensure-go.sh`, `.golangci.yml`, `cloudbuild*.yaml`, `go.mod`, `Makefile`, `netlify.toml`, `Tiltfile`
+  * We have to at least modify it in: `hack/ensure-go.sh`, `.golangci.yml`, `cloudbuild*.yaml`, `go.mod`, `Makefile`, `netlify.toml`, `Tiltfile`
   * Prior art: #7135
 * [ ] Bump controller-runtime
 * [ ] Bump controller-tools

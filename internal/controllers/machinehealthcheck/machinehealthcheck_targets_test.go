@@ -173,7 +173,7 @@ func TestGetTargetsFromMHC(t *testing.T) {
 			targets, err := reconciler.getTargetsFromMHC(ctx, ctrl.LoggerFrom(ctx), k8sClient, cluster, testMHC)
 			gs.Expect(err).ToNot(HaveOccurred())
 
-			gs.Expect(len(targets)).To(Equal(len(tc.expectedTargets)))
+			gs.Expect(targets).To(HaveLen(len(tc.expectedTargets)))
 			for i, target := range targets {
 				expectedTarget := tc.expectedTargets[i]
 				gs.Expect(target.Machine).To(Equal(expectedTarget.Machine))
@@ -483,7 +483,7 @@ func newTestMachine(name, namespace, clusterName, nodeName string, labels map[st
 	for k, v := range labels {
 		l[k] = v
 	}
-	l[clusterv1.ClusterLabelName] = clusterName
+	l[clusterv1.ClusterNameLabel] = clusterName
 
 	bootstrap := "bootstrap"
 	return &clusterv1.Machine{

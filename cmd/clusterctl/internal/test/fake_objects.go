@@ -39,6 +39,7 @@ import (
 	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/util"
 )
 
 type FakeCluster struct {
@@ -157,7 +158,7 @@ func (f *FakeCluster) Objs() []client.Object {
 		},
 	})
 	clusterInfrastructure.SetLabels(map[string]string{
-		clusterv1.ClusterLabelName: cluster.Name,
+		clusterv1.ClusterNameLabel: cluster.Name,
 	})
 
 	caSecret := &corev1.Secret{ // provided by the user -- ** NOT RECONCILED **
@@ -190,7 +191,7 @@ func (f *FakeCluster) Objs() []client.Object {
 		}
 
 		cloudSecret.SetLabels(map[string]string{
-			clusterctlv1.ClusterctlMoveLabelName: "",
+			clusterctlv1.ClusterctlMoveLabel: "",
 		})
 		objs = append(objs, cloudSecret)
 	}
@@ -338,7 +339,7 @@ func (f *FakeControlPlane) Objs(cluster *clusterv1.Cluster) []client.Object {
 				},
 			},
 			Labels: map[string]string{ // cluster.x-k8s.io/cluster-name=cluster, Added by the control plane controller (see below) -- RECONCILED
-				clusterv1.ClusterLabelName: cluster.Name,
+				clusterv1.ClusterNameLabel: cluster.Name,
 			},
 		},
 		Spec: fakecontrolplane.GenericControlPlaneSpec{
@@ -478,7 +479,7 @@ func (f *FakeMachinePool) Objs(cluster *clusterv1.Cluster) []client.Object {
 				},
 			},
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster.Name, // Added by the machinePool controller (mirrors machinePoolt.spec.ClusterName) -- RECONCILED
+				clusterv1.ClusterNameLabel: cluster.Name, // Added by the machinePool controller (mirrors machinePoolt.spec.ClusterName) -- RECONCILED
 			},
 		},
 		Spec: expv1.MachinePoolSpec{
@@ -563,14 +564,14 @@ func (f *FakeMachineDeployment) Objs(cluster *clusterv1.Cluster) []client.Object
 		machineDeploymentInfrastructure = NewFakeInfrastructureTemplate(f.name)
 	}
 	machineDeploymentInfrastructure.Namespace = cluster.Namespace
-	machineDeploymentInfrastructure.OwnerReferences = append(machineDeploymentInfrastructure.OwnerReferences, // Added by the machine set controller -- RECONCILED
+	machineDeploymentInfrastructure.SetOwnerReferences(util.EnsureOwnerRef(machineDeploymentInfrastructure.GetOwnerReferences(), // Added by the machine set controller -- RECONCILED
 		metav1.OwnerReference{
 			APIVersion: clusterv1.GroupVersion.String(),
 			Kind:       "Cluster",
 			Name:       cluster.Name,
 			UID:        cluster.UID,
 		},
-	)
+	))
 	setUID(machineDeploymentInfrastructure)
 
 	machineDeploymentBootstrap := &fakebootstrap.GenericBootstrapConfigTemplate{
@@ -610,7 +611,7 @@ func (f *FakeMachineDeployment) Objs(cluster *clusterv1.Cluster) []client.Object
 				},
 			},
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster.Name, // Added by the machineDeployment controller (mirrors machineDeployment.spec.ClusterName) -- RECONCILED
+				clusterv1.ClusterNameLabel: cluster.Name, // Added by the machineDeployment controller (mirrors machineDeployment.spec.ClusterName) -- RECONCILED
 			},
 		},
 		Spec: clusterv1.MachineDeploymentSpec{
@@ -693,7 +694,7 @@ func (f *FakeMachineSet) Objs(cluster *clusterv1.Cluster, machineDeployment *clu
 			Namespace: cluster.Namespace,
 			// Owner reference set by machineSet controller or by machineDeployment controller (see below)
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster.Name, // Added by the machineSet controller (mirrors machineSet.spec.ClusterName) -- RECONCILED
+				clusterv1.ClusterNameLabel: cluster.Name, // Added by the machineSet controller (mirrors machineSet.spec.ClusterName) -- RECONCILED
 			},
 		},
 		Spec: clusterv1.MachineSetSpec{
@@ -854,7 +855,7 @@ func (f *FakeMachine) Objs(cluster *clusterv1.Cluster, generateCerts bool, machi
 				*metav1.NewControllerRef(machineBootstrap, machineBootstrap.GroupVersionKind()),
 			},
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster.Name, // derives from Config -(ownerRef)-> machine.spec.ClusterName
+				clusterv1.ClusterNameLabel: cluster.Name, // derives from Config -(ownerRef)-> machine.spec.ClusterName
 			},
 		},
 	}
@@ -869,7 +870,7 @@ func (f *FakeMachine) Objs(cluster *clusterv1.Cluster, generateCerts bool, machi
 			Namespace: cluster.Namespace,
 			// Owner reference set by machine controller or by machineSet controller (see below)
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: cluster.Name, // Added by the machine controller (mirrors machine.spec.ClusterName) -- RECONCILED
+				clusterv1.ClusterNameLabel: cluster.Name, // Added by the machine controller (mirrors machine.spec.ClusterName) -- RECONCILED
 			},
 		},
 		Spec: clusterv1.MachineSpec{
@@ -905,7 +906,7 @@ func (f *FakeMachine) Objs(cluster *clusterv1.Cluster, generateCerts bool, machi
 		// If this machine belong to a controlPlane, it is controlled by it / ownership set by the controlPlane controller -- ** NOT RECONCILED ?? **
 		machine.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(controlPlane, controlPlane.GroupVersionKind())})
 		// Sets the MachineControlPlane Label
-		machine.Labels[clusterv1.MachineControlPlaneLabelName] = ""
+		machine.Labels[clusterv1.MachineControlPlaneLabel] = ""
 	default:
 		// If this machine does not belong to a machineSet or to a control plane, it is owned by the cluster / ownership set by the machine controller -- RECONCILED
 		machine.SetOwnerReferences([]metav1.OwnerReference{{
@@ -944,7 +945,7 @@ func (f *FakeMachine) Objs(cluster *clusterv1.Cluster, generateCerts bool, machi
 		},
 	})
 	machineInfrastructure.SetLabels(map[string]string{
-		clusterv1.ClusterLabelName: machine.Spec.ClusterName,
+		clusterv1.ClusterNameLabel: machine.Spec.ClusterName,
 	})
 
 	machineBootstrap.SetOwnerReferences([]metav1.OwnerReference{
@@ -956,7 +957,7 @@ func (f *FakeMachine) Objs(cluster *clusterv1.Cluster, generateCerts bool, machi
 		},
 	})
 	machineBootstrap.SetLabels(map[string]string{
-		clusterv1.ClusterLabelName: machine.Spec.ClusterName,
+		clusterv1.ClusterNameLabel: machine.Spec.ClusterName,
 	})
 
 	objs := []client.Object{
@@ -1099,6 +1100,7 @@ func (f *FakeClusterResourceSet) Objs() []client.Object {
 				Namespace: cluster.Namespace,
 			},
 			Spec: addonsv1.ClusterResourceSetBindingSpec{
+				ClusterName: cluster.Name,
 				Bindings: []*addonsv1.ResourceSetBinding{
 					{
 						ClusterResourceSetName: crs.Name,
@@ -1118,14 +1120,6 @@ func (f *FakeClusterResourceSet) Objs() []client.Object {
 		})
 
 		objs = append(objs, binding)
-
-		// binding are owned by the Cluster / ownership set by the ClusterResourceSet controller
-		binding.SetOwnerReferences(append(binding.OwnerReferences, metav1.OwnerReference{
-			APIVersion: cluster.APIVersion,
-			Kind:       cluster.Kind,
-			Name:       cluster.Name,
-			UID:        cluster.UID,
-		}))
 
 		resourceSetBinding := addonsv1.ResourceSetBinding{
 			ClusterResourceSetName: crs.Name,
@@ -1332,7 +1326,7 @@ func fakeCRD(group string, kind string, versions []string) *apiextensionsv1.Cust
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s.%s", strings.ToLower(kind), group), // NB. this technically should use plural(kind), but for the sake of test what really matters is to generate a unique name
 			Labels: map[string]string{
-				clusterctlv1.ClusterctlLabelName: "",
+				clusterctlv1.ClusterctlLabel: "",
 			},
 		},
 		Spec: apiextensionsv1.CustomResourceDefinitionSpec{ // NB. the spec contains only what is strictly required by the move test
@@ -1360,14 +1354,14 @@ func FakeCRDList() []*apiextensionsv1.CustomResourceDefinition {
 
 	// Ensure CRD for external objects is set as for "force move"
 	externalCRD := FakeNamespacedCustomResourceDefinition(fakeexternal.GroupVersion.Group, "GenericExternalObject", version)
-	externalCRD.Labels[clusterctlv1.ClusterctlMoveLabelName] = ""
+	externalCRD.Labels[clusterctlv1.ClusterctlMoveLabel] = ""
 
 	clusterExternalCRD := FakeClusterCustomResourceDefinition(fakeexternal.GroupVersion.Group, "GenericClusterExternalObject", version)
-	clusterExternalCRD.Labels[clusterctlv1.ClusterctlMoveLabelName] = ""
+	clusterExternalCRD.Labels[clusterctlv1.ClusterctlMoveLabel] = ""
 
 	// Ensure CRD for GenericClusterInfrastructureIdentity is set for "force move hierarchy"
 	clusterInfrastructureIdentityCRD := FakeClusterCustomResourceDefinition(fakeinfrastructure.GroupVersion.Group, "GenericClusterInfrastructureIdentity", version)
-	clusterInfrastructureIdentityCRD.Labels[clusterctlv1.ClusterctlMoveHierarchyLabelName] = ""
+	clusterInfrastructureIdentityCRD.Labels[clusterctlv1.ClusterctlMoveHierarchyLabel] = ""
 
 	return []*apiextensionsv1.CustomResourceDefinition{
 		FakeNamespacedCustomResourceDefinition(clusterv1.GroupVersion.Group, "Cluster", version),

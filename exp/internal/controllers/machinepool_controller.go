@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -29,14 +30,18 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	"sigs.k8s.io/cluster-api/controllers/noderefutil"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util"
@@ -59,7 +64,9 @@ const (
 
 // MachinePoolReconciler reconciles a MachinePool object.
 type MachinePoolReconciler struct {
-	Client client.Client
+	Client    client.Client
+	APIReader client.Reader
+	Tracker   *remote.ClusterCacheTracker
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -79,21 +86,20 @@ func (r *MachinePoolReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 		For(&expv1.MachinePool{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
+		Watches(
+			&source.Kind{Type: &clusterv1.Cluster{}},
+			handler.EnqueueRequestsFromMapFunc(clusterToMachinePools),
+			// TODO: should this wait for Cluster.Status.InfrastructureReady similar to Infra Machine resources?
+			builder.WithPredicates(
+				predicates.All(ctrl.LoggerFrom(ctx),
+					predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
+					predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
+				),
+			),
+		).
 		Build(r)
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
-	}
-	err = c.Watch(
-		&source.Kind{Type: &clusterv1.Cluster{}},
-		handler.EnqueueRequestsFromMapFunc(clusterToMachinePools),
-		// TODO: should this wait for Cluster.Status.InfrastructureReady similar to Infra Machine resources?
-		predicates.All(ctrl.LoggerFrom(ctx),
-			predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
-			predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
-		),
-	)
-	if err != nil {
-		return errors.Wrap(err, "failed adding Watch for Cluster to controller manager")
 	}
 
 	r.controller = c
@@ -174,7 +180,7 @@ func (r *MachinePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if mp.Labels == nil {
 		mp.Labels = make(map[string]string)
 	}
-	mp.Labels[clusterv1.ClusterLabelName] = mp.Spec.ClusterName
+	mp.Labels[clusterv1.ClusterNameLabel] = mp.Spec.ClusterName
 
 	// Add finalizer first if not exist to avoid the race condition between init and delete
 	if !controllerutil.ContainsFinalizer(mp, expv1.MachinePoolFinalizer) {
@@ -193,12 +199,12 @@ func (r *MachinePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 func (r *MachinePoolReconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, mp *expv1.MachinePool) (ctrl.Result, error) {
 	// Ensure the MachinePool is owned by the Cluster it belongs to.
-	mp.OwnerReferences = util.EnsureOwnerRef(mp.OwnerReferences, metav1.OwnerReference{
-		APIVersion: cluster.APIVersion,
+	mp.SetOwnerReferences(util.EnsureOwnerRef(mp.GetOwnerReferences(), metav1.OwnerReference{
+		APIVersion: clusterv1.GroupVersion.String(),
 		Kind:       cluster.Kind,
 		Name:       cluster.Name,
 		UID:        cluster.UID,
-	})
+	}))
 
 	phases := []func(context.Context, *clusterv1.Cluster, *expv1.MachinePool) (ctrl.Result, error){
 		r.reconcileBootstrap,
@@ -287,4 +293,81 @@ func (r *MachinePoolReconciler) reconcileDeleteExternal(ctx context.Context, m *
 
 	// Return true if there are no more external objects.
 	return len(objects) == 0, nil
+}
+
+func (r *MachinePoolReconciler) watchClusterNodes(ctx context.Context, cluster *clusterv1.Cluster) error {
+	log := ctrl.LoggerFrom(ctx)
+
+	if !conditions.IsTrue(cluster, clusterv1.ControlPlaneInitializedCondition) {
+		log.V(5).Info("Skipping node watching setup because control plane is not initialized")
+		return nil
+	}
+
+	// If there is no tracker, don't watch remote nodes
+	if r.Tracker == nil {
+		return nil
+	}
+
+	return r.Tracker.Watch(ctx, remote.WatchInput{
+		Name:         "machinepool-watchNodes",
+		Cluster:      util.ObjectKey(cluster),
+		Watcher:      r.controller,
+		Kind:         &corev1.Node{},
+		EventHandler: handler.EnqueueRequestsFromMapFunc(r.nodeToMachinePool),
+	})
+}
+
+func (r *MachinePoolReconciler) nodeToMachinePool(o client.Object) []reconcile.Request {
+	node, ok := o.(*corev1.Node)
+	if !ok {
+		panic(fmt.Sprintf("Expected a Node but got a %T", o))
+	}
+
+	var filters []client.ListOption
+	// Match by clusterName when the node has the annotation.
+	if clusterName, ok := node.GetAnnotations()[clusterv1.ClusterNameAnnotation]; ok {
+		filters = append(filters, client.MatchingLabels{
+			clusterv1.ClusterNameLabel: clusterName,
+		})
+	}
+
+	// Match by namespace when the node has the annotation.
+	if namespace, ok := node.GetAnnotations()[clusterv1.ClusterNamespaceAnnotation]; ok {
+		filters = append(filters, client.InNamespace(namespace))
+	}
+
+	// Match by nodeName and status.nodeRef.name.
+	machinePoolList := &expv1.MachinePoolList{}
+	if err := r.Client.List(
+		context.TODO(),
+		machinePoolList,
+		append(filters, client.MatchingFields{index.MachinePoolNodeNameField: node.Name})...); err != nil {
+		return nil
+	}
+
+	// There should be exactly 1 MachinePool for the node.
+	if len(machinePoolList.Items) == 1 {
+		return []reconcile.Request{{NamespacedName: util.ObjectKey(&machinePoolList.Items[0])}}
+	}
+
+	// Otherwise let's match by providerID. This is useful when e.g the NodeRef has not been set yet.
+	// Match by providerID
+	nodeProviderID, err := noderefutil.NewProviderID(node.Spec.ProviderID)
+	if err != nil {
+		return nil
+	}
+	machinePoolList = &expv1.MachinePoolList{}
+	if err := r.Client.List(
+		context.TODO(),
+		machinePoolList,
+		append(filters, client.MatchingFields{index.MachinePoolProviderIDField: nodeProviderID.IndexKey()})...); err != nil {
+		return nil
+	}
+
+	// There should be exactly 1 MachinePool for the node.
+	if len(machinePoolList.Items) == 1 {
+		return []reconcile.Request{{NamespacedName: util.ObjectKey(&machinePoolList.Items[0])}}
+	}
+
+	return nil
 }

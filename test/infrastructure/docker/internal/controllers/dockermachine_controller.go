@@ -27,6 +27,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -101,7 +102,7 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	if cluster == nil {
-		log.Info(fmt.Sprintf("Please associate this machine with a cluster using the label %s: <name of cluster>", clusterv1.ClusterLabelName))
+		log.Info(fmt.Sprintf("Please associate this machine with a cluster using the label %s: <name of cluster>", clusterv1.ClusterNameLabel))
 		return ctrl.Result{}, nil
 	}
 
@@ -171,7 +172,7 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
 	// the current cluster because of concurrent access.
 	if errors.Is(err, remote.ErrClusterLocked) {
-		log.V(5).Info("Requeueing because another worker has the lock on the ClusterCacheTracker")
+		log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
 		return ctrl.Result{Requeue: true}, nil
 	}
 	return res, err
@@ -305,9 +306,30 @@ func (r *DockerMachineReconciler) reconcileNormal(ctx context.Context, cluster *
 		if err := externalMachine.CheckForBootstrapSuccess(timeoutCtx, false); err != nil {
 			bootstrapData, format, err := r.getBootstrapData(timeoutCtx, machine)
 			if err != nil {
-				log.Error(err, "failed to get bootstrap data")
 				return ctrl.Result{}, err
 			}
+
+			// Setup a go routing to check for the machine being deleted while running bootstrap as a
+			// synchronous process, e.g. due to remediation. The routine stops when timeoutCtx is Done
+			// (either because canceled intentionally due to machine deletion or canceled by the defer cancel()
+			// call when exiting from this func).
+			go func() {
+				for {
+					select {
+					case <-timeoutCtx.Done():
+						return
+					default:
+						updatedDockerMachine := &infrav1.DockerMachine{}
+						if err := r.Client.Get(ctx, client.ObjectKeyFromObject(dockerMachine), updatedDockerMachine); err == nil &&
+							!updatedDockerMachine.DeletionTimestamp.IsZero() {
+							log.Info("Cancelling Bootstrap because the underlying machine has been deleted")
+							cancel()
+							return
+						}
+						time.Sleep(5 * time.Second)
+					}
+				}
+			}()
 
 			// Run the bootstrap script. Simulates cloud-init/Ignition.
 			if err := externalMachine.ExecBootstrap(timeoutCtx, bootstrapData, format); err != nil {
@@ -329,6 +351,17 @@ func (r *DockerMachineReconciler) reconcileNormal(ctx context.Context, cluster *
 	if err := setMachineAddress(ctx, dockerMachine, externalMachine); err != nil {
 		log.Error(err, "failed to set the machine address")
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// If the Cluster is using a control plane and the control plane is not yet initialized, there is no API server
+	// to contact to get the ProviderID for the Node hosted on this machine, so return early.
+	// NOTE: We are using RequeueAfter with a short interval in order to make test execution time more stable.
+	// NOTE: If the Cluster doesn't use a control plane, the ControlPlaneInitialized condition is only
+	// set to true after a control plane machine has a node ref. If we would requeue here in this case, the
+	// Machine will never get a node ref as ProviderID is required to set the node ref, so we would get a deadlock.
+	if cluster.Spec.ControlPlaneRef != nil &&
+		!conditions.IsTrue(cluster, clusterv1.ControlPlaneInitializedCondition) {
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
 	// Usually a cloud provider will do this, but there is no docker-cloud provider.
@@ -392,7 +425,7 @@ func (r *DockerMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 		return err
 	}
 
-	c, err := ctrl.NewControllerManagedBy(mgr).
+	err = ctrl.NewControllerManagedBy(mgr).
 		For(&infrav1.DockerMachine{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPaused(ctrl.LoggerFrom(ctx))).
@@ -404,15 +437,17 @@ func (r *DockerMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 			&source.Kind{Type: &infrav1.DockerCluster{}},
 			handler.EnqueueRequestsFromMapFunc(r.DockerClusterToDockerMachines),
 		).
-		Build(r)
+		Watches(
+			&source.Kind{Type: &clusterv1.Cluster{}},
+			handler.EnqueueRequestsFromMapFunc(clusterToDockerMachines),
+			builder.WithPredicates(
+				predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
+			),
+		).Complete(r)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed setting up with a controller manager")
 	}
-	return c.Watch(
-		&source.Kind{Type: &clusterv1.Cluster{}},
-		handler.EnqueueRequestsFromMapFunc(clusterToDockerMachines),
-		predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
-	)
+	return nil
 }
 
 // DockerClusterToDockerMachines is a handler.ToRequestsFunc to be used to enqueue
@@ -432,7 +467,7 @@ func (r *DockerMachineReconciler) DockerClusterToDockerMachines(o client.Object)
 		return result
 	}
 
-	labels := map[string]string{clusterv1.ClusterLabelName: cluster.Name}
+	labels := map[string]string{clusterv1.ClusterNameLabel: cluster.Name}
 	machineList := &clusterv1.MachineList{}
 	if err := r.Client.List(context.TODO(), machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
 		return nil

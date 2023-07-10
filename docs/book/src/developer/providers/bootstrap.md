@@ -52,6 +52,11 @@ type PhippyBootstrapConfigTemplate struct {
 }
 
 type PhippyBootstrapConfigTemplateResource struct {
+	// Standard object's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
+	// +optional
+	ObjectMeta clusterv1.ObjectMeta `json:"metadata,omitempty"`
+
 	Spec PhippyBootstrapConfigSpec `json:"spec"`
 }
 ```
@@ -117,6 +122,13 @@ The following diagram shows the typical logic for a bootstrap provider:
 ## Sentinel File
 
 A bootstrap provider's bootstrap data must create `/run/cluster-api/bootstrap-success.complete` (or `C:\run\cluster-api\bootstrap-success.complete` for Windows machines) upon successful bootstrapping of a Kubernetes node. This allows infrastructure providers to detect and act on bootstrap failures.
+
+## Taint Nodes at creation
+
+A bootstrap provider can optionally taint worker nodes at creation with `node.cluster.x-k8s.io/uninitialized:NoSchedule`.
+This taint is used to prevent workloads to be scheduled on Nodes before the node is initialized by Cluster API.
+As of today the Node initialization consists of syncing labels from Machines to Nodes. Once the labels have been 
+initially synced the taint is removed form the Node.
 
 ## RBAC
 

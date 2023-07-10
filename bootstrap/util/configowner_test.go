@@ -41,7 +41,7 @@ func TestGetConfigOwner(t *testing.T) {
 				Name:      "my-machine",
 				Namespace: metav1.NamespaceDefault,
 				Labels: map[string]string{
-					clusterv1.MachineControlPlaneLabelName: "",
+					clusterv1.MachineControlPlaneLabel: "",
 				},
 			},
 			Spec: clusterv1.MachineSpec{
@@ -90,7 +90,7 @@ func TestGetConfigOwner(t *testing.T) {
 				Name:      "my-machine-pool",
 				Namespace: metav1.NamespaceDefault,
 				Labels: map[string]string{
-					clusterv1.MachineControlPlaneLabelName: "",
+					clusterv1.MachineControlPlaneLabel: "",
 				},
 			},
 			Spec: expv1.MachinePoolSpec{
@@ -187,7 +187,7 @@ func TestHasNodeRefs(t *testing.T) {
 		unstructuredOwner.SetUnstructuredContent(content)
 		co := ConfigOwner{&unstructuredOwner}
 		result := co.HasNodeRefs()
-		g.Expect(result).To(Equal(false))
+		g.Expect(result).To(BeFalse())
 	})
 	t.Run("should return true if there is a nodeRef for Machine", func(t *testing.T) {
 		g := NewWithT(t)
@@ -217,7 +217,7 @@ func TestHasNodeRefs(t *testing.T) {
 		co := ConfigOwner{&unstructuredOwner}
 
 		result := co.HasNodeRefs()
-		g.Expect(result).To(Equal(true))
+		g.Expect(result).To(BeTrue())
 	})
 	t.Run("should return false if nodes are missing from MachinePool", func(t *testing.T) {
 		g := NewWithT(t)
@@ -279,7 +279,7 @@ func TestHasNodeRefs(t *testing.T) {
 			co := ConfigOwner{&unstructuredOwner}
 
 			result := co.HasNodeRefs()
-			g.Expect(result).To(Equal(false))
+			g.Expect(result).To(BeFalse())
 		}
 	})
 	t.Run("should return true if MachinePool has nodeRefs for all replicas", func(t *testing.T) {
@@ -356,7 +356,7 @@ func TestHasNodeRefs(t *testing.T) {
 			co := ConfigOwner{&unstructuredOwner}
 
 			result := co.HasNodeRefs()
-			g.Expect(result).To(Equal(true))
+			g.Expect(result).To(BeTrue())
 		}
 	})
 }

@@ -32,8 +32,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
@@ -42,6 +44,7 @@ import (
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -51,6 +54,7 @@ import (
 	controlplanev1alpha4 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha4"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	kubeadmcontrolplanecontrollers "sigs.k8s.io/cluster-api/controlplane/kubeadm/controllers"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	kcpwebhooks "sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/flags"
@@ -90,13 +94,13 @@ var (
 	webhookCertDir                 string
 	healthAddr                     string
 	etcdDialTimeout                time.Duration
+	etcdCallTimeout                time.Duration
 	tlsOptions                     = flags.TLSOptions{}
 	logOptions                     = logs.NewOptions()
 )
 
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
-	logs.AddFlags(fs, logs.SkipLoggingConfigurationFlags())
 	logsv1.AddFlags(logOptions, fs)
 
 	fs.StringVar(&metricsBindAddr, "metrics-bind-addr", "localhost:8080",
@@ -141,6 +145,9 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&etcdDialTimeout, "etcd-dial-timeout-duration", 10*time.Second,
 		"Duration that the etcd client waits at most to establish a connection with etcd")
 
+	fs.DurationVar(&etcdCallTimeout, "etcd-call-timeout-duration", etcd.DefaultCallTimeout,
+		"Duration that the etcd client waits at most for read and write operations to etcd.")
+
 	flags.AddTLSOptions(fs, &tlsOptions)
 
 	feature.MutableGates.AddFlag(fs)
@@ -180,7 +187,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
+	ctrlOptions := ctrl.Options{
 		Scheme:                     scheme,
 		MetricsBindAddress:         metricsBindAddr,
 		LeaderElection:             enableLeaderElection,
@@ -199,7 +206,15 @@ func main() {
 		HealthProbeBindAddress: healthAddr,
 		CertDir:                webhookCertDir,
 		TLSOpts:                tlsOptionOverrides,
-	})
+	}
+
+	if feature.Gates.Enabled(feature.LazyRestmapper) {
+		ctrlOptions.MapperProvider = func(c *rest.Config) (meta.RESTMapper, error) {
+			return apiutil.NewDynamicRESTMapper(c, apiutil.WithExperimentalLazyMapper)
+		}
+	}
+
+	mgr, err := ctrl.NewManager(restConfig, ctrlOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -266,6 +281,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		Tracker:          tracker,
 		WatchFilterValue: watchFilterValue,
 		EtcdDialTimeout:  etcdDialTimeout,
+		EtcdCallTimeout:  etcdCallTimeout,
 	}).SetupWithManager(ctx, mgr, concurrency(kubeadmControlPlaneConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KubeadmControlPlane")
 		os.Exit(1)

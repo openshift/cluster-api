@@ -3,8 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.10.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   name: kubeadmcontrolplanetemplates.controlplane.cluster.x-k8s.io
 spec:
   group: controlplane.cluster.x-k8s.io
@@ -25,8 +24,8 @@ spec:
     name: v1alpha4
     schema:
       openAPIV3Schema:
-        description: KubeadmControlPlaneTemplate is the Schema for the kubeadmcontrolplanetemplates
-          API.
+        description: "KubeadmControlPlaneTemplate is the Schema for the kubeadmcontrolplanetemplates
+          API. \n Deprecated: This type will be removed in one of the next releases."
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -1207,6 +1206,27 @@ spec:
                 description: KubeadmControlPlaneTemplateResource describes the data
                   needed to create a KubeadmControlPlane from a template.
                 properties:
+                  metadata:
+                    description: 'Standard object''s metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: 'Annotations is an unstructured key value map
+                          stored with a resource that may be set by external tools
+                          to store and retrieve arbitrary metadata. They are not queryable
+                          and should be preserved when modifying objects. More info:
+                          http://kubernetes.io/docs/user-guide/annotations'
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: 'Map of string keys and values that can be used
+                          to organize and categorize (scope and select) objects. May
+                          match selectors of replication controllers and services.
+                          More info: http://kubernetes.io/docs/user-guide/labels'
+                        type: object
+                    type: object
                   spec:
                     description: 'KubeadmControlPlaneTemplateResourceSpec defines
                       the desired state of KubeadmControlPlane. NOTE: KubeadmControlPlaneTemplateResourceSpec
@@ -1860,6 +1880,19 @@ spec:
                                     items:
                                       type: string
                                     type: array
+                                  imagePullPolicy:
+                                    description: ImagePullPolicy specifies the policy
+                                      for image pulling during kubeadm "init" and
+                                      "join" operations. The value of this field must
+                                      be one of "Always", "IfNotPresent" or "Never".
+                                      Defaults to "IfNotPresent". This can be used
+                                      only with Kubernetes version equal to 1.22 and
+                                      later.
+                                    enum:
+                                    - Always
+                                    - IfNotPresent
+                                    - Never
+                                    type: string
                                   kubeletExtraArgs:
                                     additionalProperties:
                                       type: string
@@ -2096,6 +2129,19 @@ spec:
                                     items:
                                       type: string
                                     type: array
+                                  imagePullPolicy:
+                                    description: ImagePullPolicy specifies the policy
+                                      for image pulling during kubeadm "init" and
+                                      "join" operations. The value of this field must
+                                      be one of "Always", "IfNotPresent" or "Never".
+                                      Defaults to "IfNotPresent". This can be used
+                                      only with Kubernetes version equal to 1.22 and
+                                      later.
+                                    enum:
+                                    - Always
+                                    - IfNotPresent
+                                    - Never
+                                    type: string
                                   kubeletExtraArgs:
                                     additionalProperties:
                                       type: string
@@ -2331,6 +2377,28 @@ spec:
                           machines should be shaped when creating or updating a control
                           plane.
                         properties:
+                          metadata:
+                            description: 'Standard object''s metadata. More info:
+                              https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: 'Annotations is an unstructured key value
+                                  map stored with a resource that may be set by external
+                                  tools to store and retrieve arbitrary metadata.
+                                  They are not queryable and should be preserved when
+                                  modifying objects. More info: http://kubernetes.io/docs/user-guide/annotations'
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: 'Map of string keys and values that can
+                                  be used to organize and categorize (scope and select)
+                                  objects. May match selectors of replication controllers
+                                  and services. More info: http://kubernetes.io/docs/user-guide/labels'
+                                type: object
+                            type: object
                           nodeDeletionTimeout:
                             description: NodeDeletionTimeout defines how long the
                               machine controller will attempt to delete the Node that
@@ -2352,6 +2420,55 @@ spec:
                               all volumes to be detached. The default value is 0,
                               meaning that the volumes can be detached without any
                               time limitations.
+                            type: string
+                        type: object
+                      remediationStrategy:
+                        description: The RemediationStrategy that controls how control
+                          plane machine remediation happens.
+                        properties:
+                          maxRetry:
+                            description: "MaxRetry is the Max number of retries while
+                              attempting to remediate an unhealthy machine. A retry
+                              happens when a machine that was created as a replacement
+                              for an unhealthy machine also fails. For example, given
+                              a control plane with three machines M1, M2, M3: \n M1
+                              become unhealthy; remediation happens, and M1-1 is created
+                              as a replacement. If M1-1 (replacement of M1) has problems
+                              while bootstrapping it will become unhealthy, and then
+                              be remediated; such operation is considered a retry,
+                              remediation-retry #1. If M1-2 (replacement of M1-1)
+                              becomes unhealthy, remediation-retry #2 will happen,
+                              etc. \n A retry could happen only after RetryPeriod
+                              from the previous retry. If a machine is marked as unhealthy
+                              after MinHealthyPeriod from the previous remediation
+                              expired, this is not considered a retry anymore because
+                              the new issue is assumed unrelated from the previous
+                              one. \n If not set, the remedation will be retried infinitely."
+                            format: int32
+                            type: integer
+                          minHealthyPeriod:
+                            description: "MinHealthyPeriod defines the duration after
+                              which KCP will consider any failure to a machine unrelated
+                              from the previous one. In this case the remediation
+                              is not considered a retry anymore, and thus the retry
+                              counter restarts from 0. For example, assuming MinHealthyPeriod
+                              is set to 1h (default) \n M1 become unhealthy; remediation
+                              happens, and M1-1 is created as a replacement. If M1-1
+                              (replacement of M1) has problems within the 1hr after
+                              the creation, also this machine will be remediated and
+                              this operation is considered a retry - a problem related
+                              to the original issue happened to M1 -. \n If instead
+                              the problem on M1-1 is happening after MinHealthyPeriod
+                              expired, e.g. four days after m1-1 has been created
+                              as a remediation of M1, the problem on M1-1 is considered
+                              unrelated to the original issue happened to M1. \n If
+                              not set, this value is defaulted to 1h."
+                            type: string
+                          retryPeriod:
+                            description: "RetryPeriod is the duration that KCP should
+                              wait before remediating a machine being created as a
+                              replacement for an unhealthy machine (a retry). \n If
+                              not set, a retry will happen immediately."
                             type: string
                         type: object
                       rolloutAfter:

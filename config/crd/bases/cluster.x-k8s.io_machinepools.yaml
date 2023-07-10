@@ -3,8 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.10.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   name: machinepools.cluster.x-k8s.io
 spec:
   group: cluster.x-k8s.io
@@ -36,7 +35,8 @@ spec:
     name: v1alpha3
     schema:
       openAPIV3Schema:
-        description: MachinePool is the Schema for the machinepools API.
+        description: "MachinePool is the Schema for the machinepools API. \n Deprecated:
+          This type will be removed in one of the next releases."
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -586,7 +586,8 @@ spec:
     name: v1alpha4
     schema:
       openAPIV3Schema:
-        description: MachinePool is the Schema for the machinepools API.
+        description: "MachinePool is the Schema for the machinepools API. \n Deprecated:
+          This type will be removed in one of the next releases."
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation

@@ -3,8 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.10.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   name: machinedeployments.cluster.x-k8s.io
 spec:
   group: cluster.x-k8s.io
@@ -44,7 +43,8 @@ spec:
     name: v1alpha3
     schema:
       openAPIV3Schema:
-        description: MachineDeployment is the Schema for the machinedeployments API.
+        description: "MachineDeployment is the Schema for the machinedeployments API.
+          \n Deprecated: This type will be removed in one of the next releases."
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -543,7 +543,8 @@ spec:
     name: v1alpha4
     schema:
       openAPIV3Schema:
-        description: MachineDeployment is the Schema for the machinedeployments API.
+        description: "MachineDeployment is the Schema for the machinedeployments API.
+          \n Deprecated: This type will be removed in one of the next releases."
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -1054,9 +1055,22 @@ spec:
                 format: int32
                 type: integer
               replicas:
-                default: 1
-                description: Number of desired machines. Defaults to 1. This is a
-                  pointer to distinguish between explicit zero and not specified.
+                description: "Number of desired machines. This is a pointer to distinguish
+                  between explicit zero and not specified. \n Defaults to: * if the
+                  Kubernetes autoscaler min size and max size annotations are set:
+                  - if it's a new MachineDeployment, use min size - if the replicas
+                  field of the old MachineDeployment is < min size, use min size -
+                  if the replicas field of the old MachineDeployment is > max size,
+                  use max size - if the replicas field of the old MachineDeployment
+                  is in the (min size, max size) range, keep the value from the oldMD
+                  * otherwise use 1 Note: Defaulting will be run whenever the replicas
+                  field is not set: * A new MachineDeployment is created with replicas
+                  not set. * On an existing MachineDeployment the replicas field was
+                  first set and is now unset. Those cases are especially relevant
+                  for the following Kubernetes autoscaler use cases: * A new MachineDeployment
+                  is created and replicas should be managed by the autoscaler * An
+                  existing MachineDeployment which initially wasn't controlled by
+                  the autoscaler should be later controlled by the autoscaler"
                 format: int32
                 type: integer
               revisionHistoryLimit:
@@ -1065,6 +1079,14 @@ spec:
                   Defaults to 1.
                 format: int32
                 type: integer
+              rolloutAfter:
+                description: 'RolloutAfter is a field to indicate a rollout should
+                  be performed after the specified time even if no changes have been
+                  made to the MachineDeployment. Example: In the YAML the time can
+                  be specified in the RFC3339 format. To specify the rolloutAfter
+                  target as March 9, 2023, at 9 am UTC use "2023-03-09T09:00:00Z".'
+                format: date-time
+                type: string
               selector:
                 description: Label selector for machines. Existing MachineSets whose
                   machines are selected by this will be the ones affected by this

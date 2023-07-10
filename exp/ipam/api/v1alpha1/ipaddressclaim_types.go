@@ -32,7 +32,8 @@ type IPAddressClaimSpec struct {
 // IPAddressClaimStatus is the observed status of a IPAddressClaim.
 type IPAddressClaimStatus struct {
 	// AddressRef is a reference to the address that was created for this claim.
-	AddressRef corev1.LocalObjectReference `json:"addressRef"`
+	// +optional
+	AddressRef corev1.LocalObjectReference `json:"addressRef,omitempty"`
 
 	// Conditions summarises the current state of the IPAddressClaim
 	// +optional
@@ -53,6 +54,16 @@ type IPAddressClaim struct {
 
 	Spec   IPAddressClaimSpec   `json:"spec,omitempty"`
 	Status IPAddressClaimStatus `json:"status,omitempty"`
+}
+
+// GetConditions returns the set of conditions for this object.
+func (m *IPAddressClaim) GetConditions() clusterv1.Conditions {
+	return m.Status.Conditions
+}
+
+// SetConditions sets the conditions on this object.
+func (m *IPAddressClaim) SetConditions(conditions clusterv1.Conditions) {
+	m.Status.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true

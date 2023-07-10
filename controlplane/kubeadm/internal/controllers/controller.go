@@ -31,6 +31,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -44,7 +45,8 @@ import (
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
-	"sigs.k8s.io/cluster-api/internal/labels"
+	"sigs.k8s.io/cluster-api/internal/contract"
+	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/collections"
@@ -53,6 +55,11 @@ import (
 	"sigs.k8s.io/cluster-api/util/predicates"
 	"sigs.k8s.io/cluster-api/util/secret"
 	"sigs.k8s.io/cluster-api/util/version"
+)
+
+const (
+	kcpManagerName          = "capi-kubeadmcontrolplane"
+	kubeadmControlPlaneKind = "KubeadmControlPlane"
 )
 
 // +kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;patch
@@ -70,12 +77,20 @@ type KubeadmControlPlaneReconciler struct {
 	recorder        record.EventRecorder
 	Tracker         *remote.ClusterCacheTracker
 	EtcdDialTimeout time.Duration
+	EtcdCallTimeout time.Duration
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
 
 	managementCluster         internal.ManagementCluster
 	managementClusterUncached internal.ManagementCluster
+
+	// disableInPlacePropagation should only be used for tests. This is used to skip
+	// some parts of the controller that need SSA as the current test setup does not
+	// support SSA. This flag should be dropped after all affected tests are migrated
+	// to envtest.
+	disableInPlacePropagation bool
+	ssaCache                  ssa.Cache
 }
 
 func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -84,25 +99,23 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mg
 		Owns(&clusterv1.Machine{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
-		Build(r)
+		Watches(
+			&source.Kind{Type: &clusterv1.Cluster{}},
+			handler.EnqueueRequestsFromMapFunc(r.ClusterToKubeadmControlPlane),
+			builder.WithPredicates(
+				predicates.All(ctrl.LoggerFrom(ctx),
+					predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
+					predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
+				),
+			),
+		).Build(r)
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
 	}
 
-	err = c.Watch(
-		&source.Kind{Type: &clusterv1.Cluster{}},
-		handler.EnqueueRequestsFromMapFunc(r.ClusterToKubeadmControlPlane),
-		predicates.All(ctrl.LoggerFrom(ctx),
-			predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
-			predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
-		),
-	)
-	if err != nil {
-		return errors.Wrap(err, "failed adding Watch for Clusters to controller manager")
-	}
-
 	r.controller = c
 	r.recorder = mgr.GetEventRecorderFor("kubeadm-control-plane-controller")
+	r.ssaCache = ssa.NewCache()
 
 	if r.managementCluster == nil {
 		if r.Tracker == nil {
@@ -112,6 +125,7 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mg
 			Client:          r.Client,
 			Tracker:         r.Tracker,
 			EtcdDialTimeout: r.EtcdDialTimeout,
+			EtcdCallTimeout: r.EtcdCallTimeout,
 		}
 	}
 
@@ -209,7 +223,7 @@ func (r *KubeadmControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.
 		// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
 		// the current cluster because of concurrent access.
 		if errors.Is(err, remote.ErrClusterLocked) {
-			log.V(5).Info("Requeueing because another worker has the lock on the ClusterCacheTracker")
+			log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
 			return ctrl.Result{Requeue: true}, nil
 		}
 		return res, err
@@ -220,7 +234,7 @@ func (r *KubeadmControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.
 	// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
 	// the current cluster because of concurrent access.
 	if errors.Is(err, remote.ErrClusterLocked) {
-		log.V(5).Info("Requeueing because another worker has the lock on the ClusterCacheTracker")
+		log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
 		return ctrl.Result{Requeue: true}, nil
 	}
 	return res, err
@@ -279,7 +293,7 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		config.ClusterConfiguration = &bootstrapv1.ClusterConfiguration{}
 	}
 	certificates := secret.NewCertificatesForInitialControlPlane(config.ClusterConfiguration)
-	controllerRef := metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane"))
+	controllerRef := metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind(kubeadmControlPlaneKind))
 	if err := certificates.LookupOrGenerate(ctx, r.Client, util.ObjectKey(cluster), *controllerRef); err != nil {
 		log.Error(err, "unable to lookup or create cluster certificates")
 		conditions.MarkFalse(kcp, controlplanev1.CertificatesAvailableCondition, controlplanev1.CertificatesGenerationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
@@ -329,24 +343,15 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		return ctrl.Result{}, err
 	}
 
+	if !r.disableInPlacePropagation {
+		if err := r.syncMachines(ctx, controlPlane); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to sync Machines")
+		}
+	}
+
 	// Aggregate the operational state of all the machines; while aggregating we are adding the
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.
 	conditions.SetAggregate(controlPlane.KCP, controlplanev1.MachinesReadyCondition, ownedMachines.ConditionGetters(), conditions.AddSourceRef(), conditions.WithStepCounterIf(false))
-
-	// Ensure all required labels exist on the controlled Machines.
-	// This logic is needed to add the `cluster.x-k8s.io/control-plane-name` label to Machines
-	// which were created before the `cluster.x-k8s.io/control-plane-name` label was introduced
-	// or if a user manually removed the label.
-	// NOTE: Changes will be applied to the Machines in reconcileControlPlaneConditions.
-	// NOTE: cluster.x-k8s.io/control-plane is already set at this stage (it is used when reading controlPlane.Machines).
-	for i := range controlPlane.Machines {
-		machine := controlPlane.Machines[i]
-		// Note: MustEqualValue and MustFormatValue is used here as the label value can be a hash if the control plane
-		// name is longer than 63 characters.
-		if value, ok := machine.Labels[clusterv1.MachineControlPlaneNameLabel]; !ok || !labels.MustEqualValue(kcp.Name, value) {
-			machine.Labels[clusterv1.MachineControlPlaneNameLabel] = labels.MustFormatValue(kcp.Name)
-		}
-	}
 
 	// Updates conditions reporting the status of static pods and the status of the etcd cluster.
 	// NOTE: Conditions reporting KCP operation progress like e.g. Resized or SpecUpToDate are inlined with the rest of the execution.
@@ -526,10 +531,93 @@ func (r *KubeadmControlPlaneReconciler) ClusterToKubeadmControlPlane(o client.Ob
 	}
 
 	controlPlaneRef := c.Spec.ControlPlaneRef
-	if controlPlaneRef != nil && controlPlaneRef.Kind == "KubeadmControlPlane" {
+	if controlPlaneRef != nil && controlPlaneRef.Kind == kubeadmControlPlaneKind {
 		return []ctrl.Request{{NamespacedName: client.ObjectKey{Namespace: controlPlaneRef.Namespace, Name: controlPlaneRef.Name}}}
 	}
 
+	return nil
+}
+
+// syncMachines updates Machines, InfrastructureMachines and KubeadmConfigs to propagate in-place mutable fields from KCP.
+// Note: It also cleans up managed fields of all Machines so that Machines that were
+// created/patched before (< v1.4.0) the controller adopted Server-Side-Apply (SSA) can also work with SSA.
+// Note: For InfrastructureMachines and KubeadmConfigs it also drops ownership of "metadata.labels" and
+// "metadata.annotations" from "manager" so that "capi-kubeadmcontrolplane" can own these fields and can work with SSA.
+// Otherwise, fields would be co-owned by our "old" "manager" and "capi-kubeadmcontrolplane" and then we would not be
+// able to e.g. drop labels and annotations.
+func (r *KubeadmControlPlaneReconciler) syncMachines(ctx context.Context, controlPlane *internal.ControlPlane) error {
+	patchHelpers := map[string]*patch.Helper{}
+	for machineName := range controlPlane.Machines {
+		m := controlPlane.Machines[machineName]
+		// If the machine is already being deleted, we don't need to update it.
+		if !m.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		// Cleanup managed fields of all Machines.
+		// We do this so that Machines that were created/patched before the controller adopted Server-Side-Apply (SSA)
+		// (< v1.4.0) can also work with SSA. Otherwise, fields would be co-owned by our "old" "manager" and
+		// "capi-kubeadmcontrolplane" and then we would not be able to e.g. drop labels and annotations.
+		if err := ssa.CleanUpManagedFieldsForSSAAdoption(ctx, r.Client, m, kcpManagerName); err != nil {
+			return errors.Wrapf(err, "failed to update Machine: failed to adjust the managedFields of the Machine %s", klog.KObj(m))
+		}
+		// Update Machine to propagate in-place mutable fields from KCP.
+		updatedMachine, err := r.updateMachine(ctx, m, controlPlane.KCP, controlPlane.Cluster)
+		if err != nil {
+			return errors.Wrapf(err, "failed to update Machine: %s", klog.KObj(m))
+		}
+		controlPlane.Machines[machineName] = updatedMachine
+		// Since the machine is updated, re-create the patch helper so that any subsequent
+		// Patch calls use the correct base machine object to calculate the diffs.
+		// Example: reconcileControlPlaneConditions patches the machine objects in a subsequent call
+		// and, it should use the updated machine to calculate the diff.
+		// Note: If the patchHelpers are not re-computed based on the new updated machines, subsequent
+		// Patch calls will fail because the patch will be calculated based on an outdated machine and will error
+		// because of outdated resourceVersion.
+		// TODO: This should be cleaned-up to have a more streamline way of constructing and using patchHelpers.
+		patchHelper, err := patch.NewHelper(updatedMachine, r.Client)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create patch helper for Machine %s", klog.KObj(updatedMachine))
+		}
+		patchHelpers[machineName] = patchHelper
+
+		labelsAndAnnotationsManagedFieldPaths := []contract.Path{
+			{"f:metadata", "f:annotations"},
+			{"f:metadata", "f:labels"},
+		}
+		infraMachine := controlPlane.InfraResources[machineName]
+		// Cleanup managed fields of all InfrastructureMachines to drop ownership of labels and annotations
+		// from "manager". We do this so that InfrastructureMachines that are created using the Create method
+		// can also work with SSA. Otherwise, labels and annotations would be co-owned by our "old" "manager"
+		// and "capi-kubeadmcontrolplane" and then we would not be able to e.g. drop labels and annotations.
+		if err := ssa.DropManagedFields(ctx, r.Client, infraMachine, kcpManagerName, labelsAndAnnotationsManagedFieldPaths); err != nil {
+			return errors.Wrapf(err, "failed to clean up managedFields of InfrastructureMachine %s", klog.KObj(infraMachine))
+		}
+		// Update in-place mutating fields on InfrastructureMachine.
+		if err := r.updateExternalObject(ctx, infraMachine, controlPlane.KCP, controlPlane.Cluster); err != nil {
+			return errors.Wrapf(err, "failed to update InfrastructureMachine %s", klog.KObj(infraMachine))
+		}
+
+		kubeadmConfig, ok := controlPlane.GetKubeadmConfig(machineName)
+		if !ok || kubeadmConfig == nil {
+			return errors.Wrapf(err, "failed to retrieve KubeadmConfig for machine %s", machineName)
+		}
+		// Note: Set the GroupVersionKind because updateExternalObject depends on it.
+		kubeadmConfig.SetGroupVersionKind(m.Spec.Bootstrap.ConfigRef.GroupVersionKind())
+		// Cleanup managed fields of all KubeadmConfigs to drop ownership of labels and annotations
+		// from "manager". We do this so that KubeadmConfigs that are created using the Create method
+		// can also work with SSA. Otherwise, labels and annotations would be co-owned by our "old" "manager"
+		// and "capi-kubeadmcontrolplane" and then we would not be able to e.g. drop labels and annotations.
+		if err := ssa.DropManagedFields(ctx, r.Client, kubeadmConfig, kcpManagerName, labelsAndAnnotationsManagedFieldPaths); err != nil {
+			return errors.Wrapf(err, "failed to clean up managedFields of KubeadmConfig %s", klog.KObj(kubeadmConfig))
+		}
+		// Update in-place mutating fields on BootstrapConfig.
+		if err := r.updateExternalObject(ctx, kubeadmConfig, controlPlane.KCP, controlPlane.Cluster); err != nil {
+			return errors.Wrapf(err, "failed to update KubeadmConfig %s", klog.KObj(kubeadmConfig))
+		}
+	}
+	// Update the patch helpers.
+	controlPlane.SetPatchHelpers(patchHelpers)
 	return nil
 }
 
@@ -765,7 +853,7 @@ func (r *KubeadmControlPlaneReconciler) adoptMachines(ctx context.Context, kcp *
 
 func (r *KubeadmControlPlaneReconciler) adoptOwnedSecrets(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane, currentOwner *bootstrapv1.KubeadmConfig, clusterName string) error {
 	secrets := corev1.SecretList{}
-	if err := r.Client.List(ctx, &secrets, client.InNamespace(kcp.Namespace), client.MatchingLabels{clusterv1.ClusterLabelName: clusterName}); err != nil {
+	if err := r.Client.List(ctx, &secrets, client.InNamespace(kcp.Namespace), client.MatchingLabels{clusterv1.ClusterNameLabel: clusterName}); err != nil {
 		return errors.Wrap(err, "error finding secrets for adoption")
 	}
 
@@ -806,21 +894,29 @@ func ensureCertificatesOwnerRef(ctx context.Context, ctrlclient client.Client, c
 		if err := ctrlclient.Get(ctx, secretKey, s); err != nil {
 			return errors.Wrapf(err, "failed to get Secret %s", secretKey)
 		}
-		// If the Type doesn't match the type used for secrets created by core components, KCP included
-		if s.Type != clusterv1.ClusterSecretType {
-			continue
-		}
+
 		patchHelper, err := patch.NewHelper(s, ctrlclient)
 		if err != nil {
 			return errors.Wrapf(err, "failed to create patchHelper for Secret %s", secretKey)
 		}
 
-		// Remove the current controller if one exists.
-		if controller := metav1.GetControllerOf(s); controller != nil {
-			s.SetOwnerReferences(util.RemoveOwnerRef(s.OwnerReferences, *controller))
+		controller := metav1.GetControllerOf(s)
+		// If the current controller is KCP, ensure the owner reference is up to date.
+		// Note: This ensures secrets created prior to v1alpha4 are updated to have the correct owner reference apiVersion.
+		if controller != nil && controller.Kind == kubeadmControlPlaneKind {
+			s.SetOwnerReferences(util.EnsureOwnerRef(s.GetOwnerReferences(), owner))
 		}
 
-		s.OwnerReferences = util.EnsureOwnerRef(s.OwnerReferences, owner)
+		// If the Type doesn't match the type used for secrets created by core components continue without altering the owner reference further.
+		// Note: This ensures that control plane related secrets created by KubeadmConfig are eventually owned by KCP.
+		// TODO: Remove this logic once standalone control plane machines are no longer allowed.
+		if s.Type == clusterv1.ClusterSecretType {
+			// Remove the current controller if one exists.
+			if controller != nil {
+				s.SetOwnerReferences(util.RemoveOwnerRef(s.GetOwnerReferences(), *controller))
+			}
+			s.SetOwnerReferences(util.EnsureOwnerRef(s.GetOwnerReferences(), owner))
+		}
 		if err := patchHelper.Patch(ctx, s); err != nil {
 			return errors.Wrapf(err, "failed to patch Secret %s with ownerReference %s", secretKey, owner.String())
 		}

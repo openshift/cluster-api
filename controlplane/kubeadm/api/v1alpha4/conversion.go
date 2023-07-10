@@ -70,6 +70,27 @@ func (src *KubeadmControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 	dst.Spec.RolloutBefore = restored.Spec.RolloutBefore
 	dst.Spec.MachineTemplate.NodeVolumeDetachTimeout = restored.Spec.MachineTemplate.NodeVolumeDetachTimeout
 
+	if restored.Spec.KubeadmConfigSpec.JoinConfiguration != nil && restored.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy != "" {
+		if dst.Spec.KubeadmConfigSpec.JoinConfiguration == nil {
+			dst.Spec.KubeadmConfigSpec.JoinConfiguration = &bootstrapv1.JoinConfiguration{}
+		}
+		dst.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy
+	}
+
+	if restored.Spec.KubeadmConfigSpec.InitConfiguration != nil && restored.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy != "" {
+		if dst.Spec.KubeadmConfigSpec.InitConfiguration == nil {
+			dst.Spec.KubeadmConfigSpec.InitConfiguration = &bootstrapv1.InitConfiguration{}
+		}
+		dst.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy
+	}
+
+	if restored.Spec.RemediationStrategy != nil {
+		dst.Spec.RemediationStrategy = restored.Spec.RemediationStrategy
+	}
+	if restored.Status.LastRemediation != nil {
+		dst.Status.LastRemediation = restored.Status.LastRemediation
+	}
+
 	return nil
 }
 
@@ -122,6 +143,11 @@ func (src *KubeadmControlPlaneTemplate) ConvertTo(dstRaw conversion.Hub) error {
 		}
 	}
 
+	dst.Spec.Template.ObjectMeta = restored.Spec.Template.ObjectMeta
+	if restored.Spec.Template.Spec.MachineTemplate != nil {
+		dst.Spec.Template.Spec.MachineTemplate.ObjectMeta = restored.Spec.Template.Spec.MachineTemplate.ObjectMeta
+	}
+
 	if restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration != nil {
 		if dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration == nil {
 			dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration = &bootstrapv1.InitConfiguration{}
@@ -144,6 +170,24 @@ func (src *KubeadmControlPlaneTemplate) ConvertTo(dstRaw conversion.Hub) error {
 	}
 
 	dst.Spec.Template.Spec.RolloutBefore = restored.Spec.Template.Spec.RolloutBefore
+
+	if restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration != nil && restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy != "" {
+		if dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration == nil {
+			dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration = &bootstrapv1.JoinConfiguration{}
+		}
+		dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy
+	}
+
+	if restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration != nil && restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy != "" {
+		if dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration == nil {
+			dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration = &bootstrapv1.InitConfiguration{}
+		}
+		dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy
+	}
+
+	if restored.Spec.Template.Spec.RemediationStrategy != nil {
+		dst.Spec.Template.Spec.RemediationStrategy = restored.Spec.Template.Spec.RemediationStrategy
+	}
 
 	return nil
 }
@@ -234,5 +278,16 @@ func Convert_v1beta1_KubeadmControlPlaneMachineTemplate_To_v1alpha4_KubeadmContr
 
 func Convert_v1beta1_KubeadmControlPlaneSpec_To_v1alpha4_KubeadmControlPlaneSpec(in *controlplanev1.KubeadmControlPlaneSpec, out *KubeadmControlPlaneSpec, scope apiconversion.Scope) error {
 	// .RolloutBefore was added in v1beta1.
+	// .RemediationStrategy was added in v1beta1.
 	return autoConvert_v1beta1_KubeadmControlPlaneSpec_To_v1alpha4_KubeadmControlPlaneSpec(in, out, scope)
+}
+
+func Convert_v1beta1_KubeadmControlPlaneStatus_To_v1alpha4_KubeadmControlPlaneStatus(in *controlplanev1.KubeadmControlPlaneStatus, out *KubeadmControlPlaneStatus, scope apiconversion.Scope) error {
+	// .LastRemediation was added in v1beta1.
+	return autoConvert_v1beta1_KubeadmControlPlaneStatus_To_v1alpha4_KubeadmControlPlaneStatus(in, out, scope)
+}
+
+func Convert_v1beta1_KubeadmControlPlaneTemplateResource_To_v1alpha4_KubeadmControlPlaneTemplateResource(in *controlplanev1.KubeadmControlPlaneTemplateResource, out *KubeadmControlPlaneTemplateResource, scope apiconversion.Scope) error {
+	// .metadata and .spec.machineTemplate.metadata was added in v1beta1.
+	return autoConvert_v1beta1_KubeadmControlPlaneTemplateResource_To_v1alpha4_KubeadmControlPlaneTemplateResource(in, out, scope)
 }
