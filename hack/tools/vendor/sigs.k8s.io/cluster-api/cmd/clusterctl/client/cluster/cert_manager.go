@@ -43,8 +43,9 @@ const (
 
 	certManagerNamespace = "cert-manager"
 
-	// Deprecated: Use clusterctlv1.CertManagerVersionAnnotation instead.
 	// This is maintained only for supporting upgrades from cluster created with clusterctl v1alpha3.
+	//
+	// Deprecated: Use clusterctlv1.CertManagerVersionAnnotation instead.
 	// TODO: Remove once upgrades from v1alpha3 are no longer supported.
 	certManagerVersionAnnotation = "certmanager.clusterctl.cluster.x-k8s.io/version"
 )
@@ -202,7 +203,7 @@ func (cm *certManagerClient) install() error {
 func (cm *certManagerClient) PlanUpgrade() (CertManagerUpgradePlan, error) {
 	log := logf.Log
 
-	objs, err := cm.proxy.ListResources(map[string]string{clusterctlv1.ClusterctlCoreLabelName: clusterctlv1.ClusterctlCoreLabelCertManagerValue}, certManagerNamespace)
+	objs, err := cm.proxy.ListResources(map[string]string{clusterctlv1.ClusterctlCoreLabel: clusterctlv1.ClusterctlCoreLabelCertManagerValue}, certManagerNamespace)
 	if err != nil {
 		return CertManagerUpgradePlan{}, errors.Wrap(err, "failed get cert manager components")
 	}
@@ -231,7 +232,7 @@ func (cm *certManagerClient) PlanUpgrade() (CertManagerUpgradePlan, error) {
 func (cm *certManagerClient) EnsureLatestVersion() error {
 	log := logf.Log
 
-	objs, err := cm.proxy.ListResources(map[string]string{clusterctlv1.ClusterctlCoreLabelName: clusterctlv1.ClusterctlCoreLabelCertManagerValue}, certManagerNamespace)
+	objs, err := cm.proxy.ListResources(map[string]string{clusterctlv1.ClusterctlCoreLabel: clusterctlv1.ClusterctlCoreLabelCertManagerValue}, certManagerNamespace)
 	if err != nil {
 		return errors.Wrap(err, "failed get cert manager components")
 	}
@@ -253,6 +254,12 @@ func (cm *certManagerClient) EnsureLatestVersion() error {
 		return nil
 	}
 
+	// Migrate CRs to latest CRD storage version, if necessary.
+	// Note: We have to do this before cert-manager is deleted so conversion webhooks still work.
+	if err := cm.migrateCRDs(); err != nil {
+		return err
+	}
+
 	// delete the cert-manager version currently installed (because it should be upgraded);
 	// NOTE: CRDs, and namespace are preserved in order to avoid deletion of user objects;
 	// web-hooks are preserved to avoid a user attempting to CREATE a cert-manager resource while the upgrade is in progress.
@@ -263,6 +270,26 @@ func (cm *certManagerClient) EnsureLatestVersion() error {
 
 	// Install cert-manager.
 	return cm.install()
+}
+
+func (cm *certManagerClient) migrateCRDs() error {
+	config, err := cm.configClient.CertManager().Get()
+	if err != nil {
+		return err
+	}
+
+	// Gets the new cert-manager components from the repository.
+	objs, err := cm.getManifestObjs(config)
+	if err != nil {
+		return err
+	}
+
+	c, err := cm.proxy.NewClient()
+	if err != nil {
+		return err
+	}
+
+	return newCRDMigrator(c).Run(ctx, objs)
 }
 
 func (cm *certManagerClient) deleteObjs(objs []unstructured.Unstructured) error {
@@ -337,11 +364,11 @@ func (cm *certManagerClient) shouldUpgrade(objs []unstructured.Unstructured) (st
 		c := version.Compare(objSemVersion, desiredSemVersion, version.WithBuildTags())
 		switch {
 		case c < 0 || c == 2:
-			// if version < current or same version and different non numeric build metadata, then upgrade
+			// if version < current or same version and different non-numeric build metadata, then upgrade
 			currentVersion = objVersion
 			needUpgrade = true
 		case c >= 0:
-			// the installed version is greather or equal than the one required by clusterctl, so we are ok
+			// the installed version is greater than or equal to one required by clusterctl, so we are ok
 			currentVersion = objVersion
 		}
 
@@ -412,8 +439,8 @@ func addCerManagerLabel(objs []unstructured.Unstructured) []unstructured.Unstruc
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		labels[clusterctlv1.ClusterctlLabelName] = ""
-		labels[clusterctlv1.ClusterctlCoreLabelName] = clusterctlv1.ClusterctlCoreLabelCertManagerValue
+		labels[clusterctlv1.ClusterctlLabel] = ""
+		labels[clusterctlv1.ClusterctlCoreLabel] = clusterctlv1.ClusterctlCoreLabelCertManagerValue
 		o.SetLabels(labels)
 	}
 	return objs
@@ -499,9 +526,9 @@ func (cm *certManagerClient) deleteObj(obj unstructured.Unstructured) error {
 // cert-manager API group.
 // If retry is true, the createObj call will be retried if it fails. Otherwise, the
 // 'create' operations will only be attempted once.
-func (cm *certManagerClient) waitForAPIReady(_ context.Context, retry bool) error {
+func (cm *certManagerClient) waitForAPIReady(ctx context.Context, retry bool) error {
 	log := logf.Log
-	// Waits for for the cert-manager to be available.
+	// Waits for the cert-manager to be available.
 	if retry {
 		log.Info("Waiting for cert-manager to be available...")
 	}
@@ -517,7 +544,7 @@ func (cm *certManagerClient) waitForAPIReady(_ context.Context, retry bool) erro
 		// Create the Kubernetes object.
 		// This is wrapped with a retry as the cert-manager API may not be available
 		// yet, so we need to keep retrying until it is.
-		if err := cm.pollImmediateWaiter(waitCertManagerInterval, cm.getWaitTimeout(), func() (bool, error) {
+		if err := cm.pollImmediateWaiter(ctx, waitCertManagerInterval, cm.getWaitTimeout(), func(ctx context.Context) (bool, error) {
 			if err := cm.createObj(o); err != nil {
 				// If retrying is disabled, return the error here.
 				if !retry {

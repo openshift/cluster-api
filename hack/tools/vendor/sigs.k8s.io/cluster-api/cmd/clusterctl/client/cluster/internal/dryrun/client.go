@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/scheme"
 )
 
@@ -114,7 +115,7 @@ type ChangeSummary struct {
 // when the objects are not found in the internal object tracker. Typically the apiReader passed would be a reader client
 // to a real Kubernetes Cluster.
 func NewClient(apiReader client.Reader, objs []client.Object) *Client {
-	fakeClient := fake.NewClientBuilder().WithObjects(objs...).WithScheme(localScheme).Build()
+	fakeClient := fake.NewClientBuilder().WithObjects(objs...).WithStatusSubresource(&clusterv1.ClusterClass{}, &clusterv1.Cluster{}).WithScheme(localScheme).Build()
 	return &Client{
 		fakeClient: fakeClient,
 		apiReader:  apiReader,
@@ -127,12 +128,12 @@ func NewClient(apiReader client.Reader, objs []client.Object) *Client {
 // Get retrieves an object for the given object key from the internal object tracker.
 // If the object does not exist in the internal object tracker it tries to fetch the object
 // from the Kubernetes Cluster using the apiReader client (if apiReader is not nil).
-func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
-	if err := c.fakeClient.Get(ctx, key, obj); err != nil {
+func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := c.fakeClient.Get(ctx, key, obj, opts...); err != nil {
 		// If the object is not found by the fake client, get the object
 		// using the apiReader.
 		if apierrors.IsNotFound(err) && c.apiReader != nil {
-			return c.apiReader.Get(ctx, key, obj)
+			return c.apiReader.Get(ctx, key, obj, opts...)
 		}
 		return err
 	}
@@ -248,7 +249,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 
 // Update updates the given obj in the internal object tracker.
 // NOTE: Topology reconciler does not use update, so we are skipping implementation for now.
-func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+func (c *Client) Update(_ context.Context, _ client.Object, _ ...client.UpdateOption) error {
 	panic("Update method is not supported by the dryrun client")
 }
 
@@ -284,7 +285,7 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 
 // DeleteAllOf deletes all objects of the given type matching the given options.
 // NOTE: Topology reconciler does not use DeleteAllOf, so we are skipping implementation for now.
-func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+func (c *Client) DeleteAllOf(_ context.Context, _ client.Object, _ ...client.DeleteAllOfOption) error {
 	panic("DeleteAllOf method is not supported by the dryrun client")
 }
 
@@ -301,6 +302,21 @@ func (c *Client) Scheme() *runtime.Scheme {
 // RESTMapper returns the rest this client is using.
 func (c *Client) RESTMapper() meta.RESTMapper {
 	return c.fakeClient.RESTMapper()
+}
+
+// SubResource returns the sub resource this client is using.
+func (c *Client) SubResource(subResource string) client.SubResourceClient {
+	return c.fakeClient.SubResource(subResource)
+}
+
+// GroupVersionKindFor returns the GroupVersionKind for the given object.
+func (c *Client) GroupVersionKindFor(obj runtime.Object) (schema.GroupVersionKind, error) {
+	return c.fakeClient.GroupVersionKindFor(obj)
+}
+
+// IsObjectNamespaced returns true if the GroupVersionKind of the object is namespaced.
+func (c *Client) IsObjectNamespaced(obj runtime.Object) (bool, error) {
+	return c.fakeClient.IsObjectNamespaced(obj)
 }
 
 // Changes generates a summary of all the changes observed from the creation of the dry run client

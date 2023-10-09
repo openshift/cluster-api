@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,10 +89,13 @@ func DefaultBehaviorOnFatal() {
 	fatalErrHandler = fatal
 }
 
-// fatal prints the message (if provided) and then exits. If V(6) or greater,
-// klog.Fatal is invoked for extended information.
+// fatal prints the message (if provided) and then exits. If V(99) or greater,
+// klog.Fatal is invoked for extended information. This is intended for maintainer
+// debugging and out of a reasonable range for users.
 func fatal(msg string, code int) {
-	if klog.V(6).Enabled() {
+	// nolint:logcheck // Not using the result of klog.V(99) inside the if
+	// branch is okay, we just use it to determine how to terminate.
+	if klog.V(99).Enabled() {
 		klog.FatalDepth(2, msg)
 	}
 	if len(msg) > 0 {
@@ -129,6 +133,20 @@ func CheckDiffErr(err error) {
 	})
 }
 
+// isInvalidReasonStatusError returns true if this is an API Status error with reason=Invalid.
+// This is distinct from generic 422 errors we want to fall back to generic error handling.
+func isInvalidReasonStatusError(err error) bool {
+	if !apierrors.IsInvalid(err) {
+		return false
+	}
+	statusError, isStatusError := err.(*apierrors.StatusError)
+	if !isStatusError {
+		return false
+	}
+	status := statusError.Status()
+	return status.Reason == metav1.StatusReasonInvalid
+}
+
 // checkErr formats a given error as a string and calls the passed handleErr
 // func with that string and an kubectl exit code.
 func checkErr(err error, handleErr func(string, int)) {
@@ -144,16 +162,26 @@ func checkErr(err error, handleErr func(string, int)) {
 	switch {
 	case err == ErrExit:
 		handleErr("", DefaultErrorExitCode)
-	case apierrors.IsInvalid(err):
-		details := err.(*apierrors.StatusError).Status().Details
+	case isInvalidReasonStatusError(err):
+		status := err.(*apierrors.StatusError).Status()
+		details := status.Details
 		s := "The request is invalid"
 		if details == nil {
+			// if we have no other details, include the message from the server if present
+			if len(status.Message) > 0 {
+				s += ": " + status.Message
+			}
 			handleErr(s, DefaultErrorExitCode)
 			return
 		}
 		if len(details.Kind) != 0 || len(details.Name) != 0 {
 			s = fmt.Sprintf("The %s %q is invalid", details.Kind, details.Name)
+		} else if len(status.Message) > 0 && len(details.Causes) == 0 {
+			// only append the message if we have no kind/name details and no causes,
+			// since default invalid error constructors duplicate that information in the message
+			s += ": " + status.Message
 		}
+
 		if len(details.Causes) > 0 {
 			errs := statusCausesToAggrError(details.Causes)
 			handleErr(MultilineError(s+": ", errs), DefaultErrorExitCode)
@@ -394,12 +422,29 @@ func GetPodRunningTimeoutFlag(cmd *cobra.Command) (time.Duration, error) {
 	return timeout, nil
 }
 
-func AddValidateFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool("validate", true, "If true, use a schema to validate the input before sending it")
+type FeatureGate string
+
+const (
+	ApplySet              FeatureGate = "KUBECTL_APPLYSET"
+	ExplainOpenapiV3      FeatureGate = "KUBECTL_EXPLAIN_OPENAPIV3"
+	CmdPluginAsSubcommand FeatureGate = "KUBECTL_ENABLE_CMD_SHADOW"
+)
+
+func (f FeatureGate) IsEnabled() bool {
+	return os.Getenv(string(f)) == "true"
 }
 
-func AddValidateOptionFlags(cmd *cobra.Command, options *ValidateOptions) {
-	cmd.Flags().BoolVar(&options.EnableValidation, "validate", options.EnableValidation, "If true, use a schema to validate the input before sending it")
+func AddValidateFlags(cmd *cobra.Command) {
+	cmd.Flags().String(
+		"validate",
+		"strict",
+		`Must be one of: strict (or true), warn, ignore (or false).
+		"true" or "strict" will use a schema to validate the input and fail the request if invalid. It will perform server side validation if ServerSideFieldValidation is enabled on the api-server, but will fall back to less reliable client-side validation if not.
+		"warn" will warn about unknown or duplicate fields without blocking the request if server-side field validation is enabled on the API server, and behave as "ignore" otherwise.
+		"false" or "ignore" will not perform any schema validation, silently dropping any unknown or duplicate fields.`,
+	)
+
+	cmd.Flags().Lookup("validate").NoOptDefVal = "strict"
 }
 
 func AddFilenameOptionFlags(cmd *cobra.Command, options *resource.FilenameOptions, usage string) {
@@ -462,8 +507,36 @@ func AddChunkSizeFlag(cmd *cobra.Command, value *int64) {
 		"Return large lists in chunks rather than all at once. Pass 0 to disable. This flag is beta and may change in the future.")
 }
 
+func AddLabelSelectorFlagVar(cmd *cobra.Command, p *string) {
+	cmd.Flags().StringVarP(p, "selector", "l", *p, "Selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2). Matching objects must satisfy all of the specified label constraints.")
+}
+
+func AddPruningFlags(cmd *cobra.Command, prune *bool, pruneAllowlist *[]string, pruneWhitelist *[]string, all *bool, applySetRef *string) {
+	// Flags associated with the original allowlist-based alpha
+	cmd.Flags().StringArrayVar(pruneAllowlist, "prune-allowlist", *pruneAllowlist, "Overwrite the default allowlist with <group/version/kind> for --prune")
+	cmd.Flags().StringArrayVar(pruneWhitelist, "prune-whitelist", *pruneWhitelist, "Overwrite the default whitelist with <group/version/kind> for --prune") // TODO: Remove this in kubectl 1.28 or later
+	_ = cmd.Flags().MarkDeprecated("prune-whitelist", "Use --prune-allowlist instead.")
+	cmd.Flags().BoolVar(all, "all", *all, "Select all resources in the namespace of the specified resource types.")
+
+	// Flags associated with the new ApplySet-based alpha
+	if ApplySet.IsEnabled() {
+		cmd.Flags().StringVar(applySetRef, "applyset", *applySetRef, "[alpha] The name of the ApplySet that tracks which resources are being managed, for the purposes of determining what to prune. Live resources that are part of the ApplySet but have been removed from the provided configs will be deleted. Format: [RESOURCE][.GROUP]/NAME. A Secret will be used if no resource or group is specified.")
+		cmd.Flags().BoolVar(prune, "prune", *prune, "Automatically delete previously applied resource objects that do not appear in the provided configs. For alpha1, use with either -l or --all. For alpha2, use with --applyset.")
+	} else {
+		// different docs for the shared --prune flag if only alpha1 is enabled
+		cmd.Flags().BoolVar(prune, "prune", *prune, "Automatically delete resource objects, that do not appear in the configs and are created by either apply or create --save-config. Should be used with either -l or --all.")
+	}
+}
+
+func AddSubresourceFlags(cmd *cobra.Command, subresource *string, usage string, allowedSubresources ...string) {
+	cmd.Flags().StringVar(subresource, "subresource", "", fmt.Sprintf("%s Must be one of %v. This flag is beta and may change in the future.", usage, allowedSubresources))
+	CheckErr(cmd.RegisterFlagCompletionFunc("subresource", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return allowedSubresources, cobra.ShellCompDirectiveNoFileComp
+	}))
+}
+
 type ValidateOptions struct {
-	EnableValidation bool
+	ValidationDirective string
 }
 
 // Merge converts the passed in object to JSON, merges the fragment into it using an RFC7396 JSON Merge Patch,
@@ -564,6 +637,28 @@ func GetFieldManagerFlag(cmd *cobra.Command) string {
 	return GetFlagString(cmd, "field-manager")
 }
 
+func GetValidationDirective(cmd *cobra.Command) (string, error) {
+	var validateFlag = GetFlagString(cmd, "validate")
+	b, err := strconv.ParseBool(validateFlag)
+	if err != nil {
+		switch validateFlag {
+		case "strict":
+			return metav1.FieldValidationStrict, nil
+		case "warn":
+			return metav1.FieldValidationWarn, nil
+		case "ignore":
+			return metav1.FieldValidationIgnore, nil
+		default:
+			return metav1.FieldValidationStrict, fmt.Errorf(`invalid - validate option %q; must be one of: strict (or true), warn, ignore (or false)`, validateFlag)
+		}
+	}
+	// The flag was a boolean
+	if b {
+		return metav1.FieldValidationStrict, nil
+	}
+	return metav1.FieldValidationIgnore, nil
+}
+
 type DryRunStrategy int
 
 const (
@@ -589,18 +684,30 @@ const (
 
 func GetDryRunStrategy(cmd *cobra.Command) (DryRunStrategy, error) {
 	var dryRunFlag = GetFlagString(cmd, "dry-run")
-	switch dryRunFlag {
-	case cmd.Flag("dry-run").NoOptDefVal:
-		return DryRunNone, errors.New(`--dry-run flag without a value was specified. A value must be set: "none", "server", or "client".`)
-	case "client":
-		return DryRunClient, nil
-	case "server":
-		return DryRunServer, nil
-	case "none":
-		return DryRunNone, nil
-	default:
-		return DryRunNone, fmt.Errorf(`Invalid dry-run value (%v). Must be "none", "server", or "client".`, dryRunFlag)
+	b, err := strconv.ParseBool(dryRunFlag)
+	// The flag is not a boolean
+	if err != nil {
+		switch dryRunFlag {
+		case cmd.Flag("dry-run").NoOptDefVal:
+			klog.Warning(`--dry-run is deprecated and can be replaced with --dry-run=client.`)
+			return DryRunClient, nil
+		case "client":
+			return DryRunClient, nil
+		case "server":
+			return DryRunServer, nil
+		case "none":
+			return DryRunNone, nil
+		default:
+			return DryRunNone, fmt.Errorf(`Invalid dry-run value (%v). Must be "none", "server", or "client".`, dryRunFlag)
+		}
 	}
+	// The flag was a boolean
+	if b {
+		klog.Warningf(`--dry-run=%v is deprecated (boolean value) and can be replaced with --dry-run=%s.`, dryRunFlag, "client")
+		return DryRunClient, nil
+	}
+	klog.Warningf(`--dry-run=%v is deprecated (boolean value) and can be replaced with --dry-run=%s.`, dryRunFlag, "none")
+	return DryRunNone, nil
 }
 
 // PrintFlagsWithDryRunStrategy sets a success message at print time for the dry run strategy
@@ -694,7 +801,8 @@ func IsSiblingCommandExists(cmd *cobra.Command, targetCmdName string) bool {
 // arguments (sub-commands) are provided, or a usage error otherwise.
 func DefaultSubCommandRun(out io.Writer) func(c *cobra.Command, args []string) {
 	return func(c *cobra.Command, args []string) {
-		c.SetOutput(out)
+		c.SetOut(out)
+		c.SetErr(out)
 		RequireNoArguments(c, args)
 		c.Help()
 		CheckErr(ErrExit)
