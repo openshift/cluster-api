@@ -3,17 +3,9 @@
 envsubst_cmd = "./hack/tools/bin/envsubst"
 clusterctl_cmd = "./bin/clusterctl"
 kubectl_cmd = "kubectl"
-default_build_engine = "docker"
-kubernetes_version = "v1.27.0"
-
-if str(local("command -v " + kubectl_cmd + " || true", quiet = True)) == "":
-    fail("Required command '" + kubectl_cmd + "' not found in PATH")
+kubernetes_version = "v1.28.0"
 
 load("ext://uibutton", "cmd_button", "location", "text_input")
-
-# detect if docker images should be built using podman
-if "Podman Engine" in str(local("docker version || podman version", quiet = True)):
-    default_build_engine = "podman"
 
 # set defaults
 version_settings(True, ">=0.30.8")
@@ -22,7 +14,7 @@ settings = {
     "enable_providers": ["docker"],
     "kind_cluster_name": os.getenv("CAPI_KIND_CLUSTER_NAME", "capi-test"),
     "debug": {},
-    "build_engine": default_build_engine,
+    "build_engine": "docker",
 }
 
 # global settings
@@ -36,13 +28,29 @@ os.putenv("CAPI_KIND_CLUSTER_NAME", settings.get("kind_cluster_name"))
 
 allow_k8s_contexts(settings.get("allowed_contexts"))
 
+if str(local("command -v " + kubectl_cmd + " || true", quiet = True)) == "":
+    fail("Required command '" + kubectl_cmd + "' not found in PATH")
+
+# detect if docker images should be built using podman
+if "Podman Engine" in str(local("docker version || podman version", quiet = True)):
+    settings["build_engine"] = "podman"
+
 os_name = str(local("go env GOOS")).rstrip("\n")
 os_arch = str(local("go env GOARCH")).rstrip("\n")
 
 if settings.get("trigger_mode") == "manual":
     trigger_mode(TRIGGER_MODE_MANUAL)
 
-if settings.get("default_registry") != "":
+usingLocalRegistry = str(local(kubectl_cmd + " get cm -n kube-public local-registry-hosting || true", quiet = True))
+if not usingLocalRegistry:
+    if settings.get("default_registry", "") == "":
+        fail("default_registry is required when not using a local registry, please add it to your tilt-settings.yaml/json")
+
+    protectedRegistries = ["gcr.io/k8s-staging-cluster-api"]
+    if settings.get("default_registry") in protectedRegistries:
+        fail("current default_registry '{}' is protected, tilt cannot push images to it. Please select another default_registry in your tilt-settings.yaml/json".format(settings.get("default_registry")))
+
+if settings.get("default_registry", "") != "":
     default_registry(settings.get("default_registry"))
 
 always_enable_providers = ["core"]
@@ -103,14 +111,25 @@ providers = {
             "../../go.sum",
             "../container",
             "api",
-            "cloudinit",
             "controllers",
             "docker",
             "exp",
             "internal",
-            "third_party",
         ],
         "label": "CAPD",
+    },
+    "in-memory": {
+        "context": "test/infrastructure/inmemory",  # NOTE: this should be kept in sync with corresponding setting in tilt-prepare
+        "image": "gcr.io/k8s-staging-cluster-api/capim-manager",
+        "live_reload_deps": [
+            "main.go",
+            "../../go.mod",
+            "../../go.sum",
+            "api",
+            "controllers",
+            "internal",
+        ],
+        "label": "CAPIM",
     },
     "test-extension": {
         "context": "test/extension",  # NOTE: this should be kept in sync with corresponding setting in tilt-prepare
@@ -165,9 +184,10 @@ def load_provider_tiltfiles():
 
 tilt_helper_dockerfile_header = """
 # Tilt image
-FROM golang:1.19.6 as tilt-helper
+FROM golang:1.20.8 as tilt-helper
+# Install delve. Note this should be kept in step with the Go release minor version.
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.20
 # Support live reloading with Tilt
-RUN go install github.com/go-delve/delve/cmd/dlv@latest
 RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/restart.sh  && \
     wget --output-document /start.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/start.sh && \
     chmod +x /start.sh && chmod +x /restart.sh && chmod +x /go/bin/dlv && \
@@ -175,7 +195,7 @@ RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com
 """
 
 tilt_dockerfile_header = """
-FROM gcr.io/distroless/base:debug as tilt
+FROM golang:1.20.8 as tilt
 WORKDIR /
 COPY --from=tilt-helper /process.txt .
 COPY --from=tilt-helper /start.sh .
@@ -403,11 +423,11 @@ def deploy_provider_crds():
 def deploy_observability():
     if "promtail" in settings.get("deploy_observability", []):
         k8s_yaml(read_file("./.tiltbuild/yaml/promtail.observability.yaml"), allow_duplicates = True)
-        k8s_resource(workload = "promtail", extra_pod_selectors = [{"app": "promtail"}], labels = ["observability"], resource_deps = ["loki"])
+        k8s_resource(workload = "promtail", extra_pod_selectors = [{"app": "promtail"}], labels = ["observability"], resource_deps = ["loki"], objects = ["promtail:serviceaccount"])
 
     if "loki" in settings.get("deploy_observability", []):
         k8s_yaml(read_file("./.tiltbuild/yaml/loki.observability.yaml"), allow_duplicates = True)
-        k8s_resource(workload = "loki", port_forwards = "3100", extra_pod_selectors = [{"app": "loki"}], labels = ["observability"])
+        k8s_resource(workload = "loki", port_forwards = "3100", extra_pod_selectors = [{"app": "loki"}], labels = ["observability"], objects = ["loki:serviceaccount"])
 
         cmd_button(
             "loki:import logs",
@@ -420,17 +440,31 @@ def deploy_observability():
             ],
         )
 
+    if "tempo" in settings.get("deploy_observability", []):
+        k8s_yaml(read_file("./.tiltbuild/yaml/tempo.observability.yaml"), allow_duplicates = True)
+
+        # Port-forward the tracing port to localhost, so we can also send traces from local.
+        k8s_resource(workload = "tempo", port_forwards = "4317:4317", extra_pod_selectors = [{"app": "tempo"}], labels = ["observability"])
+
     if "grafana" in settings.get("deploy_observability", []):
         k8s_yaml(read_file("./.tiltbuild/yaml/grafana.observability.yaml"), allow_duplicates = True)
         k8s_resource(workload = "grafana", port_forwards = "3001:3000", extra_pod_selectors = [{"app": "grafana"}], labels = ["observability"], objects = ["grafana:serviceaccount"])
 
     if "prometheus" in settings.get("deploy_observability", []):
         k8s_yaml(read_file("./.tiltbuild/yaml/prometheus.observability.yaml"), allow_duplicates = True)
-        k8s_resource(workload = "prometheus-server", new_name = "prometheus", port_forwards = "9090", extra_pod_selectors = [{"app": "prometheus"}], labels = ["observability"])
+        k8s_resource(workload = "prometheus-server", new_name = "prometheus", port_forwards = "9090", extra_pod_selectors = [{"app": "prometheus"}], labels = ["observability"], objects = ["prometheus-server:serviceaccount"])
 
     if "kube-state-metrics" in settings.get("deploy_observability", []):
         k8s_yaml(read_file("./.tiltbuild/yaml/kube-state-metrics.observability.yaml"), allow_duplicates = True)
-        k8s_resource(workload = "kube-state-metrics", new_name = "kube-state-metrics", extra_pod_selectors = [{"app": "kube-state-metrics"}], labels = ["observability"])
+        k8s_resource(workload = "kube-state-metrics", new_name = "kube-state-metrics", extra_pod_selectors = [{"app": "kube-state-metrics"}], labels = ["observability"], objects = ["kube-state-metrics:serviceaccount"])
+
+    if "parca" in settings.get("deploy_observability", []):
+        k8s_yaml(read_file("./.tiltbuild/yaml/parca.observability.yaml"), allow_duplicates = True)
+        k8s_resource(workload = "parca", new_name = "parca", port_forwards = "7070", extra_pod_selectors = [{"app": "parca"}], labels = ["observability"], objects = ["parca:serviceaccount"])
+
+    if "metrics-server" in settings.get("deploy_observability", []):
+        k8s_yaml(read_file("./.tiltbuild/yaml/metrics-server.observability.yaml"), allow_duplicates = True)
+        k8s_resource(workload = "metrics-server", new_name = "metrics-server", extra_pod_selectors = [{"app": "metrics-server"}], labels = ["observability"], objects = ["metrics-server:serviceaccount"])
 
     if "visualizer" in settings.get("deploy_observability", []):
         k8s_yaml(read_file("./.tiltbuild/yaml/visualizer.observability.yaml"), allow_duplicates = True)
@@ -439,6 +473,7 @@ def deploy_observability():
             new_name = "visualizer",
             port_forwards = [port_forward(local_port = 8000, container_port = 8081, name = "View visualization")],
             labels = ["observability"],
+            objects = ["capi-visualizer:serviceaccount"],
         )
 
 def prepare_all():
@@ -459,10 +494,11 @@ def cluster_templates():
     substitutions["NAMESPACE"] = substitutions.get("NAMESPACE", "default")
     substitutions["KUBERNETES_VERSION"] = substitutions.get("KUBERNETES_VERSION", kubernetes_version)
     substitutions["CONTROL_PLANE_MACHINE_COUNT"] = substitutions.get("CONTROL_PLANE_MACHINE_COUNT", "1")
-    substitutions["WORKER_MACHINE_COUNT"] = substitutions.get("WORKER_MACHINE_COUNT", "3")
+    substitutions["WORKER_MACHINE_COUNT"] = substitutions.get("WORKER_MACHINE_COUNT", "1")
 
     template_dirs = settings.get("template_dirs", {
         "docker": ["./test/infrastructure/docker/templates"],
+        "in-memory": ["./test/infrastructure/inmemory/templates"],
     })
 
     for provider, provider_dirs in template_dirs.items():

@@ -32,7 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 	"sigs.k8s.io/kind/pkg/cluster/constants"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -54,6 +53,9 @@ type DockerMachineReconciler struct {
 	client.Client
 	ContainerRuntime container.Runtime
 	Tracker          *remote.ClusterCacheTracker
+
+	// WatchFilterValue is the label value used to filter events prior to reconciliation.
+	WatchFilterValue string
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=dockermachines,verbs=get;list;watch;create;update;patch;delete
@@ -141,8 +143,9 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}()
 
-	// Add finalizer first if not exist to avoid the race condition between init and delete
-	if !controllerutil.ContainsFinalizer(dockerMachine, infrav1.MachineFinalizer) {
+	// Add finalizer first if not set to avoid the race condition between init and delete.
+	// Note: Finalizers in general can only be added when the deletionTimestamp is not set.
+	if dockerMachine.ObjectMeta.DeletionTimestamp.IsZero() && !controllerutil.ContainsFinalizer(dockerMachine, infrav1.MachineFinalizer) {
 		controllerutil.AddFinalizer(dockerMachine, infrav1.MachineFinalizer)
 		return ctrl.Result{}, nil
 	}
@@ -164,7 +167,7 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Handle deleted machines
 	if !dockerMachine.ObjectMeta.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, machine, dockerMachine, externalMachine, externalLoadBalancer)
+		return ctrl.Result{}, r.reconcileDelete(ctx, machine, dockerMachine, externalMachine, externalLoadBalancer)
 	}
 
 	// Handle non-deleted machines
@@ -332,7 +335,7 @@ func (r *DockerMachineReconciler) reconcileNormal(ctx context.Context, cluster *
 			}()
 
 			// Run the bootstrap script. Simulates cloud-init/Ignition.
-			if err := externalMachine.ExecBootstrap(timeoutCtx, bootstrapData, format); err != nil {
+			if err := externalMachine.ExecBootstrap(timeoutCtx, bootstrapData, format, machine.Spec.Version, dockerMachine.Spec.CustomImage); err != nil {
 				conditions.MarkFalse(dockerMachine, infrav1.BootstrapExecSucceededCondition, infrav1.BootstrapFailedReason, clusterv1.ConditionSeverityWarning, "Repeating bootstrap")
 				return ctrl.Result{}, errors.Wrap(err, "failed to exec DockerMachine bootstrap")
 			}
@@ -371,7 +374,7 @@ func (r *DockerMachineReconciler) reconcileNormal(ctx context.Context, cluster *
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to generate workload cluster client")
 	}
-	if err := externalMachine.SetNodeProviderID(ctx, remoteClient); err != nil {
+	if err := externalMachine.CloudProviderNodePatch(ctx, remoteClient, dockerMachine); err != nil {
 		if errors.As(err, &docker.ContainerNotRunningError{}) {
 			return ctrl.Result{}, errors.Wrap(err, "failed to patch the Kubernetes node with the machine providerID")
 		}
@@ -387,40 +390,40 @@ func (r *DockerMachineReconciler) reconcileNormal(ctx context.Context, cluster *
 	return ctrl.Result{}, nil
 }
 
-func (r *DockerMachineReconciler) reconcileDelete(ctx context.Context, machine *clusterv1.Machine, dockerMachine *infrav1.DockerMachine, externalMachine *docker.Machine, externalLoadBalancer *docker.LoadBalancer) (ctrl.Result, error) {
+func (r *DockerMachineReconciler) reconcileDelete(ctx context.Context, machine *clusterv1.Machine, dockerMachine *infrav1.DockerMachine, externalMachine *docker.Machine, externalLoadBalancer *docker.LoadBalancer) error {
 	// Set the ContainerProvisionedCondition reporting delete is started, and issue a patch in order to make
 	// this visible to the users.
 	// NB. The operation in docker is fast, so there is the chance the user will not notice the status change;
 	// nevertheless we are issuing a patch so we can test a pattern that will be used by other providers as well
 	patchHelper, err := patch.NewHelper(dockerMachine, r.Client)
 	if err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 	conditions.MarkFalse(dockerMachine, infrav1.ContainerProvisionedCondition, clusterv1.DeletingReason, clusterv1.ConditionSeverityInfo, "")
 	if err := patchDockerMachine(ctx, patchHelper, dockerMachine); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to patch DockerMachine")
+		return errors.Wrap(err, "failed to patch DockerMachine")
 	}
 
 	// delete the machine
 	if err := externalMachine.Delete(ctx); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to delete DockerMachine")
+		return errors.Wrap(err, "failed to delete DockerMachine")
 	}
 
 	// if the deleted machine is a control-plane node, remove it from the load balancer configuration;
 	if util.IsControlPlaneMachine(machine) {
 		if err := externalLoadBalancer.UpdateConfiguration(ctx); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to update DockerCluster.loadbalancer configuration")
+			return errors.Wrap(err, "failed to update DockerCluster.loadbalancer configuration")
 		}
 	}
 
 	// Machine is deleted so remove the finalizer.
 	controllerutil.RemoveFinalizer(dockerMachine, infrav1.MachineFinalizer)
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // SetupWithManager will add watches for this controller.
 func (r *DockerMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
-	clusterToDockerMachines, err := util.ClusterToObjectsMapper(mgr.GetClient(), &infrav1.DockerMachineList{}, mgr.GetScheme())
+	clusterToDockerMachines, err := util.ClusterToTypedObjectsMapper(mgr.GetClient(), &infrav1.DockerMachineList{}, mgr.GetScheme())
 	if err != nil {
 		return err
 	}
@@ -428,17 +431,17 @@ func (r *DockerMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 	err = ctrl.NewControllerManagedBy(mgr).
 		For(&infrav1.DockerMachine{}).
 		WithOptions(options).
-		WithEventFilter(predicates.ResourceNotPaused(ctrl.LoggerFrom(ctx))).
+		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Watches(
-			&source.Kind{Type: &clusterv1.Machine{}},
+			&clusterv1.Machine{},
 			handler.EnqueueRequestsFromMapFunc(util.MachineToInfrastructureMapFunc(infrav1.GroupVersion.WithKind("DockerMachine"))),
 		).
 		Watches(
-			&source.Kind{Type: &infrav1.DockerCluster{}},
+			&infrav1.DockerCluster{},
 			handler.EnqueueRequestsFromMapFunc(r.DockerClusterToDockerMachines),
 		).
 		Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}},
+			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(clusterToDockerMachines),
 			builder.WithPredicates(
 				predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
@@ -452,14 +455,14 @@ func (r *DockerMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 
 // DockerClusterToDockerMachines is a handler.ToRequestsFunc to be used to enqueue
 // requests for reconciliation of DockerMachines.
-func (r *DockerMachineReconciler) DockerClusterToDockerMachines(o client.Object) []ctrl.Request {
+func (r *DockerMachineReconciler) DockerClusterToDockerMachines(ctx context.Context, o client.Object) []ctrl.Request {
 	result := []ctrl.Request{}
 	c, ok := o.(*infrav1.DockerCluster)
 	if !ok {
 		panic(fmt.Sprintf("Expected a DockerCluster but got a %T", o))
 	}
 
-	cluster, err := util.GetOwnerCluster(context.TODO(), r.Client, c.ObjectMeta)
+	cluster, err := util.GetOwnerCluster(ctx, r.Client, c.ObjectMeta)
 	switch {
 	case apierrors.IsNotFound(err) || cluster == nil:
 		return result
@@ -469,7 +472,7 @@ func (r *DockerMachineReconciler) DockerClusterToDockerMachines(o client.Object)
 
 	labels := map[string]string{clusterv1.ClusterNameLabel: cluster.Name}
 	machineList := &clusterv1.MachineList{}
-	if err := r.Client.List(context.TODO(), machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
+	if err := r.Client.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
 		return nil
 	}
 	for _, m := range machineList.Items {
@@ -509,24 +512,26 @@ func (r *DockerMachineReconciler) getBootstrapData(ctx context.Context, machine 
 
 // setMachineAddress gets the address from the container corresponding to a docker node and sets it on the Machine object.
 func setMachineAddress(ctx context.Context, dockerMachine *infrav1.DockerMachine, externalMachine *docker.Machine) error {
-	machineAddress, err := externalMachine.Address(ctx)
+	machineAddresses, err := externalMachine.Address(ctx)
 	if err != nil {
 		return err
 	}
-
-	dockerMachine.Status.Addresses = []clusterv1.MachineAddress{
-		{
-			Type:    clusterv1.MachineHostName,
-			Address: externalMachine.ContainerName(),
-		},
-		{
-			Type:    clusterv1.MachineInternalIP,
-			Address: machineAddress,
-		},
-		{
-			Type:    clusterv1.MachineExternalIP,
-			Address: machineAddress,
-		},
+	dockerMachine.Status.Addresses = []clusterv1.MachineAddress{{
+		Type:    clusterv1.MachineHostName,
+		Address: externalMachine.ContainerName()},
 	}
+
+	for _, addr := range machineAddresses {
+		dockerMachine.Status.Addresses = append(dockerMachine.Status.Addresses,
+			clusterv1.MachineAddress{
+				Type:    clusterv1.MachineInternalIP,
+				Address: addr,
+			},
+			clusterv1.MachineAddress{
+				Type:    clusterv1.MachineExternalIP,
+				Address: addr,
+			})
+	}
+
 	return nil
 }

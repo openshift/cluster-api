@@ -48,7 +48,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 
 		t.Log("Creating the namespace")
 		ns, err := env.CreateNamespace(ctx, "test-kcp-reconciler-rollout-scaleup")
-		g.Expect(err).To(BeNil())
+		g.Expect(err).ToNot(HaveOccurred())
 
 		return ns
 	}
@@ -78,9 +78,9 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	setKCPHealthy(kcp)
 
 	r := &KubeadmControlPlaneReconciler{
-		Client:    env,
-		APIReader: env.GetAPIReader(),
-		recorder:  record.NewFakeRecorder(32),
+		Client:              env,
+		SecretCachingClient: secretCachingClient,
+		recorder:            record.NewFakeRecorder(32),
 		managementCluster: &fakeManagementCluster{
 			Management: &internal.Management{Client: env},
 			Workload: fakeWorkloadCluster{
@@ -100,10 +100,11 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 		Cluster:  cluster,
 		Machines: nil,
 	}
+	controlPlane.InjectTestManagementCluster(r.managementCluster)
 
-	result, err := r.initializeControlPlane(ctx, cluster, kcp, controlPlane)
+	result, err := r.initializeControlPlane(ctx, controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// initial setup
 	initialMachine := &clusterv1.MachineList{}
@@ -123,9 +124,9 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	// run upgrade the first time, expect we scale up
 	needingUpgrade := collections.FromMachineList(initialMachine)
 	controlPlane.Machines = needingUpgrade
-	result, err = r.upgradeControlPlane(ctx, cluster, kcp, controlPlane, needingUpgrade)
+	result, err = r.upgradeControlPlane(ctx, controlPlane, needingUpgrade)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
-	g.Expect(err).To(BeNil())
+	g.Expect(err).ToNot(HaveOccurred())
 	bothMachines := &clusterv1.MachineList{}
 	g.Eventually(func(g Gomega) {
 		g.Expect(env.List(ctx, bothMachines, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -135,7 +136,14 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	// run upgrade a second time, simulate that the node has not appeared yet but the machine exists
 
 	// Unhealthy control plane will be detected during reconcile loop and upgrade will never be called.
-	result, err = r.reconcile(context.Background(), cluster, kcp)
+	controlPlane = &internal.ControlPlane{
+		KCP:      kcp,
+		Cluster:  cluster,
+		Machines: collections.FromMachineList(bothMachines),
+	}
+	controlPlane.InjectTestManagementCluster(r.managementCluster)
+
+	result, err = r.reconcile(context.Background(), controlPlane)
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(result).To(Equal(ctrl.Result{RequeueAfter: preflightFailedRequeueAfter}))
 	g.Eventually(func(g Gomega) {
@@ -158,8 +166,8 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	}
 
 	// run upgrade the second time, expect we scale down
-	result, err = r.upgradeControlPlane(ctx, cluster, kcp, controlPlane, machinesRequireUpgrade)
-	g.Expect(err).To(BeNil())
+	result, err = r.upgradeControlPlane(ctx, controlPlane, machinesRequireUpgrade)
+	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	finalMachine := &clusterv1.MachineList{}
 	g.Eventually(func(g Gomega) {
@@ -219,8 +227,8 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 	fakeClient := newFakeClient(objs...)
 	fmc.Reader = fakeClient
 	r := &KubeadmControlPlaneReconciler{
-		APIReader:                 fakeClient,
 		Client:                    fakeClient,
+		SecretCachingClient:       fakeClient,
 		managementCluster:         fmc,
 		managementClusterUncached: fmc,
 	}
@@ -230,10 +238,11 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 		Cluster:  cluster,
 		Machines: nil,
 	}
+	controlPlane.InjectTestManagementCluster(r.managementCluster)
 
-	result, err := r.reconcile(ctx, cluster, kcp)
+	result, err := r.reconcile(ctx, controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{}))
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 
 	machineList := &clusterv1.MachineList{}
 	g.Expect(fakeClient.List(ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -248,9 +257,10 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 	// run upgrade, expect we scale down
 	needingUpgrade := collections.FromMachineList(machineList)
 	controlPlane.Machines = needingUpgrade
-	result, err = r.upgradeControlPlane(ctx, cluster, kcp, controlPlane, needingUpgrade)
+
+	result, err = r.upgradeControlPlane(ctx, controlPlane, needingUpgrade)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
-	g.Expect(err).To(BeNil())
+	g.Expect(err).ToNot(HaveOccurred())
 	remainingMachines := &clusterv1.MachineList{}
 	g.Expect(fakeClient.List(ctx, remainingMachines, client.InNamespace(cluster.Namespace))).To(Succeed())
 	g.Expect(remainingMachines.Items).To(HaveLen(2))

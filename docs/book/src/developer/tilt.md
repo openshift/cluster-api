@@ -8,7 +8,7 @@ workflow that offers easy deployments and rapid iterative builds.
 ## Prerequisites
 
 1. [Docker](https://docs.docker.com/install/): v19.03 or newer
-1. [kind](https://kind.sigs.k8s.io): v0.17 or newer
+1. [kind](https://kind.sigs.k8s.io): v0.20.0 or newer
 1. [Tilt](https://docs.tilt.dev/install.html): v0.30.8 or newer
 1. [kustomize](https://github.com/kubernetes-sigs/kustomize): provided via `make kustomize`
 1. [envsubst](https://github.com/drone/envsubst): provided via `make envsubst`
@@ -69,8 +69,10 @@ If you prefer JSON, you can create a `tilt-settings.json` file instead. YAML wil
 **allowed_contexts** (Array, default=[]): A list of kubeconfig contexts Tilt is allowed to use. See the Tilt documentation on
 [allow_k8s_contexts](https://docs.tilt.dev/api.html#api.allow_k8s_contexts) for more details.
 
-**default_registry** (String, default=""): The image registry to use if you need to push images. See the [Tilt
+**default_registry** (String, default=[]): The image registry to use if you need to push images. See the [Tilt
 documentation](https://docs.tilt.dev/api.html#api.default_registry) for more details.
+Please note that, in case you are not using a local registry, this value is required; additionally, the Cluster API
+Tiltfile protects you from accidental push on `gcr.io/k8s-staging-cluster-api`.
 
 **build_engine** (String, default="docker"): The engine used to build images. Can either be `docker` or `podman`.
 NB: the default is dynamic and will be "podman" if the string "Podman Engine" is found in `docker version` (or in `podman version` if the command fails).
@@ -110,7 +112,7 @@ kustomize_substitutions:
   EXP_CLUSTER_RESOURCE_SET: "true"
   EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION: "true"
   EXP_RUNTIME_SDK: "true"
-  EXP_LAZY_RESTMAPPER: "true"
+  EXP_MACHINE_SET_PREFLIGHT_CHECKS: "true"
 ```
 
 {{#tabs name:"tab-tilt-kustomize-substitution" tabs:"AWS,Azure,DigitalOcean,GCP,vSphere"}}
@@ -200,11 +202,14 @@ Important! This feature requires the `helm` command to be available in the user'
 
 Supported values are:
 
-  * `grafana`*: To create dashboards and query `loki` as well as `prometheus`.
+  * `grafana`*: To create dashboards and query `loki`, `prometheus` and `tempo`.
   * `kube-state-metrics`: For exposing metrics for Kubernetes and CAPI resources to `prometheus`.
   * `loki`: To receive and store logs.
+  * `metrics-server`: To enable `kubectl top node/pod`.
   * `prometheus`*: For collecting metrics from Kubernetes.
   * `promtail`: For providing pod logs to `loki`.
+  * `parca`*: For visualizing profiling data.
+  * `tempo`: To store traces.
   * `visualizer`*: Visualize Cluster API resources for each cluster, provide quick access to the specs and status of any resource.
 
 \*: Note: the UI will be accessible via a link in the tilt console
@@ -324,10 +329,11 @@ Custom values for variable substitutions can be set using `kustomize_substitutio
 
 ```yaml
 kustomize_substitutions:
-  NAMESPACE: default
-  KUBERNETES_VERSION: v1.27.0
-  CONTROL_PLANE_MACHINE_COUNT: 1
-  WORKER_MACHINE_COUNT: 3
+  NAMESPACE: "default"
+  KUBERNETES_VERSION: "v1.28.0"
+  CONTROL_PLANE_MACHINE_COUNT: "1"
+  WORKER_MACHINE_COUNT: "3"
+# Note: kustomize substitutions expects the values to be strings. This can be achieved by wrapping the values in quotation marks.
 ```
 
 ### Cleaning up your kind cluster and development environment
@@ -364,6 +370,7 @@ The following providers are currently defined in the Tiltfile:
 * **kubeadm-bootstrap**: kubeadm bootstrap provider
 * **kubeadm-control-plane**: kubeadm control-plane provider
 * **docker**: Docker infrastructure provider
+* **in-memory**: In-memory infrastructure provider
 * **test-extension**: Runtime extension used by CAPI E2E tests
 
 Additional providers can be added by following the procedure described in following paragraphs:

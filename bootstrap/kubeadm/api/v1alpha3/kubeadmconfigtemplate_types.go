@@ -31,6 +31,8 @@ type KubeadmConfigTemplateResource struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
+// +kubebuilder:deprecatedversion
 // +kubebuilder:resource:path=kubeadmconfigtemplates,scope=Namespaced,categories=cluster-api
 
 // KubeadmConfigTemplate is the Schema for the kubeadmconfigtemplates API.

@@ -113,6 +113,8 @@ type DockerMachinePoolInstanceStatus struct {
 
 // +kubebuilder:resource:path=dockermachinepools,scope=Namespaced,categories=cluster-api
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
+// +kubebuilder:deprecatedversion
 // +kubebuilder:subresource:status
 
 // DockerMachinePool is the Schema for the dockermachinepools API.

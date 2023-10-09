@@ -101,12 +101,15 @@ k8s::resolveVersion() {
 kind::prepareKindestImage() {
   local version=$1
 
+  # ALWAYS_BUILD_KIND_IMAGES will default to false if unset.
+  ALWAYS_BUILD_KIND_IMAGES="${ALWAYS_BUILD_KIND_IMAGES:-"false"}"
+
   # Try to pre-pull the image
   kind::prepullImage "kindest/node:$version"
 
-  # if pre-pull failed, falling back to local build
-  if [[ "$retVal" != 0 ]]; then
-    echo "+ image for Kuberentes $version is not available in docker hub, trying local build"
+  # if pre-pull failed, or ALWAYS_BUILD_KIND_IMAGES is true build the images locally.
+ if [[ "$retVal" != 0 ]] || [[ "$ALWAYS_BUILD_KIND_IMAGES" = "true" ]]; then
+    echo "+ building image for Kuberentes $version locally. This is either because the image wasn't available in docker hub or ALWAYS_BUILD_KIND_IMAGES is set to true"
     kind::buildNodeImage "$version"
   fi
 }
@@ -201,9 +204,9 @@ EOL
 # the actual test run less sensible to the network speed.
 kind:prepullAdditionalImages () {
   # Pulling cert manager images so we can pre-load in kind nodes
-  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.11.1"
-  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.11.1"
-  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.11.1"
+  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.13.0"
+  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.13.0"
+  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.13.0"
 }
 
 # kind:prepullImage pre-pull a docker image if no already present locally.

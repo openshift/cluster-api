@@ -431,42 +431,36 @@ func TestFindOldMachineSets(t *testing.T) {
 		msList             []*clusterv1.MachineSet
 		reconciliationTime *metav1.Time
 		expected           []*clusterv1.MachineSet
-		expectedRequire    []*clusterv1.MachineSet
 	}{
 		{
-			Name:            "Get old MachineSets",
-			deployment:      deployment,
-			msList:          []*clusterv1.MachineSet{&newMS, &oldMS},
-			expected:        []*clusterv1.MachineSet{&oldMS},
-			expectedRequire: nil,
+			Name:       "Get old MachineSets",
+			deployment: deployment,
+			msList:     []*clusterv1.MachineSet{&newMS, &oldMS},
+			expected:   []*clusterv1.MachineSet{&oldMS},
 		},
 		{
-			Name:            "Get old MachineSets with no new MachineSet",
-			deployment:      deployment,
-			msList:          []*clusterv1.MachineSet{&oldMS},
-			expected:        []*clusterv1.MachineSet{&oldMS},
-			expectedRequire: nil,
+			Name:       "Get old MachineSets with no new MachineSet",
+			deployment: deployment,
+			msList:     []*clusterv1.MachineSet{&oldMS},
+			expected:   []*clusterv1.MachineSet{&oldMS},
 		},
 		{
-			Name:            "Get old MachineSets with two new MachineSets, only the MachineSet with higher replicas is seen as new MachineSet",
-			deployment:      deployment,
-			msList:          []*clusterv1.MachineSet{&oldMS, &newMS, &newMSHigherReplicas},
-			expected:        []*clusterv1.MachineSet{&oldMS, &newMS},
-			expectedRequire: []*clusterv1.MachineSet{&newMS},
+			Name:       "Get old MachineSets with two new MachineSets, only the MachineSet with higher replicas is seen as new MachineSet",
+			deployment: deployment,
+			msList:     []*clusterv1.MachineSet{&oldMS, &newMS, &newMSHigherReplicas},
+			expected:   []*clusterv1.MachineSet{&oldMS, &newMS},
 		},
 		{
-			Name:            "Get old MachineSets with two new MachineSets, when replicas are matching only the MachineSet with lower name is seen as new MachineSet",
-			deployment:      deployment,
-			msList:          []*clusterv1.MachineSet{&oldMS, &newMS, &newMSHigherName},
-			expected:        []*clusterv1.MachineSet{&oldMS, &newMSHigherName},
-			expectedRequire: []*clusterv1.MachineSet{&newMSHigherName},
+			Name:       "Get old MachineSets with two new MachineSets, when replicas are matching only the MachineSet with lower name is seen as new MachineSet",
+			deployment: deployment,
+			msList:     []*clusterv1.MachineSet{&oldMS, &newMS, &newMSHigherName},
+			expected:   []*clusterv1.MachineSet{&oldMS, &newMSHigherName},
 		},
 		{
-			Name:            "Get empty old MachineSets",
-			deployment:      deployment,
-			msList:          []*clusterv1.MachineSet{&newMS},
-			expected:        []*clusterv1.MachineSet{},
-			expectedRequire: nil,
+			Name:       "Get empty old MachineSets",
+			deployment: deployment,
+			msList:     []*clusterv1.MachineSet{&newMS},
+			expected:   []*clusterv1.MachineSet{},
 		},
 		{
 			Name:               "Get old MachineSets with new MachineSets, MachineSets created before rolloutAfter are considered new when reconciliationTime < rolloutAfter",
@@ -474,7 +468,6 @@ func TestFindOldMachineSets(t *testing.T) {
 			msList:             []*clusterv1.MachineSet{&msCreatedTwoBeforeRolloutAfter},
 			reconciliationTime: &oneBeforeRolloutAfter,
 			expected:           nil,
-			expectedRequire:    nil,
 		},
 		{
 			Name:               "Get old MachineSets with new MachineSets, MachineSets created after rolloutAfter are considered new when reconciliationTime > rolloutAfter",
@@ -482,7 +475,6 @@ func TestFindOldMachineSets(t *testing.T) {
 			msList:             []*clusterv1.MachineSet{&msCreatedTwoBeforeRolloutAfter, &msCreatedAfterRolloutAfter},
 			reconciliationTime: &twoAfterRolloutAfter,
 			expected:           []*clusterv1.MachineSet{&msCreatedTwoBeforeRolloutAfter},
-			expectedRequire:    nil,
 		},
 	}
 
@@ -490,10 +482,8 @@ func TestFindOldMachineSets(t *testing.T) {
 		t.Run(test.Name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			requireMS, allMS := FindOldMachineSets(&test.deployment, test.msList, test.reconciliationTime)
+			allMS := FindOldMachineSets(&test.deployment, test.msList, test.reconciliationTime)
 			g.Expect(allMS).To(ConsistOf(test.expected))
-			// MSs are getting filtered correctly by ms.spec.replicas
-			g.Expect(requireMS).To(ConsistOf(test.expectedRequire))
 		})
 	}
 }
@@ -601,7 +591,7 @@ func TestResolveFenceposts(t *testing.T) {
 			if test.expectError {
 				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
 			g.Expect(surge).To(Equal(test.expectSurge))
 			g.Expect(unavail).To(Equal(test.expectUnavailable))
@@ -652,7 +642,7 @@ func TestNewMSNewReplicas(t *testing.T) {
 			}
 			*(newRC.Spec.Replicas) = test.newMSReplicas
 			ms, err := NewMSNewReplicas(&newDeployment, []*clusterv1.MachineSet{&rs5}, *newRC.Spec.Replicas)
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(ms).To(Equal(test.expected))
 		})
 	}
@@ -952,9 +942,9 @@ func TestComputeMachineSetAnnotations(t *testing.T) {
 			g := NewWithT(t)
 			got, err := ComputeMachineSetAnnotations(log, tt.deployment, tt.oldMSs, tt.ms)
 			if tt.wantErr {
-				g.Expect(err).ShouldNot(BeNil())
+				g.Expect(err).ShouldNot(HaveOccurred())
 			} else {
-				g.Expect(err).Should(BeNil())
+				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(got).Should(Equal(tt.want))
 			}
 		})

@@ -103,7 +103,7 @@ func TestMachineToInfrastructureMapFunc(t *testing.T) {
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			fn := MachineToInfrastructureMapFunc(tc.input)
-			out := fn(tc.request)
+			out := fn(ctx, tc.request)
 			g.Expect(out).To(Equal(tc.output))
 		})
 	}
@@ -225,7 +225,7 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 			referenceObject.SetKind(tc.request.Spec.InfrastructureRef.Kind)
 
 			fn := ClusterToInfrastructureMapFunc(context.Background(), tc.input, clientBuilder.Build(), referenceObject)
-			out := fn(tc.request)
+			out := fn(ctx, tc.request)
 			g.Expect(out).To(Equal(tc.output))
 		})
 	}
@@ -469,13 +469,13 @@ func TestGetOwnerClusterSuccessByName(t *testing.T) {
 		Name:      "my-resource-owned-by-cluster",
 	}
 	cluster, err := GetOwnerCluster(ctx, c, objm)
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(cluster).NotTo(BeNil())
 
 	// Make sure API version does not matter
 	objm.OwnerReferences[0].APIVersion = "cluster.x-k8s.io/v1alpha1234"
 	cluster, err = GetOwnerCluster(ctx, c, objm)
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(cluster).NotTo(BeNil())
 }
 
@@ -505,7 +505,7 @@ func TestGetOwnerMachineSuccessByName(t *testing.T) {
 		Name:      "my-resource-owned-by-machine",
 	}
 	machine, err := GetOwnerMachine(ctx, c, objm)
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(machine).NotTo(BeNil())
 }
 
@@ -535,7 +535,7 @@ func TestGetOwnerMachineSuccessByNameFromDifferentVersion(t *testing.T) {
 		Name:      "my-resource-owned-by-machine",
 	}
 	machine, err := GetOwnerMachine(ctx, c, objm)
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(machine).NotTo(BeNil())
 }
 
@@ -739,9 +739,9 @@ func TestClusterToObjectsMapper(t *testing.T) {
 		restMapper.Add(gvk, meta.RESTScopeNamespace)
 
 		client := fake.NewClientBuilder().WithObjects(tc.objects...).WithRESTMapper(restMapper).Build()
-		f, err := ClusterToObjectsMapper(client, tc.input, scheme)
+		f, err := ClusterToTypedObjectsMapper(client, tc.input, scheme)
 		g.Expect(err != nil, err).To(Equal(tc.expectError))
-		g.Expect(f(cluster)).To(ConsistOf(tc.output))
+		g.Expect(f(ctx, cluster)).To(ConsistOf(tc.output))
 	}
 }
 

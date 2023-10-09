@@ -83,12 +83,17 @@ func (r *Reconciler) reconcileExternal(ctx context.Context, cluster *clusterv1.C
 		return external.ReconcileOutput{}, err
 	}
 
-	obj, err := external.Get(ctx, r.Client, ref, cluster.Namespace)
+	obj, err := external.Get(ctx, r.UnstructuredCachingClient, ref, cluster.Namespace)
 	if err != nil {
 		if apierrors.IsNotFound(errors.Cause(err)) {
 			log.Info("Could not find external object for cluster, requeuing", "refGroupVersionKind", ref.GroupVersionKind(), "refName", ref.Name)
 			return external.ReconcileOutput{RequeueAfter: 30 * time.Second}, nil
 		}
+		return external.ReconcileOutput{}, err
+	}
+
+	// Ensure we add a watcher to the external object.
+	if err := r.externalTracker.Watch(log, obj, handler.EnqueueRequestForOwner(r.Client.Scheme(), r.Client.RESTMapper(), &clusterv1.Cluster{})); err != nil {
 		return external.ReconcileOutput{}, err
 	}
 
@@ -119,11 +124,6 @@ func (r *Reconciler) reconcileExternal(ctx context.Context, cluster *clusterv1.C
 
 	// Always attempt to Patch the external object.
 	if err := patchHelper.Patch(ctx, obj); err != nil {
-		return external.ReconcileOutput{}, err
-	}
-
-	// Ensure we add a watcher to the external object.
-	if err := r.externalTracker.Watch(log, obj, &handler.EnqueueRequestForOwner{OwnerType: &clusterv1.Cluster{}}); err != nil {
 		return external.ReconcileOutput{}, err
 	}
 

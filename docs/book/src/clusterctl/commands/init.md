@@ -127,10 +127,10 @@ See [clusterctl configuration](../configuration.md) for more info about provider
 <h1> Is it possible to override files read from a provider repository? </h1>
 
 If, for any reasons, the user wants to replace the assets available on a provider repository with a locally available asset,
-the user is required to save the file under `$HOME/.cluster-api/overrides/<provider-label>/<version>/<file-name.yaml>`.
+the user is required to save the file under `$XDG_CONFIG_HOME/cluster-api/overrides/<provider-label>/<version>/<file-name.yaml>`.
 
 ```bash
-$HOME/.cluster-api/overrides/infrastructure-aws/v0.5.2/infrastructure-components.yaml
+$XDG_CONFIG_HOME/cluster-api/overrides/infrastructure-aws/v0.5.2/infrastructure-components.yaml
 ```
 
 </aside>
@@ -190,7 +190,7 @@ If this happens, there are no guarantees about the proper functioning of `cluste
 Cluster API providers require a cert-manager version supporting the `cert-manager.io/v1` API to be installed in the cluster.
 
 While doing init, clusterctl checks if there is a version of cert-manager already installed. If not, clusterctl will
-install a default version (currently cert-manager v1.11.1). See [clusterctl configuration](../configuration.md) for
+install a default version (currently cert-manager v1.13.0). See [clusterctl configuration](../configuration.md) for
 available options to customize this operation.
 
 <aside class="note warning">

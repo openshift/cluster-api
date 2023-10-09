@@ -17,6 +17,7 @@ limitations under the License.
 package cluster
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -61,7 +62,7 @@ func Test_getManifestObjs(t *testing.T) {
 	g := NewWithT(t)
 
 	defaultConfigClient, err := config.New("", config.InjectReader(test.NewFakeReader().WithImageMeta(config.CertManagerImageComponent, "bar-repository.io", "")))
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 
 	type fields struct {
 		configClient config.Client
@@ -139,7 +140,7 @@ func Test_getManifestObjs(t *testing.T) {
 				g.Expect(err).To(HaveOccurred())
 				return
 			}
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 
 			for i := range got {
 				o := &got[i]
@@ -165,7 +166,7 @@ func Test_getManifestObjs(t *testing.T) {
 }
 
 func Test_GetTimeout(t *testing.T) {
-	pollImmediateWaiter := func(interval, timeout time.Duration, condition wait.ConditionFunc) error {
+	pollImmediateWaiter := func(ctx context.Context, interval, timeout time.Duration, condition wait.ConditionWithContextFunc) error {
 		return nil
 	}
 
@@ -421,7 +422,7 @@ func Test_shouldUpgrade(t *testing.T) {
 			g := NewWithT(t)
 			proxy := test.NewFakeProxy()
 			fakeConfigClient := newFakeConfig().WithCertManager("", tt.configVersion, "")
-			pollImmediateWaiter := func(interval, timeout time.Duration, condition wait.ConditionFunc) error {
+			pollImmediateWaiter := func(ctx context.Context, interval, timeout time.Duration, condition wait.ConditionWithContextFunc) error {
 				return nil
 			}
 			cm := newCertManagerClient(fakeConfigClient, nil, proxy, pollImmediateWaiter)
@@ -706,7 +707,7 @@ func Test_certManagerClient_PlanUpgrade(t *testing.T) {
 
 			proxy := test.NewFakeProxy().WithObjs(tt.objs...)
 			fakeConfigClient := newFakeConfig()
-			pollImmediateWaiter := func(interval, timeout time.Duration, condition wait.ConditionFunc) error {
+			pollImmediateWaiter := func(ctx context.Context, interval, timeout time.Duration, condition wait.ConditionWithContextFunc) error {
 				return nil
 			}
 			cm := newCertManagerClient(fakeConfigClient, nil, proxy, pollImmediateWaiter)

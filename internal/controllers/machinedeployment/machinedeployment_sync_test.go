@@ -19,6 +19,7 @@ package machinedeployment
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -577,7 +578,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 
 		g := NewWithT(t)
 		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, nil, nil, log)
-		g.Expect(err).To(BeNil())
+		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
 
@@ -590,7 +591,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 
 		g := NewWithT(t)
 		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, nil, []*clusterv1.MachineSet{oldMS}, log)
-		g.Expect(err).To(BeNil())
+		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
 
@@ -627,7 +628,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 
 		g := NewWithT(t)
 		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, existingMS, nil, log)
-		g.Expect(err).To(BeNil())
+		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
 
@@ -668,7 +669,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 
 		g := NewWithT(t)
 		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, existingMS, []*clusterv1.MachineSet{oldMS}, log)
-		g.Expect(err).To(BeNil())
+		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
 
@@ -714,7 +715,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 
 		g := NewWithT(t)
 		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, existingMS, nil, log)
-		g.Expect(err).To(BeNil())
+		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
 }
@@ -797,5 +798,41 @@ func assertCondition(t *testing.T, from conditions.Getter, condition *clusterv1.
 		if condition.Message != "" {
 			g.Expect(conditionToBeAsserted.Message).To(Equal(condition.Message))
 		}
+	}
+}
+
+func Test_computeNewMachineSetName(t *testing.T) {
+	tests := []struct {
+		base       string
+		wantPrefix string
+	}{
+		{
+			"a",
+			"a",
+		},
+		{
+			fmt.Sprintf("%058d", 0),
+			fmt.Sprintf("%058d", 0),
+		},
+		{
+			fmt.Sprintf("%059d", 0),
+			fmt.Sprintf("%058d", 0),
+		},
+		{
+			fmt.Sprintf("%0100d", 0),
+			fmt.Sprintf("%058d", 0),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("base=%q, wantPrefix=%q", tt.base, tt.wantPrefix), func(t *testing.T) {
+			got, gotSuffix := computeNewMachineSetName(tt.base)
+			gotPrefix := strings.TrimSuffix(got, gotSuffix)
+			if gotPrefix != tt.wantPrefix {
+				t.Errorf("computeNewMachineSetName() = (%v, %v) wantPrefix %v", got, gotSuffix, tt.wantPrefix)
+			}
+			if len(got) > maxNameLength {
+				t.Errorf("expected %s to be of max length %d", got, maxNameLength)
+			}
+		})
 	}
 }

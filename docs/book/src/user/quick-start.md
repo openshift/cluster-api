@@ -46,7 +46,7 @@ a target [management cluster] on the selected [infrastructure provider].
 
    [kind] is not designed for production use.
 
-   **Minimum [kind] supported version**: v0.18.0
+   **Minimum [kind] supported version**: v0.20.0
 
    **Help with common issues can be found in the [Troubleshooting Guide](./troubleshooting.md).**
 
@@ -83,6 +83,8 @@ a target [management cluster] on the selected [infrastructure provider].
    cat > kind-cluster-with-extramounts.yaml <<EOF
    kind: Cluster
    apiVersion: kind.x-k8s.io/v1alpha4
+   networking:
+     ipFamily: dual
    nodes:
    - role: control-plane
      extraMounts:
@@ -159,17 +161,17 @@ If you are unsure you can determine your computers architecture by running `unam
 
 Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.5.x"}} -o clusterctl
 ```
 
 Download for ARM64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-arm64" version:"1.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-arm64" version:"1.5.x"}} -o clusterctl
 ```
 
 Download for PPC64LE:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-ppc64le" version:"1.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-ppc64le" version:"1.5.x"}} -o clusterctl
 ```
 
 Install clusterctl:
@@ -189,12 +191,12 @@ If you are unsure you can determine your computers architecture by running `unam
 
 Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.5.x"}} -o clusterctl
 ```
 
 Download for M1 CPU ("Apple Silicon") / ARM64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.4.x"}} -o clusterctl
+curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.5.x"}} -o clusterctl
 ```
 
 Make the clusterctl binary executable.
@@ -233,7 +235,7 @@ Go to the working directory where you want clusterctl downloaded.
 
 Download the latest release; on Windows, type:
 ```powershell
-curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.4.x"}} -o clusterctl.exe
+curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.5.x"}} -o clusterctl.exe
 ```
 Append or prepend the path of that directory to the `PATH` environment variable.
 
@@ -717,7 +719,7 @@ clusterctl init --infrastructure virtink
 # The username used to access the remote vSphere endpoint
 export VSPHERE_USERNAME="vi-admin@vsphere.local"
 # The password used to access the remote vSphere endpoint
-# You may want to set this in ~/.cluster-api/clusterctl.yaml so your password is not in
+# You may want to set this in `$XDG_CONFIG_HOME/cluster-api/clusterctl.yaml` so your password is not in
 # bash history
 export VSPHERE_PASSWORD="admin!23"
 
@@ -754,7 +756,7 @@ You can now create your first workload cluster by running the following:
 <h1>Alternatives to environment variables</h1>
 
 Throughout this quickstart guide we've given instructions on setting parameters using environment variables. For most
-environment variables in the rest of the guide, you can also set them in ~/.cluster-api/clusterctl.yaml
+environment variables in the rest of the guide, you can also set them in `$XDG_CONFIG_HOME/cluster-api/clusterctl.yaml`
 
 See [`clusterctl init`](../clusterctl/commands/init.md) for more details.
 
@@ -926,8 +928,8 @@ are also a few optional tunables if you'd like to change the OS or CIDRs used.
 # The project where your cluster will be placed to.
 # You have to get one from the Equinix Metal Console if you don't have one already.
 export PROJECT_ID="2b59569f-10d1-49a6-a000-c2fb95a959a1"
-# The facility where you want your cluster to be provisioned
-export FACILITY="da11"
+# This can help to take advantage of automated, interconnected bare metal across our global metros.
+export METRO="da"
 # What plan to use for your control plane nodes
 export CONTROLPLANE_NODE_TYPE="m3.small.x86"
 # What plan to use for your worker nodes
@@ -1215,7 +1217,7 @@ The Docker provider is not designed for production use and is intended for devel
 
 ```bash
 clusterctl generate cluster capi-quickstart --flavor development \
-  --kubernetes-version v1.27.0 \
+  --kubernetes-version v1.28.0 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1227,7 +1229,7 @@ clusterctl generate cluster capi-quickstart --flavor development \
 ```bash
 export CLUSTER_NAME=kind
 export CLUSTER_NAMESPACE=vcluster
-export KUBERNETES_VERSION=1.27.0
+export KUBERNETES_VERSION=1.28.0
 export HELM_VALUES="service:\n  type: NodePort"
 
 kubectl create namespace ${CLUSTER_NAMESPACE}
@@ -1258,7 +1260,7 @@ clusterctl generate cluster capi-quickstart \
 
 ```bash
 clusterctl generate cluster capi-quickstart \
-  --kubernetes-version v1.27.0 \
+  --kubernetes-version v1.28.0 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -1312,7 +1314,7 @@ and see an output similar to this:
 
 ```bash
 NAME              PHASE         AGE   VERSION
-capi-quickstart   Provisioned   8s    v1.27.0
+capi-quickstart   Provisioned   8s    v1.28.0
 ```
 
 To verify the first control plane is up:
@@ -1325,7 +1327,7 @@ You should see an output is similar to this:
 
 ```bash
 NAME                    CLUSTER           INITIALIZED   API SERVER AVAILABLE   REPLICAS   READY   UPDATED   UNAVAILABLE   AGE    VERSION
-capi-quickstart-g2trk   capi-quickstart   true                                 3                  3         3             4m7s   v1.27.0
+capi-quickstart-g2trk   capi-quickstart   true                                 3                  3         3             4m7s   v1.28.0
 ```
 
 <aside class="note warning">
@@ -1534,7 +1536,7 @@ kube-scheduler-capi-quickstart-control-plane-kjjbb            1/1     Running   
 
 ```bash
 kubectl --kubeconfig=./capi-quickstart.kubeconfig \
-  apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.24.1/manifests/calico.yaml
+  apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
 ```
 
 After a short while, our nodes should be running and in `Ready` state,
@@ -1545,12 +1547,12 @@ kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
 ```
 ```bash
 NAME                                          STATUS   ROLES           AGE    VERSION
-capi-quickstart-vs89t-gmbld                   Ready    control-plane   5m33s  v1.27.0
-capi-quickstart-vs89t-kf9l5                   Ready    control-plane   6m20s  v1.27.0
-capi-quickstart-vs89t-t8cfn                   Ready    control-plane   7m10s  v1.27.0
-capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          6m5s   v1.27.0
-capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          6m9s   v1.27.0
-capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          6m9s   v1.27.0
+capi-quickstart-vs89t-gmbld                   Ready    control-plane   5m33s  v1.28.0
+capi-quickstart-vs89t-kf9l5                   Ready    control-plane   6m20s  v1.28.0
+capi-quickstart-vs89t-t8cfn                   Ready    control-plane   7m10s  v1.28.0
+capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          6m5s   v1.28.0
+capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          6m9s   v1.28.0
+capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          6m9s   v1.28.0
 ```
 
 {{#/tab }}

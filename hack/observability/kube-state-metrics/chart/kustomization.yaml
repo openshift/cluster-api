@@ -4,4 +4,10 @@ helmCharts:
     namespace: observability
     releaseName: kube-state-metrics
     valuesFile: values.yaml
-    version: 4.18.0
+    version: 5.8.1
+
+helmGlobals:
+    # Store chart in ".charts" folder instead of "charts".
+    # Otherwise "go mod tidy" picks up dependencies of go files contained in the Helm Chart.
+    # "go mod tidy" ignores folders that begin with ".": https://pkg.go.dev/cmd/go#hdr-Package_lists_and_patterns.
+    chartHome: .charts

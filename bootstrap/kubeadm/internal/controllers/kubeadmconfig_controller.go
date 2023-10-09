@@ -38,7 +38,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
@@ -50,6 +49,7 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
+	"sigs.k8s.io/cluster-api/internal/util/taints"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -57,11 +57,6 @@ import (
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	"sigs.k8s.io/cluster-api/util/secret"
-)
-
-const (
-	// KubeadmConfigControllerName defines the controller used when creating clients.
-	KubeadmConfigControllerName = "kubeadmconfig-controller"
 )
 
 const (
@@ -81,16 +76,16 @@ type InitLocker interface {
 
 // KubeadmConfigReconciler reconciles a KubeadmConfig object.
 type KubeadmConfigReconciler struct {
-	Client          client.Client
-	KubeadmInitLock InitLocker
+	Client              client.Client
+	SecretCachingClient client.Client
+	Tracker             *remote.ClusterCacheTracker
+	KubeadmInitLock     InitLocker
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
 
 	// TokenTTL is the amount of time a bootstrap token (and therefore a KubeadmConfig) will be valid.
 	TokenTTL time.Duration
-
-	remoteClientGetter remote.ClusterClientGetter
 }
 
 // Scope is a scoped struct used during reconciliation.
@@ -106,9 +101,6 @@ func (r *KubeadmConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 	if r.KubeadmInitLock == nil {
 		r.KubeadmInitLock = locking.NewControlPlaneInitMutex(mgr.GetClient())
 	}
-	if r.remoteClientGetter == nil {
-		r.remoteClientGetter = remote.NewClusterClient
-	}
 	if r.TokenTTL == 0 {
 		r.TokenTTL = DefaultTokenTTL
 	}
@@ -117,19 +109,19 @@ func (r *KubeadmConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 		For(&bootstrapv1.KubeadmConfig{}).
 		WithOptions(options).
 		Watches(
-			&source.Kind{Type: &clusterv1.Machine{}},
+			&clusterv1.Machine{},
 			handler.EnqueueRequestsFromMapFunc(r.MachineToBootstrapMapFunc),
 		).WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue))
 
 	if feature.Gates.Enabled(feature.MachinePool) {
 		b = b.Watches(
-			&source.Kind{Type: &expv1.MachinePool{}},
+			&expv1.MachinePool{},
 			handler.EnqueueRequestsFromMapFunc(r.MachinePoolToBootstrapMapFunc),
 		)
 	}
 
 	b = b.Watches(
-		&source.Kind{Type: &clusterv1.Cluster{}},
+		&clusterv1.Cluster{},
 		handler.EnqueueRequestsFromMapFunc(r.ClusterToKubeadmConfigs),
 		builder.WithPredicates(
 			predicates.All(ctrl.LoggerFrom(ctx),
@@ -149,7 +141,7 @@ func (r *KubeadmConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, rerr error) {
 	log := ctrl.LoggerFrom(ctx)
 
-	// Lookup the kubeadm config
+	// Look up the kubeadm config
 	config := &bootstrapv1.KubeadmConfig{}
 	if err := r.Client.Get(ctx, req.NamespacedName, config); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -167,7 +159,7 @@ func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Look up the owner of this kubeadm config if there is one
-	configOwner, err := bsutil.GetConfigOwner(ctx, r.Client, config)
+	configOwner, err := bsutil.GetTypedConfigOwner(ctx, r.Client, config)
 	if apierrors.IsNotFound(err) {
 		// Could not find the owner yet, this is not an error and will rereconcile when the owner gets set.
 		return ctrl.Result{}, nil
@@ -233,12 +225,28 @@ func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			patchOpts = append(patchOpts, patch.WithStatusObservedGeneration{})
 		}
 		if err := patchHelper.Patch(ctx, config, patchOpts...); err != nil {
-			log.Error(rerr, "Failed to patch config")
-			if rerr == nil {
-				rerr = err
-			}
+			rerr = kerrors.NewAggregate([]error{rerr, errors.Wrapf(err, "failed to patch %s", klog.KObj(config))})
 		}
 	}()
+
+	// Ignore deleted KubeadmConfigs.
+	if !config.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
+	res, err := r.reconcile(ctx, scope, cluster, config, configOwner)
+	if err != nil && errors.Is(err, remote.ErrClusterLocked) {
+		// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
+		// the current cluster because of concurrent access.
+		log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
+		return ctrl.Result{Requeue: true}, nil
+	}
+	return res, err
+}
+
+func (r *KubeadmConfigReconciler) reconcile(ctx context.Context, scope *Scope, cluster *clusterv1.Cluster, config *bootstrapv1.KubeadmConfig, configOwner *bsutil.ConfigOwner) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+
 	// Ensure the bootstrap secret associated with this KubeadmConfig has the correct ownerReference.
 	if err := r.ensureBootstrapSecretOwnersRef(ctx, scope); err != nil {
 		return ctrl.Result{}, err
@@ -305,9 +313,8 @@ func (r *KubeadmConfigReconciler) refreshBootstrapToken(ctx context.Context, con
 	log := ctrl.LoggerFrom(ctx)
 	token := config.Spec.JoinConfiguration.Discovery.BootstrapToken.Token
 
-	remoteClient, err := r.remoteClientGetter(ctx, KubeadmConfigControllerName, r.Client, util.ObjectKey(cluster))
+	remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
-		log.Error(err, "Error creating remote cluster client")
 		return ctrl.Result{}, err
 	}
 
@@ -323,7 +330,7 @@ func (r *KubeadmConfigReconciler) refreshBootstrapToken(ctx context.Context, con
 func (r *KubeadmConfigReconciler) rotateMachinePoolBootstrapToken(ctx context.Context, config *bootstrapv1.KubeadmConfig, cluster *clusterv1.Cluster, scope *Scope) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	log.V(2).Info("Config is owned by a MachinePool, checking if token should be rotated")
-	remoteClient, err := r.remoteClientGetter(ctx, KubeadmConfigControllerName, r.Client, util.ObjectKey(cluster))
+	remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -444,13 +451,15 @@ func (r *KubeadmConfigReconciler) handleClusterNotInitialized(ctx context.Contex
 	// Otherwise rely on certificates generated by the ControlPlane controller.
 	// Note: A cluster does not have a ControlPlane reference when using standalone CP machines.
 	if scope.Cluster.Spec.ControlPlaneRef == nil {
-		err = certificates.LookupOrGenerate(
+		err = certificates.LookupOrGenerateCached(
 			ctx,
+			r.SecretCachingClient,
 			r.Client,
 			util.ObjectKey(scope.Cluster),
 			*metav1.NewControllerRef(scope.Config, bootstrapv1.GroupVersion.WithKind("KubeadmConfig")))
 	} else {
-		err = certificates.Lookup(ctx,
+		err = certificates.LookupCached(ctx,
+			r.SecretCachingClient,
 			r.Client,
 			util.ObjectKey(scope.Cluster))
 	}
@@ -522,8 +531,9 @@ func (r *KubeadmConfigReconciler) joinWorker(ctx context.Context, scope *Scope) 
 	scope.Info("Creating BootstrapData for the worker node")
 
 	certificates := secret.NewCertificatesForWorker(scope.Config.Spec.JoinConfiguration.CACertPath)
-	err := certificates.Lookup(
+	err := certificates.LookupCached(
 		ctx,
+		r.SecretCachingClient,
 		r.Client,
 		util.ObjectKey(scope.Cluster),
 	)
@@ -555,7 +565,7 @@ func (r *KubeadmConfigReconciler) joinWorker(ctx context.Context, scope *Scope) 
 	// Do not modify the KubeadmConfig in etcd as this is a temporary taint that will be dropped after the node
 	// is initialized by ClusterAPI.
 	joinConfiguration := scope.Config.Spec.JoinConfiguration.DeepCopy()
-	if !hasTaint(joinConfiguration.NodeRegistration.Taints, clusterv1.NodeUninitializedTaint) {
+	if !taints.HasTaint(joinConfiguration.NodeRegistration.Taints, clusterv1.NodeUninitializedTaint) {
 		joinConfiguration.NodeRegistration.Taints = append(joinConfiguration.NodeRegistration.Taints, clusterv1.NodeUninitializedTaint)
 	}
 
@@ -636,8 +646,9 @@ func (r *KubeadmConfigReconciler) joinControlplane(ctx context.Context, scope *S
 	}
 
 	certificates := secret.NewControlPlaneJoinCerts(scope.Config.Spec.ClusterConfiguration)
-	err := certificates.Lookup(
+	err := certificates.LookupCached(
 		ctx,
+		r.SecretCachingClient,
 		r.Client,
 		util.ObjectKey(scope.Cluster),
 	)
@@ -807,7 +818,7 @@ func (r *KubeadmConfigReconciler) resolveSecretPasswordContent(ctx context.Conte
 
 // ClusterToKubeadmConfigs is a handler.ToRequestsFunc to be used to enqueue
 // requests for reconciliation of KubeadmConfigs.
-func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(o client.Object) []ctrl.Request {
+func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(ctx context.Context, o client.Object) []ctrl.Request {
 	result := []ctrl.Request{}
 
 	c, ok := o.(*clusterv1.Cluster)
@@ -823,7 +834,7 @@ func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(o client.Object) []ctr
 	}
 
 	machineList := &clusterv1.MachineList{}
-	if err := r.Client.List(context.TODO(), machineList, selectors...); err != nil {
+	if err := r.Client.List(ctx, machineList, selectors...); err != nil {
 		return nil
 	}
 
@@ -837,7 +848,7 @@ func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(o client.Object) []ctr
 
 	if feature.Gates.Enabled(feature.MachinePool) {
 		machinePoolList := &expv1.MachinePoolList{}
-		if err := r.Client.List(context.TODO(), machinePoolList, selectors...); err != nil {
+		if err := r.Client.List(ctx, machinePoolList, selectors...); err != nil {
 			return nil
 		}
 
@@ -855,7 +866,7 @@ func (r *KubeadmConfigReconciler) ClusterToKubeadmConfigs(o client.Object) []ctr
 
 // MachineToBootstrapMapFunc is a handler.ToRequestsFunc to be used to enqueue
 // request for reconciliation of KubeadmConfig.
-func (r *KubeadmConfigReconciler) MachineToBootstrapMapFunc(o client.Object) []ctrl.Request {
+func (r *KubeadmConfigReconciler) MachineToBootstrapMapFunc(_ context.Context, o client.Object) []ctrl.Request {
 	m, ok := o.(*clusterv1.Machine)
 	if !ok {
 		panic(fmt.Sprintf("Expected a Machine but got a %T", o))
@@ -871,7 +882,7 @@ func (r *KubeadmConfigReconciler) MachineToBootstrapMapFunc(o client.Object) []c
 
 // MachinePoolToBootstrapMapFunc is a handler.ToRequestsFunc to be used to enqueue
 // request for reconciliation of KubeadmConfig.
-func (r *KubeadmConfigReconciler) MachinePoolToBootstrapMapFunc(o client.Object) []ctrl.Request {
+func (r *KubeadmConfigReconciler) MachinePoolToBootstrapMapFunc(_ context.Context, o client.Object) []ctrl.Request {
 	m, ok := o.(*expv1.MachinePool)
 	if !ok {
 		panic(fmt.Sprintf("Expected a MachinePool but got a %T", o))
@@ -928,7 +939,7 @@ func (r *KubeadmConfigReconciler) reconcileDiscovery(ctx context.Context, cluste
 
 	// if BootstrapToken already contains a token, respect it; otherwise create a new bootstrap token for the node to join
 	if config.Spec.JoinConfiguration.Discovery.BootstrapToken.Token == "" {
-		remoteClient, err := r.remoteClientGetter(ctx, KubeadmConfigControllerName, r.Client, util.ObjectKey(cluster))
+		remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1046,7 +1057,7 @@ func (r *KubeadmConfigReconciler) storeBootstrapData(ctx context.Context, scope 
 // Ensure the bootstrap secret has the KubeadmConfig as a controller OwnerReference.
 func (r *KubeadmConfigReconciler) ensureBootstrapSecretOwnersRef(ctx context.Context, scope *Scope) error {
 	secret := &corev1.Secret{}
-	err := r.Client.Get(ctx, client.ObjectKey{Namespace: scope.Config.Namespace, Name: scope.Config.Name}, secret)
+	err := r.SecretCachingClient.Get(ctx, client.ObjectKey{Namespace: scope.Config.Namespace, Name: scope.Config.Name}, secret)
 	if err != nil {
 		// If the secret has not been created yet return early.
 		if apierrors.IsNotFound(err) {
@@ -1073,13 +1084,4 @@ func (r *KubeadmConfigReconciler) ensureBootstrapSecretOwnersRef(ctx context.Con
 		return errors.Wrapf(err, "could not add KubeadmConfig %s as ownerReference to bootstrap Secret %s", scope.ConfigOwner.GetName(), secret.GetName())
 	}
 	return nil
-}
-
-func hasTaint(taints []corev1.Taint, targetTaint corev1.Taint) bool {
-	for _, taint := range taints {
-		if taint.MatchTaint(&targetTaint) {
-			return true
-		}
-	}
-	return false
 }

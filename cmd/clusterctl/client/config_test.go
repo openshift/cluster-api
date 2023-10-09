@@ -59,11 +59,13 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.KubeadmBootstrapProviderName,
 				config.KubeKeyK3sBootstrapProviderName,
 				config.MicroK8sBootstrapProviderName,
+				config.OracleCloudNativeBootstrapProviderName,
 				config.TalosBootstrapProviderName,
 				config.KubeadmControlPlaneProviderName,
 				config.KubeKeyK3sControlPlaneProviderName,
 				config.MicroK8sControlPlaneProviderName,
 				config.NestedControlPlaneProviderName,
+				config.OracleCloudNativeControlPlaneProviderName,
 				config.TalosControlPlaneProviderName,
 				config.AWSProviderName,
 				config.AzureProviderName,
@@ -75,6 +77,7 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.GCPProviderName,
 				config.HetznerProviderName,
 				config.IBMCloudProviderName,
+				config.InMemoryProviderName,
 				config.KubeKeyProviderName,
 				config.KubevirtProviderName,
 				config.MAASProviderName,
@@ -90,6 +93,7 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.VclusterProviderName,
 				config.VirtinkProviderName,
 				config.VSphereProviderName,
+				config.HelmAddonProviderName,
 			},
 			wantErr: false,
 		},
@@ -105,11 +109,13 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.KubeadmBootstrapProviderName,
 				config.KubeKeyK3sBootstrapProviderName,
 				config.MicroK8sBootstrapProviderName,
+				config.OracleCloudNativeBootstrapProviderName,
 				config.TalosBootstrapProviderName,
 				config.KubeadmControlPlaneProviderName,
 				config.KubeKeyK3sControlPlaneProviderName,
 				config.MicroK8sControlPlaneProviderName,
 				config.NestedControlPlaneProviderName,
+				config.OracleCloudNativeControlPlaneProviderName,
 				config.TalosControlPlaneProviderName,
 				config.AWSProviderName,
 				config.AzureProviderName,
@@ -121,6 +127,7 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.GCPProviderName,
 				config.HetznerProviderName,
 				config.IBMCloudProviderName,
+				config.InMemoryProviderName,
 				config.KubeKeyProviderName,
 				config.KubevirtProviderName,
 				config.MAASProviderName,
@@ -136,6 +143,7 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				config.VclusterProviderName,
 				config.VirtinkProviderName,
 				config.VSphereProviderName,
+				config.HelmAddonProviderName,
 			},
 			wantErr: false,
 		},
@@ -150,7 +158,7 @@ func Test_clusterctlClient_GetProvidersConfig(t *testing.T) {
 				return
 			}
 
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(got).To(HaveLen(len(tt.wantProviders)))
 
 			for i, gotProvider := range got {
@@ -220,7 +228,7 @@ func Test_clusterctlClient_GetProviderComponents(t *testing.T) {
 				g.Expect(err).To(HaveOccurred())
 				return
 			}
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 
 			g.Expect(got.Name()).To(Equal(tt.want.provider.Name()))
 			g.Expect(got.Version()).To(Equal(tt.want.version))
@@ -261,7 +269,7 @@ func Test_getComponentsByName_withEmptyVariables(t *testing.T) {
 		SkipTemplateProcess: true,
 	}
 	components, err := client.GetProviderComponents(repository1Config.Name(), repository1Config.Type(), options)
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(components.Variables()).To(HaveLen(1))
 	g.Expect(components.Name()).To(Equal("p1"))
 }
@@ -415,11 +423,11 @@ func Test_clusterctlClient_templateOptionsToVariables(t *testing.T) {
 				g.Expect(err).To(HaveOccurred())
 				return
 			}
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 
 			for name, wantValue := range tt.wantVars {
 				gotValue, err := config.Variables().Get(name)
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(gotValue).To(Equal(wantValue))
 			}
 		})
@@ -470,7 +478,7 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 
 	// Template on a file
 	tmpDir, err := os.MkdirTemp("", "cc")
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	defer os.RemoveAll(tmpDir)
 
 	path := filepath.Join(tmpDir, "cluster-template.yaml")
@@ -634,13 +642,13 @@ func Test_clusterctlClient_GetClusterTemplate(t *testing.T) {
 				gs.Expect(err).To(HaveOccurred())
 				return
 			}
-			gs.Expect(err).NotTo(HaveOccurred())
+			gs.Expect(err).ToNot(HaveOccurred())
 
 			gs.Expect(got.Variables()).To(Equal(tt.want.variables))
 			gs.Expect(got.TargetNamespace()).To(Equal(tt.want.targetNamespace))
 
 			gotYaml, err := got.Yaml()
-			gs.Expect(err).NotTo(HaveOccurred())
+			gs.Expect(err).ToNot(HaveOccurred())
 			gs.Expect(gotYaml).To(Equal(tt.want.yaml))
 		})
 	}
@@ -676,7 +684,7 @@ func Test_clusterctlClient_GetClusterTemplate_withClusterClass(t *testing.T) {
 			Flavor: "dev",
 		},
 	})
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(got.Variables()).To(Equal([]string{"CLUSTER_NAME"}))
 	g.Expect(got.TargetNamespace()).To(Equal("ns1"))
 	g.Expect(got.Objs()).To(ContainElement(MatchClusterClass("dev", "ns1")))
@@ -688,7 +696,7 @@ func Test_clusterctlClient_GetClusterTemplate_onEmptyCluster(t *testing.T) {
 
 	// Template on a file
 	tmpDir, err := os.MkdirTemp("", "cc")
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	defer os.RemoveAll(tmpDir)
 
 	path := filepath.Join(tmpDir, "cluster-template.yaml")
@@ -826,13 +834,13 @@ func Test_clusterctlClient_GetClusterTemplate_onEmptyCluster(t *testing.T) {
 				gs.Expect(err).To(HaveOccurred())
 				return
 			}
-			gs.Expect(err).NotTo(HaveOccurred())
+			gs.Expect(err).ToNot(HaveOccurred())
 
 			gs.Expect(got.Variables()).To(Equal(tt.want.variables))
 			gs.Expect(got.TargetNamespace()).To(Equal(tt.want.targetNamespace))
 
 			gotYaml, err := got.Yaml()
-			gs.Expect(err).NotTo(HaveOccurred())
+			gs.Expect(err).ToNot(HaveOccurred())
 			gs.Expect(gotYaml).To(Equal(tt.want.yaml))
 		})
 	}
@@ -937,13 +945,13 @@ func Test_clusterctlClient_GetClusterTemplate_withoutCluster(t *testing.T) {
 				gs.Expect(err).To(HaveOccurred())
 				return
 			}
-			gs.Expect(err).NotTo(HaveOccurred())
+			gs.Expect(err).ToNot(HaveOccurred())
 
 			gs.Expect(got.Variables()).To(Equal(tt.want.variables))
 			gs.Expect(got.TargetNamespace()).To(Equal(tt.want.targetNamespace))
 
 			gotYaml, err := got.Yaml()
-			gs.Expect(err).NotTo(HaveOccurred())
+			gs.Expect(err).ToNot(HaveOccurred())
 			gs.Expect(gotYaml).To(Equal(tt.want.yaml))
 		})
 	}
@@ -955,7 +963,7 @@ func Test_clusterctlClient_ProcessYAML(t *testing.T) {
 v2: ${VAR2=default2}
 v3: ${VAR3:-default3}`
 	dir, err := os.MkdirTemp("", "clusterctl")
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(err).ToNot(HaveOccurred())
 	defer os.RemoveAll(dir)
 
 	templateFile := filepath.Join(dir, "template.yaml")

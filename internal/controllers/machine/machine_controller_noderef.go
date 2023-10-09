@@ -24,13 +24,13 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
-	"sigs.k8s.io/cluster-api/controllers/noderefutil"
 	"sigs.k8s.io/cluster-api/internal/util/taints"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
@@ -42,8 +42,11 @@ var (
 	ErrNodeNotFound = errors.New("cannot find node with matching ProviderID")
 )
 
-func (r *Reconciler) reconcileNode(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine) (ctrl.Result, error) {
+func (r *Reconciler) reconcileNode(ctx context.Context, s *scope) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
+	cluster := s.cluster
+	machine := s.machine
+	infraMachine := s.infraMachine
 
 	// Create a watch on the nodes in the Cluster.
 	if err := r.watchClusterNodes(ctx, cluster); err != nil {
@@ -57,18 +60,13 @@ func (r *Reconciler) reconcileNode(ctx context.Context, cluster *clusterv1.Clust
 		return ctrl.Result{}, nil
 	}
 
-	providerID, err := noderefutil.NewProviderID(*machine.Spec.ProviderID)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
 	remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Even if Status.NodeRef exists, continue to do the following checks to make sure Node is healthy
-	node, err := r.getNode(ctx, remoteClient, providerID)
+	node, err := r.getNode(ctx, remoteClient, *machine.Spec.ProviderID)
 	if err != nil {
 		if err == ErrNodeNotFound {
 			// While a NodeRef is set in the status, failing to get that node means the node is deleted.
@@ -94,7 +92,7 @@ func (r *Reconciler) reconcileNode(ctx context.Context, cluster *clusterv1.Clust
 			Name:       node.Name,
 			UID:        node.UID,
 		}
-		log.Info("Infrastructure provider reporting spec.providerID, Kubernetes node is now available", machine.Spec.InfrastructureRef.Kind, klog.KRef(machine.Spec.InfrastructureRef.Namespace, machine.Spec.InfrastructureRef.Name), "providerID", providerID, "node", klog.KRef("", machine.Status.NodeRef.Name))
+		log.Info("Infrastructure provider reporting spec.providerID, Kubernetes node is now available", machine.Spec.InfrastructureRef.Kind, klog.KRef(machine.Spec.InfrastructureRef.Namespace, machine.Spec.InfrastructureRef.Name), "providerID", *machine.Spec.ProviderID, "node", klog.KRef("", machine.Status.NodeRef.Name))
 		r.recorder.Event(machine, corev1.EventTypeNormal, "SuccessfulSetNodeRef", machine.Status.NodeRef.Name)
 	}
 
@@ -118,9 +116,31 @@ func (r *Reconciler) reconcileNode(ctx context.Context, cluster *clusterv1.Clust
 	// NOTE: Once we reconcile node labels for the first time, the NodeUninitializedTaint is removed from the node.
 	nodeLabels := getManagedLabels(machine.Labels)
 
+	// Get interruptible instance status from the infrastructure provider and set the interruptible label on the node.
+	interruptible := false
+	found := false
+	if infraMachine != nil {
+		interruptible, found, err = unstructured.NestedBool(infraMachine.Object, "status", "interruptible")
+		if err != nil {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to get status interruptible from infra machine %s", klog.KObj(infraMachine))
+		}
+		// If interruptible is set and is true add the interruptible label to the node labels.
+		if found && interruptible {
+			nodeLabels[clusterv1.InterruptibleLabel] = ""
+		}
+	}
+
+	_, nodeHadInterruptibleLabel := node.Labels[clusterv1.InterruptibleLabel]
+
 	// Reconcile node taints
 	if err := r.patchNode(ctx, remoteClient, node, nodeLabels, nodeAnnotations); err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to reconcile Node %s", klog.KObj(node))
+	}
+	if !nodeHadInterruptibleLabel && interruptible {
+		// If the interruptible label is added to the node then record the event.
+		// Nb. Only record the event if the node previously did not have the label to avoid recording
+		// the event during every reconcile.
+		r.recorder.Event(machine, corev1.EventTypeNormal, "SuccessfulSetInterruptibleNodeLabel", node.Name)
 	}
 
 	// Do the remaining node health checks, then set the node health to true if all checks pass.
@@ -199,10 +219,9 @@ func summarizeNodeConditions(node *corev1.Node) (corev1.ConditionStatus, string)
 	return corev1.ConditionUnknown, message
 }
 
-func (r *Reconciler) getNode(ctx context.Context, c client.Reader, providerID *noderefutil.ProviderID) (*corev1.Node, error) {
-	log := ctrl.LoggerFrom(ctx, "providerID", providerID)
+func (r *Reconciler) getNode(ctx context.Context, c client.Reader, providerID string) (*corev1.Node, error) {
 	nodeList := corev1.NodeList{}
-	if err := c.List(ctx, &nodeList, client.MatchingFields{index.NodeProviderIDField: providerID.IndexKey()}); err != nil {
+	if err := c.List(ctx, &nodeList, client.MatchingFields{index.NodeProviderIDField: providerID}); err != nil {
 		return nil, err
 	}
 	if len(nodeList.Items) == 0 {
@@ -213,14 +232,8 @@ func (r *Reconciler) getNode(ctx context.Context, c client.Reader, providerID *n
 				return nil, err
 			}
 
-			for key, node := range nl.Items {
-				nodeProviderID, err := noderefutil.NewProviderID(node.Spec.ProviderID)
-				if err != nil {
-					log.Error(err, "Failed to parse ProviderID", "Node", klog.KRef("", nl.Items[key].GetName()))
-					continue
-				}
-
-				if providerID.Equals(nodeProviderID) {
+			for _, node := range nl.Items {
+				if providerID == node.Spec.ProviderID {
 					return &node, nil
 				}
 			}
@@ -234,7 +247,7 @@ func (r *Reconciler) getNode(ctx context.Context, c client.Reader, providerID *n
 	}
 
 	if len(nodeList.Items) != 1 {
-		return nil, fmt.Errorf("unexpectedly found more than one Node matching the providerID %s", providerID.String())
+		return nil, fmt.Errorf("unexpectedly found more than one Node matching the providerID %s", providerID)
 	}
 
 	return &nodeList.Items[0], nil

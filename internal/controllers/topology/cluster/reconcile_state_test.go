@@ -492,58 +492,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 	}
 
 	topologyVersion := "v1.2.3"
-	lowerVersion := "v1.2.2"
-	controlPlaneStableAtTopologyVersion := builder.ControlPlane("test1", "cp1").
-		WithSpecFields(map[string]interface{}{
-			"spec.version":  topologyVersion,
-			"spec.replicas": int64(2),
-		}).
-		WithStatusFields(map[string]interface{}{
-			"status.version":             topologyVersion,
-			"status.replicas":            int64(2),
-			"status.updatedReplicas":     int64(2),
-			"status.readyReplicas":       int64(2),
-			"status.unavailableReplicas": int64(0),
-		}).
-		Build()
-	controlPlaneStableAtLowerVersion := builder.ControlPlane("test1", "cp1").
-		WithSpecFields(map[string]interface{}{
-			"spec.version":  lowerVersion,
-			"spec.replicas": int64(2),
-		}).
-		WithStatusFields(map[string]interface{}{
-			"status.version":             lowerVersion,
-			"status.replicas":            int64(2),
-			"status.updatedReplicas":     int64(2),
-			"status.readyReplicas":       int64(2),
-			"status.unavailableReplicas": int64(0),
-		}).
-		Build()
-	controlPlaneUpgrading := builder.ControlPlane("test1", "cp1").
-		WithSpecFields(map[string]interface{}{
-			"spec.version":  topologyVersion,
-			"spec.replicas": int64(2),
-		}).
-		WithStatusFields(map[string]interface{}{
-			"status.version":             lowerVersion,
-			"status.replicas":            int64(2),
-			"status.updatedReplicas":     int64(2),
-			"status.readyReplicas":       int64(2),
-			"status.unavailableReplicas": int64(0),
-		}).
-		Build()
-	controlPlaneScaling := builder.ControlPlane("test1", "cp1").
-		WithSpecFields(map[string]interface{}{
-			"spec.version":  topologyVersion,
-			"spec.replicas": int64(2),
-		}).
-		WithStatusFields(map[string]interface{}{
-			"status.version":             topologyVersion,
-			"status.replicas":            int64(1),
-			"status.updatedReplicas":     int64(1),
-			"status.readyReplicas":       int64(1),
-			"status.unavailableReplicas": int64(0),
-		}).
+	controlPlaneObj := builder.ControlPlane("test1", "cp1").
 		Build()
 
 	tests := []struct {
@@ -572,11 +521,51 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						},
 						Spec: clusterv1.ClusterSpec{},
 					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneObj,
+					},
 				},
 				HookResponseTracker: scope.NewHookResponseTracker(),
 				UpgradeTracker:      scope.NewUpgradeTracker(),
 			},
 			wantMarked:         false,
+			hookResponse:       successResponse,
+			wantHookToBeCalled: false,
+			wantError:          false,
+		},
+		{
+			name: "hook should not be called if the control plane is starting a new upgrade - hook is marked",
+			s: &scope.Scope{
+				Blueprint: &scope.ClusterBlueprint{
+					Topology: &clusterv1.Topology{
+						ControlPlane: clusterv1.ControlPlaneTopology{
+							Replicas: pointer.Int32(2),
+						},
+					},
+				},
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-cluster",
+							Namespace: "test-ns",
+							Annotations: map[string]string{
+								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
+							},
+						},
+						Spec: clusterv1.ClusterSpec{},
+					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneObj,
+					},
+				},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+				UpgradeTracker: func() *scope.UpgradeTracker {
+					ut := scope.NewUpgradeTracker()
+					ut.ControlPlane.IsStartingUpgrade = true
+					return ut
+				}(),
+			},
+			wantMarked:         true,
 			hookResponse:       successResponse,
 			wantHookToBeCalled: false,
 			wantError:          false,
@@ -603,11 +592,15 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						Spec: clusterv1.ClusterSpec{},
 					},
 					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneUpgrading,
+						Object: controlPlaneObj,
 					},
 				},
 				HookResponseTracker: scope.NewHookResponseTracker(),
-				UpgradeTracker:      scope.NewUpgradeTracker(),
+				UpgradeTracker: func() *scope.UpgradeTracker {
+					ut := scope.NewUpgradeTracker()
+					ut.ControlPlane.IsUpgrading = true
+					return ut
+				}(),
 			},
 			wantMarked:         true,
 			hookResponse:       successResponse,
@@ -636,46 +629,13 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						Spec: clusterv1.ClusterSpec{},
 					},
 					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneScaling,
-					},
-				},
-				HookResponseTracker: scope.NewHookResponseTracker(),
-				UpgradeTracker:      scope.NewUpgradeTracker(),
-			},
-			wantMarked:         true,
-			hookResponse:       successResponse,
-			wantHookToBeCalled: false,
-			wantError:          false,
-		},
-		{
-			name: "hook should not be called if the control plane is stable at a lower version and is pending an upgrade - hook is marked",
-			s: &scope.Scope{
-				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
-						ControlPlane: clusterv1.ControlPlaneTopology{
-							Replicas: pointer.Int32(2),
-						},
-					},
-				},
-				Current: &scope.ClusterState{
-					Cluster: &clusterv1.Cluster{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "test-cluster",
-							Namespace: "test-ns",
-							Annotations: map[string]string{
-								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
-							},
-						},
-						Spec: clusterv1.ClusterSpec{},
-					},
-					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneStableAtLowerVersion,
+						Object: controlPlaneObj,
 					},
 				},
 				HookResponseTracker: scope.NewHookResponseTracker(),
 				UpgradeTracker: func() *scope.UpgradeTracker {
 					ut := scope.NewUpgradeTracker()
-					ut.ControlPlane.PendingUpgrade = true
+					ut.ControlPlane.IsScaling = true
 					return ut
 				}(),
 			},
@@ -685,7 +645,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			wantError:          false,
 		},
 		{
-			name: "hook should not be called if the control plane is stable at desired version but MDs are rolling out - hook is marked",
+			name: "hook should not be called if the control plane is pending an upgrade - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
 					Topology: &clusterv1.Topology{
@@ -706,14 +666,88 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						Spec: clusterv1.ClusterSpec{},
 					},
 					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneStableAtTopologyVersion,
+						Object: controlPlaneObj,
 					},
 				},
 				HookResponseTracker: scope.NewHookResponseTracker(),
 				UpgradeTracker: func() *scope.UpgradeTracker {
 					ut := scope.NewUpgradeTracker()
-					ut.ControlPlane.PendingUpgrade = false
-					ut.MachineDeployments.MarkRollingOut("md1")
+					ut.ControlPlane.IsPendingUpgrade = true
+					return ut
+				}(),
+			},
+			wantMarked:         true,
+			hookResponse:       successResponse,
+			wantHookToBeCalled: false,
+			wantError:          false,
+		},
+		{
+			name: "hook should not be called if the control plane is stable at desired version but MDs are upgrading - hook is marked",
+			s: &scope.Scope{
+				Blueprint: &scope.ClusterBlueprint{
+					Topology: &clusterv1.Topology{
+						ControlPlane: clusterv1.ControlPlaneTopology{
+							Replicas: pointer.Int32(2),
+						},
+					},
+				},
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-cluster",
+							Namespace: "test-ns",
+							Annotations: map[string]string{
+								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
+							},
+						},
+						Spec: clusterv1.ClusterSpec{},
+					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneObj,
+					},
+				},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+				UpgradeTracker: func() *scope.UpgradeTracker {
+					ut := scope.NewUpgradeTracker()
+					ut.ControlPlane.IsPendingUpgrade = false
+					ut.MachineDeployments.MarkUpgrading("md1")
+					return ut
+				}(),
+			},
+			wantMarked:         true,
+			hookResponse:       successResponse,
+			wantHookToBeCalled: false,
+			wantError:          false,
+		},
+		{
+			name: "hook should not be called if the control plane is stable at desired version but MDs are pending create - hook is marked",
+			s: &scope.Scope{
+				Blueprint: &scope.ClusterBlueprint{
+					Topology: &clusterv1.Topology{
+						ControlPlane: clusterv1.ControlPlaneTopology{
+							Replicas: pointer.Int32(2),
+						},
+					},
+				},
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-cluster",
+							Namespace: "test-ns",
+							Annotations: map[string]string{
+								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
+							},
+						},
+						Spec: clusterv1.ClusterSpec{},
+					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneObj,
+					}},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+				UpgradeTracker: func() *scope.UpgradeTracker {
+					ut := scope.NewUpgradeTracker()
+					ut.ControlPlane.IsPendingUpgrade = false
+					ut.MachineDeployments.MarkPendingCreate("md-topology-1")
 					return ut
 				}(),
 			},
@@ -744,13 +778,12 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						Spec: clusterv1.ClusterSpec{},
 					},
 					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneStableAtTopologyVersion,
-					},
-				},
+						Object: controlPlaneObj,
+					}},
 				HookResponseTracker: scope.NewHookResponseTracker(),
 				UpgradeTracker: func() *scope.UpgradeTracker {
 					ut := scope.NewUpgradeTracker()
-					ut.ControlPlane.PendingUpgrade = false
+					ut.ControlPlane.IsPendingUpgrade = false
 					ut.MachineDeployments.MarkPendingUpgrade("md1")
 					return ut
 				}(),
@@ -782,13 +815,13 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						Spec: clusterv1.ClusterSpec{},
 					},
 					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneStableAtTopologyVersion,
+						Object: controlPlaneObj,
 					},
 				},
 				HookResponseTracker: scope.NewHookResponseTracker(),
 				UpgradeTracker: func() *scope.UpgradeTracker {
 					ut := scope.NewUpgradeTracker()
-					ut.ControlPlane.PendingUpgrade = false
+					ut.ControlPlane.IsPendingUpgrade = false
 					ut.MachineDeployments.MarkDeferredUpgrade("md1")
 					return ut
 				}(),
@@ -824,7 +857,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						},
 					},
 					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneStableAtTopologyVersion,
+						Object: controlPlaneObj,
 					},
 				},
 				HookResponseTracker: scope.NewHookResponseTracker(),
@@ -861,7 +894,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 						},
 					},
 					ControlPlane: &scope.ControlPlaneState{
-						Object: controlPlaneStableAtTopologyVersion,
+						Object: controlPlaneObj,
 					},
 				},
 				HookResponseTracker: scope.NewHookResponseTracker(),
@@ -1104,11 +1137,11 @@ func TestReconcileInfrastructureCluster(t *testing.T) {
 
 			// Spec
 			wantSpec, ok, err := unstructured.NestedMap(tt.want.UnstructuredContent(), "spec")
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(ok).To(BeTrue())
 
 			gotSpec, ok, err := unstructured.NestedMap(got.UnstructuredContent(), "spec")
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(ok).To(BeTrue())
 			for k, v := range wantSpec {
 				g.Expect(gotSpec).To(HaveKeyWithValue(k, v))
@@ -1182,12 +1215,16 @@ func TestReconcileControlPlane(t *testing.T) {
 	gvk.Kind = "KindChanged"
 	infrastructureMachineTemplateWithIncompatibleChanges.SetGroupVersionKind(gvk)
 
+	upgradeTrackerWithControlPlanePendingUpgrade := scope.NewUpgradeTracker()
+	upgradeTrackerWithControlPlanePendingUpgrade.ControlPlane.IsPendingUpgrade = true
+
 	tests := []struct {
 		name                                 string
 		class                                *scope.ControlPlaneBlueprint
 		original                             *scope.ControlPlaneState
 		controlPlaneExternalChanges          string
 		machineInfrastructureExternalChanges string
+		upgradeTracker                       *scope.UpgradeTracker
 		desired                              *scope.ControlPlaneState
 		want                                 *scope.ControlPlaneState
 		wantRotation                         bool
@@ -1209,6 +1246,15 @@ func TestReconcileControlPlane(t *testing.T) {
 			desired:  &scope.ControlPlaneState{Object: controlPlaneWithoutInfrastructureWithChanges.DeepCopy()},
 			want:     &scope.ControlPlaneState{Object: controlPlaneWithoutInfrastructureWithChanges.DeepCopy()},
 			wantErr:  false,
+		},
+		{
+			name:           "Should not update the ControlPlane if ControlPlane is pending upgrade",
+			class:          ccWithoutControlPlaneInfrastructure,
+			upgradeTracker: upgradeTrackerWithControlPlanePendingUpgrade,
+			original:       &scope.ControlPlaneState{Object: controlPlaneWithoutInfrastructure.DeepCopy()},
+			desired:        &scope.ControlPlaneState{Object: controlPlaneWithoutInfrastructureWithChanges.DeepCopy()},
+			want:           &scope.ControlPlaneState{Object: controlPlaneWithoutInfrastructure.DeepCopy()},
+			wantErr:        false,
 		},
 		{
 			name:                        "Should preserve external changes to ControlPlane without machine infrastructure",
@@ -1311,6 +1357,9 @@ func TestReconcileControlPlane(t *testing.T) {
 					Ref: contract.ObjToRef(tt.class.InfrastructureMachineTemplate),
 				}
 			}
+			if tt.upgradeTracker != nil {
+				s.UpgradeTracker = tt.upgradeTracker
+			}
 
 			s.Current.ControlPlane = &scope.ControlPlaneState{}
 			if tt.original != nil {
@@ -1384,12 +1433,12 @@ func TestReconcileControlPlane(t *testing.T) {
 
 			// Get the spec from the ControlPlaneObject we are expecting
 			wantControlPlaneObjectSpec, ok, err := unstructured.NestedMap(tt.want.Object.UnstructuredContent(), "spec")
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(ok).To(BeTrue())
 
 			// Get the spec from the ControlPlaneObject we got from the client.Get
 			gotControlPlaneObjectSpec, ok, err := unstructured.NestedMap(gotControlPlaneObject.UnstructuredContent(), "spec")
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(ok).To(BeTrue())
 
 			for k, v := range wantControlPlaneObjectSpec {
@@ -1407,7 +1456,7 @@ func TestReconcileControlPlane(t *testing.T) {
 				if gotRotation {
 					pattern := fmt.Sprintf("%s.*", controlPlaneInfrastructureMachineTemplateNamePrefix(s.Current.Cluster.Name))
 					ok, err := regexp.Match(pattern, []byte(gotInfrastructureMachineRef.Name))
-					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(err).ToNot(HaveOccurred())
 					g.Expect(ok).To(BeTrue())
 				}
 
@@ -1419,12 +1468,12 @@ func TestReconcileControlPlane(t *testing.T) {
 
 				// Get the spec from the InfrastructureMachineTemplate we are expecting
 				wantInfrastructureMachineTemplateSpec, ok, err := unstructured.NestedMap(tt.want.InfrastructureMachineTemplate.UnstructuredContent(), "spec")
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(ok).To(BeTrue())
 
 				// Get the spec from the InfrastructureMachineTemplate we got from the client.Get
 				gotInfrastructureMachineTemplateSpec, ok, err := unstructured.NestedMap(gotInfrastructureMachineTemplate.UnstructuredContent(), "spec")
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(ok).To(BeTrue())
 
 				// Compare all keys and values in the InfrastructureMachineTemplate Spec
@@ -1644,12 +1693,17 @@ func TestReconcileMachineDeployments(t *testing.T) {
 	bootstrapTemplate1 := builder.TestBootstrapTemplate(metav1.NamespaceDefault, "bootstrap-config-1").Build()
 	md1 := newFakeMachineDeploymentTopologyState("md-1", infrastructureMachineTemplate1, bootstrapTemplate1, nil)
 
+	upgradeTrackerWithMD1PendingCreate := scope.NewUpgradeTracker()
+	upgradeTrackerWithMD1PendingCreate.MachineDeployments.MarkPendingCreate("md-1-topology")
+
 	infrastructureMachineTemplate2 := builder.TestInfrastructureMachineTemplate(metav1.NamespaceDefault, "infrastructure-machine-2").Build()
 	bootstrapTemplate2 := builder.TestBootstrapTemplate(metav1.NamespaceDefault, "bootstrap-config-2").Build()
 	md2 := newFakeMachineDeploymentTopologyState("md-2", infrastructureMachineTemplate2, bootstrapTemplate2, nil)
 	infrastructureMachineTemplate2WithChanges := infrastructureMachineTemplate2.DeepCopy()
 	g.Expect(unstructured.SetNestedField(infrastructureMachineTemplate2WithChanges.Object, "foo", "spec", "template", "spec", "foo")).To(Succeed())
 	md2WithRotatedInfrastructureMachineTemplate := newFakeMachineDeploymentTopologyState("md-2", infrastructureMachineTemplate2WithChanges, bootstrapTemplate2, nil)
+	upgradeTrackerWithMD2PendingUpgrade := scope.NewUpgradeTracker()
+	upgradeTrackerWithMD2PendingUpgrade.MachineDeployments.MarkPendingUpgrade("md-2")
 
 	infrastructureMachineTemplate3 := builder.TestInfrastructureMachineTemplate(metav1.NamespaceDefault, "infrastructure-machine-3").Build()
 	bootstrapTemplate3 := builder.TestBootstrapTemplate(metav1.NamespaceDefault, "bootstrap-config-3").Build()
@@ -1724,7 +1778,9 @@ func TestReconcileMachineDeployments(t *testing.T) {
 	tests := []struct {
 		name                                      string
 		current                                   []*scope.MachineDeploymentState
+		currentOnlyAPIServer                      []*scope.MachineDeploymentState
 		desired                                   []*scope.MachineDeploymentState
+		upgradeTracker                            *scope.UpgradeTracker
 		want                                      []*scope.MachineDeploymentState
 		wantInfrastructureMachineTemplateRotation map[string]bool
 		wantBootstrapTemplateRotation             map[string]bool
@@ -1736,6 +1792,22 @@ func TestReconcileMachineDeployments(t *testing.T) {
 			desired: []*scope.MachineDeploymentState{md1},
 			want:    []*scope.MachineDeploymentState{md1},
 			wantErr: false,
+		},
+		{
+			name:                 "Should skip creating desired MachineDeployment if it already exists in the apiserver (even if it is not in current state)",
+			current:              nil,
+			currentOnlyAPIServer: []*scope.MachineDeploymentState{md1},
+			desired:              []*scope.MachineDeploymentState{md1},
+			want:                 []*scope.MachineDeploymentState{md1},
+			wantErr:              false,
+		},
+		{
+			name:           "Should not create desired MachineDeployment if the current does not exists yet and it marked as pending create",
+			current:        nil,
+			upgradeTracker: upgradeTrackerWithMD1PendingCreate,
+			desired:        []*scope.MachineDeploymentState{md1},
+			want:           nil,
+			wantErr:        false,
 		},
 		{
 			name:    "No-op if current MachineDeployment is equal to desired",
@@ -1750,6 +1822,15 @@ func TestReconcileMachineDeployments(t *testing.T) {
 			desired: []*scope.MachineDeploymentState{md2WithRotatedInfrastructureMachineTemplate},
 			want:    []*scope.MachineDeploymentState{md2WithRotatedInfrastructureMachineTemplate},
 			wantInfrastructureMachineTemplateRotation: map[string]bool{"md-2": true},
+			wantErr: false,
+		},
+		{
+			name:           "Should not update MachineDeployment if MachineDeployment is pending upgrade",
+			current:        []*scope.MachineDeploymentState{md2},
+			desired:        []*scope.MachineDeploymentState{md2WithRotatedInfrastructureMachineTemplate},
+			upgradeTracker: upgradeTrackerWithMD2PendingUpgrade,
+			want:           []*scope.MachineDeploymentState{md2},
+			wantInfrastructureMachineTemplateRotation: map[string]bool{"md-2": false},
 			wantErr: false,
 		},
 		{
@@ -1844,13 +1925,28 @@ func TestReconcileMachineDeployments(t *testing.T) {
 			}
 
 			currentMachineDeploymentStates := toMachineDeploymentTopologyStateMap(tt.current)
-			s := scope.New(builder.Cluster(metav1.NamespaceDefault, "cluster-1").Build())
+			s := scope.New(builder.Cluster(namespace.GetName(), "cluster-1").Build())
 			s.Current.MachineDeployments = currentMachineDeploymentStates
+
+			// currentOnlyAPIServer MDs only exist in the APIserver but are not part of s.Current.
+			// This simulates that getCurrentMachineDeploymentState in current_state.go read a stale MD list.
+			for _, s := range tt.currentOnlyAPIServer {
+				mdState := prepareMachineDeploymentState(s, namespace.GetName())
+
+				g.Expect(env.PatchAndWait(ctx, mdState.InfrastructureMachineTemplate, client.ForceOwnership, client.FieldOwner(structuredmerge.TopologyManagerName))).To(Succeed())
+				g.Expect(env.PatchAndWait(ctx, mdState.BootstrapTemplate, client.ForceOwnership, client.FieldOwner(structuredmerge.TopologyManagerName))).To(Succeed())
+				g.Expect(env.PatchAndWait(ctx, mdState.Object, client.ForceOwnership, client.FieldOwner(structuredmerge.TopologyManagerName))).To(Succeed())
+			}
 
 			s.Desired = &scope.ClusterState{MachineDeployments: toMachineDeploymentTopologyStateMap(tt.desired)}
 
+			if tt.upgradeTracker != nil {
+				s.UpgradeTracker = tt.upgradeTracker
+			}
+
 			r := Reconciler{
-				Client:             env,
+				Client:             env.GetClient(),
+				APIReader:          env.GetAPIReader(),
 				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
@@ -1864,6 +1960,11 @@ func TestReconcileMachineDeployments(t *testing.T) {
 			var gotMachineDeploymentList clusterv1.MachineDeploymentList
 			g.Expect(env.GetAPIReader().List(ctx, &gotMachineDeploymentList, &client.ListOptions{Namespace: namespace.GetName()})).To(Succeed())
 			g.Expect(gotMachineDeploymentList.Items).To(HaveLen(len(tt.want)))
+
+			if tt.want == nil {
+				// No machine deployments should exist.
+				g.Expect(gotMachineDeploymentList.Items).To(BeEmpty())
+			}
 
 			for _, wantMachineDeploymentState := range tt.want {
 				for _, gotMachineDeployment := range gotMachineDeploymentList.Items {
@@ -2595,7 +2696,8 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 			s.Desired = &scope.ClusterState{MachineDeployments: toMachineDeploymentTopologyStateMap(tt.desired)}
 
 			r := Reconciler{
-				Client:             env,
+				Client:             env.GetClient(),
+				APIReader:          env.GetAPIReader(),
 				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
@@ -2631,7 +2733,10 @@ func newFakeMachineDeploymentTopologyState(name string, infrastructureMachineTem
 		Object: builder.MachineDeployment(metav1.NamespaceDefault, name).
 			WithInfrastructureTemplate(infrastructureMachineTemplate).
 			WithBootstrapTemplate(bootstrapTemplate).
-			WithLabels(map[string]string{clusterv1.ClusterTopologyMachineDeploymentNameLabel: name + "-topology"}).
+			WithLabels(map[string]string{
+				clusterv1.ClusterTopologyMachineDeploymentNameLabel: name + "-topology",
+				clusterv1.ClusterTopologyOwnedLabel:                 "",
+			}).
 			WithClusterName("cluster-1").
 			WithReplicas(1).
 			WithDefaulter(true).
