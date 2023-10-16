@@ -248,11 +248,13 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 
 			g := NewWithT(t)
 
+			warnings, err := tt.kcp.ValidateCreate()
 			if tt.expectErr {
-				g.Expect(tt.kcp.ValidateCreate()).NotTo(Succeed())
+				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(tt.kcp.ValidateCreate()).To(Succeed())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }
@@ -669,6 +671,11 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 		{"/var/lib/testdir", "/var/lib/etcd/data"},
 	}
 
+	beforeUseExperimentalRetryJoin := before.DeepCopy()
+	beforeUseExperimentalRetryJoin.Spec.KubeadmConfigSpec.UseExperimentalRetryJoin = true //nolint:staticcheck
+	updateUseExperimentalRetryJoin := before.DeepCopy()
+	updateUseExperimentalRetryJoin.Spec.KubeadmConfigSpec.UseExperimentalRetryJoin = false //nolint:staticcheck
+
 	tests := []struct {
 		name                  string
 		enableIgnitionFeature bool
@@ -1014,6 +1021,12 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			before:                before,
 			kcp:                   switchFromCloudInitToIgnition,
 		},
+		{
+			name:      "should allow changes to useExperimentalRetryJoin",
+			expectErr: false,
+			before:    beforeUseExperimentalRetryJoin,
+			kcp:       updateUseExperimentalRetryJoin,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1026,12 +1039,13 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 
 			g := NewWithT(t)
 
-			err := tt.kcp.ValidateUpdate(tt.before.DeepCopy())
+			warnings, err := tt.kcp.ValidateUpdate(tt.before.DeepCopy())
 			if tt.expectErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
 				g.Expect(err).To(Succeed())
 			}
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }
@@ -1231,7 +1245,7 @@ func TestKubeadmControlPlaneValidateUpdateAfterDefaulting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			err := tt.kcp.ValidateUpdate(tt.before.DeepCopy())
+			warnings, err := tt.kcp.ValidateUpdate(tt.before.DeepCopy())
 			if tt.expectErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
@@ -1242,6 +1256,7 @@ func TestKubeadmControlPlaneValidateUpdateAfterDefaulting(t *testing.T) {
 				g.Expect(tt.kcp.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
 				g.Expect(tt.kcp.Spec.Replicas).To(Equal(pointer.Int32(1)))
 			}
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }

@@ -30,6 +30,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	kubedrain "k8s.io/kubectl/pkg/drain"
@@ -40,7 +41,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
@@ -55,11 +55,6 @@ import (
 	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
-)
-
-const (
-	// controllerName defines the controller used when creating clients.
-	controllerName = "machine-controller"
 )
 
 var (
@@ -79,12 +74,16 @@ var (
 
 // Reconciler reconciles a Machine object.
 type Reconciler struct {
-	Client    client.Client
-	APIReader client.Reader
-	Tracker   *remote.ClusterCacheTracker
+	Client                    client.Client
+	UnstructuredCachingClient client.Client
+	APIReader                 client.Reader
+	Tracker                   *remote.ClusterCacheTracker
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
+
+	// NodeDrainClientTimeout timeout of the client used for draining nodes.
+	NodeDrainClientTimeout time.Duration
 
 	controller      controller.Controller
 	recorder        record.EventRecorder
@@ -97,7 +96,7 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
-	clusterToMachines, err := util.ClusterToObjectsMapper(mgr.GetClient(), &clusterv1.MachineList{}, mgr.GetScheme())
+	clusterToMachines, err := util.ClusterToTypedObjectsMapper(mgr.GetClient(), &clusterv1.MachineList{}, mgr.GetScheme())
 	if err != nil {
 		return err
 	}
@@ -111,7 +110,7 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}},
+			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(clusterToMachines),
 			builder.WithPredicates(
 				// TODO: should this wait for Cluster.Status.InfrastructureReady similar to Infra Machine resources?
@@ -129,10 +128,10 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 	}
 
 	r.controller = c
-
 	r.recorder = mgr.GetEventRecorderFor("machine-controller")
 	r.externalTracker = external.ObjectTracker{
 		Controller: c,
+		Cache:      mgr.GetCache(),
 	}
 	r.ssaCache = ssa.NewCache()
 	return nil
@@ -200,12 +199,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 	}
 	m.Labels[clusterv1.ClusterNameLabel] = m.Spec.ClusterName
 
-	// Add finalizer first if not exist to avoid the race condition between init and delete
-	if !controllerutil.ContainsFinalizer(m, clusterv1.MachineFinalizer) {
-		controllerutil.AddFinalizer(m, clusterv1.MachineFinalizer)
-		return ctrl.Result{}, nil
-	}
-
 	// Handle deletion reconciliation loop.
 	if !m.ObjectMeta.DeletionTimestamp.IsZero() {
 		res, err := r.reconcileDelete(ctx, cluster, m)
@@ -216,6 +209,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 			return ctrl.Result{Requeue: true}, nil
 		}
 		return res, err
+	}
+
+	// Add finalizer first if not set to avoid the race condition between init and delete.
+	// Note: Finalizers in general can only be added when the deletionTimestamp is not set.
+	if !controllerutil.ContainsFinalizer(m, clusterv1.MachineFinalizer) {
+		controllerutil.AddFinalizer(m, clusterv1.MachineFinalizer)
+		return ctrl.Result{}, nil
 	}
 
 	// Handle normal reconciliation loop.
@@ -279,19 +279,22 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 		}))
 	}
 
-	phases := []func(context.Context, *clusterv1.Cluster, *clusterv1.Machine) (ctrl.Result, error){
+	phases := []func(context.Context, *scope) (ctrl.Result, error){
 		r.reconcileBootstrap,
 		r.reconcileInfrastructure,
 		r.reconcileNode,
-		r.reconcileInterruptibleNodeLabel,
 		r.reconcileCertificateExpiry,
 	}
 
 	res := ctrl.Result{}
 	errs := []error{}
+	s := &scope{
+		cluster: cluster,
+		machine: m,
+	}
 	for _, phase := range phases {
 		// Call the inner reconciliation methods.
-		phaseResult, err := phase(ctx, cluster, m)
+		phaseResult, err := phase(ctx, s)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -301,6 +304,25 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 		res = util.LowestNonZeroResult(res, phaseResult)
 	}
 	return res, kerrors.NewAggregate(errs)
+}
+
+// scope holds the different objects that are read and used during the reconcile.
+type scope struct {
+	// cluster is the Cluster object the Machine belongs to.
+	// It is set at the beginning of the reconcile function.
+	cluster *clusterv1.Cluster
+
+	// machine is the Machine object. It is set at the beginning
+	// of the reconcile function.
+	machine *clusterv1.Machine
+
+	// infraMachine is the Infrastructure Machine object that is referenced by the
+	// Machine. It is set after reconcileInfrastructure is called.
+	infraMachine *unstructured.Unstructured
+
+	// bootstrapConfig is the BootstrapConfig object that is referenced by the
+	// Machine. It is set after reconcileBootstrap is called.
+	bootstrapConfig *unstructured.Unstructured
 }
 
 func (r *Reconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, m *clusterv1.Machine) (ctrl.Result, error) { //nolint:gocyclo
@@ -429,7 +451,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Clu
 		log.Info("Deleting node", "Node", klog.KRef("", m.Status.NodeRef.Name))
 
 		var deleteNodeErr error
-		waitErr := wait.PollImmediate(2*time.Second, r.nodeDeletionRetryTimeout, func() (bool, error) {
+		waitErr := wait.PollUntilContextTimeout(ctx, 2*time.Second, r.nodeDeletionRetryTimeout, true, func(ctx context.Context) (bool, error) {
 			if deleteNodeErr = r.deleteNode(ctx, cluster, m.Status.NodeRef.Name); deleteNodeErr != nil && !apierrors.IsNotFound(errors.Cause(deleteNodeErr)) {
 				return false, nil
 			}
@@ -580,11 +602,13 @@ func (r *Reconciler) isDeleteNodeAllowed(ctx context.Context, cluster *clusterv1
 func (r *Reconciler) drainNode(ctx context.Context, cluster *clusterv1.Cluster, nodeName string) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx, "Node", klog.KRef("", nodeName))
 
-	restConfig, err := remote.RESTConfig(ctx, controllerName, r.Client, util.ObjectKey(cluster))
+	restConfig, err := r.Tracker.GetRESTConfig(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		log.Error(err, "Error creating a remote client while deleting Machine, won't retry")
 		return ctrl.Result{}, nil
 	}
+	restConfig = rest.CopyConfig(restConfig)
+	restConfig.Timeout = r.NodeDrainClientTimeout
 	kubeClient, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		log.Error(err, "Error creating a remote client while deleting Machine, won't retry")
@@ -739,7 +763,7 @@ func (r *Reconciler) reconcileDeleteExternal(ctx context.Context, m *clusterv1.M
 	}
 
 	// get the external object
-	obj, err := external.Get(ctx, r.Client, ref, m.Namespace)
+	obj, err := external.Get(ctx, r.UnstructuredCachingClient, ref, m.Namespace)
 	if err != nil && !apierrors.IsNotFound(errors.Cause(err)) {
 		return nil, errors.Wrapf(err, "failed to get %s %q for Machine %q in namespace %q",
 			ref.GroupVersionKind(), ref.Name, m.Name, m.Namespace)
@@ -802,7 +826,7 @@ func (r *Reconciler) watchClusterNodes(ctx context.Context, cluster *clusterv1.C
 	})
 }
 
-func (r *Reconciler) nodeToMachine(o client.Object) []reconcile.Request {
+func (r *Reconciler) nodeToMachine(ctx context.Context, o client.Object) []reconcile.Request {
 	node, ok := o.(*corev1.Node)
 	if !ok {
 		panic(fmt.Sprintf("Expected a Node but got a %T", o))
@@ -824,7 +848,7 @@ func (r *Reconciler) nodeToMachine(o client.Object) []reconcile.Request {
 	// Match by nodeName and status.nodeRef.name.
 	machineList := &clusterv1.MachineList{}
 	if err := r.Client.List(
-		context.TODO(),
+		ctx,
 		machineList,
 		append(filters, client.MatchingFields{index.MachineNodeNameField: node.Name})...); err != nil {
 		return nil
@@ -837,15 +861,14 @@ func (r *Reconciler) nodeToMachine(o client.Object) []reconcile.Request {
 
 	// Otherwise let's match by providerID. This is useful when e.g the NodeRef has not been set yet.
 	// Match by providerID
-	nodeProviderID, err := noderefutil.NewProviderID(node.Spec.ProviderID)
-	if err != nil {
+	if node.Spec.ProviderID == "" {
 		return nil
 	}
 	machineList = &clusterv1.MachineList{}
 	if err := r.Client.List(
-		context.TODO(),
+		ctx,
 		machineList,
-		append(filters, client.MatchingFields{index.MachineProviderIDField: nodeProviderID.IndexKey()})...); err != nil {
+		append(filters, client.MatchingFields{index.MachineProviderIDField: node.Spec.ProviderID})...); err != nil {
 		return nil
 	}
 

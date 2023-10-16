@@ -17,6 +17,7 @@ limitations under the License.
 package config
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,17 +27,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adrg/xdg"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
-	"k8s.io/client-go/util/homedir"
 
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 )
 
 const (
-	// ConfigFolder defines the name of the config folder under $home.
+	// ConfigFolder defines the old name of the config folder under $HOME.
 	ConfigFolder = ".cluster-api"
-	// ConfigName defines the name of the config file under ConfigFolder.
+	// ConfigFolderXDG defines the name of the config folder under $XDG_CONFIG_HOME.
+	ConfigFolderXDG = "cluster-api"
+	// ConfigName defines the name of the config file under ConfigFolderXDG.
 	ConfigName = "clusterctl"
 	// DownloadConfigFile is the config file when fetching the config from a remote location.
 	DownloadConfigFile = "clusterctl-download.yaml"
@@ -57,14 +60,18 @@ func injectConfigPaths(configPaths []string) viperReaderOption {
 }
 
 // newViperReader returns a viperReader.
-func newViperReader(opts ...viperReaderOption) Reader {
+func newViperReader(opts ...viperReaderOption) (Reader, error) {
+	configDirectory, err := xdg.ConfigFile(ConfigFolderXDG)
+	if err != nil {
+		return nil, err
+	}
 	vr := &viperReader{
-		configPaths: []string{filepath.Join(homedir.HomeDir(), ConfigFolder)},
+		configPaths: []string{configDirectory, filepath.Join(xdg.Home, ConfigFolder)},
 	}
 	for _, o := range opts {
 		o(vr)
 	}
-	return vr
+	return vr, nil
 }
 
 // Init initialize the viperReader.
@@ -88,15 +95,17 @@ func (v *viperReader) Init(path string) error {
 
 		switch {
 		case url.Scheme == "https" || url.Scheme == "http":
-			configPath := filepath.Join(homedir.HomeDir(), ConfigFolder)
+			var configDirectory string
 			if len(v.configPaths) > 0 {
-				configPath = v.configPaths[0]
-			}
-			if err := os.MkdirAll(configPath, os.ModePerm); err != nil {
-				return err
+				configDirectory = v.configPaths[0]
+			} else {
+				configDirectory, err = xdg.ConfigFile(ConfigFolderXDG)
+				if err != nil {
+					return err
+				}
 			}
 
-			downloadConfigFile := filepath.Join(configPath, DownloadConfigFile)
+			downloadConfigFile := filepath.Join(configDirectory, DownloadConfigFile)
 			err = downloadFile(url.String(), downloadConfigFile)
 			if err != nil {
 				return err
@@ -111,14 +120,14 @@ func (v *viperReader) Init(path string) error {
 			viper.SetConfigFile(path)
 		}
 	} else {
-		// Checks if there is a default .cluster-api/clusterctl{.extension} file in home directory
+		// Checks if there is a default $XDG_CONFIG_HOME/cluster-api/clusterctl{.extension} or $HOME/.cluster-api/clusterctl{.extension} file
 		if !v.checkDefaultConfig() {
 			// since there is no default config to read from, just skip
 			// reading in config
 			log.V(5).Info("No default config file available")
 			return nil
 		}
-		// Configure viper for reading .cluster-api/clusterctl{.extension} in home directory
+		// Configure viper for reading $XDG_CONFIG_HOME/cluster-api/clusterctl{.extension} or $HOME/.cluster-api/clusterctl{.extension} file
 		viper.SetConfigName(ConfigName)
 		for _, p := range v.configPaths {
 			viper.AddConfigPath(p)
@@ -133,8 +142,10 @@ func (v *viperReader) Init(path string) error {
 }
 
 func downloadFile(url string, filepath string) error {
+	ctx := context.TODO()
+
 	// Create the file
-	out, err := os.Create(filepath)
+	out, err := os.Create(filepath) //nolint:gosec // No security issue: filepath is safe.
 	if err != nil {
 		return errors.Wrapf(err, "failed to create the clusterctl config file %s", filepath)
 	}
@@ -144,7 +155,12 @@ func downloadFile(url string, filepath string) error {
 		Timeout: 30 * time.Second,
 	}
 	// Get the data
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return errors.Wrapf(err, "failed to download the clusterctl config file from %s: failed to create request", url)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return errors.Wrapf(err, "failed to download the clusterctl config file from %s", url)
 	}

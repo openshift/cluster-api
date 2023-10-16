@@ -105,7 +105,7 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "3",
+						AutoscalerMinSizeAnnotation: "3",
 					},
 				},
 			},
@@ -116,7 +116,7 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMaxSize: "7",
+						AutoscalerMaxSizeAnnotation: "7",
 					},
 				},
 			},
@@ -127,8 +127,8 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "abc",
-						autoscalerMaxSize: "7",
+						AutoscalerMinSizeAnnotation: "abc",
+						AutoscalerMaxSizeAnnotation: "7",
 					},
 				},
 			},
@@ -139,8 +139,8 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "3",
-						autoscalerMaxSize: "abc",
+						AutoscalerMinSizeAnnotation: "3",
+						AutoscalerMaxSizeAnnotation: "abc",
 					},
 				},
 			},
@@ -151,8 +151,8 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "3",
-						autoscalerMaxSize: "7",
+						AutoscalerMinSizeAnnotation: "3",
+						AutoscalerMaxSizeAnnotation: "7",
 					},
 				},
 			},
@@ -163,8 +163,8 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "3",
-						autoscalerMaxSize: "7",
+						AutoscalerMinSizeAnnotation: "3",
+						AutoscalerMaxSizeAnnotation: "7",
 					},
 				},
 			},
@@ -176,8 +176,8 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "3",
-						autoscalerMaxSize: "7",
+						AutoscalerMinSizeAnnotation: "3",
+						AutoscalerMaxSizeAnnotation: "7",
 					},
 				},
 			},
@@ -193,8 +193,8 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "3",
-						autoscalerMaxSize: "7",
+						AutoscalerMinSizeAnnotation: "3",
+						AutoscalerMaxSizeAnnotation: "7",
 					},
 				},
 			},
@@ -210,8 +210,8 @@ func TestCalculateMachineDeploymentReplicas(t *testing.T) {
 			newMD: &MachineDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						autoscalerMinSize: "3",
-						autoscalerMaxSize: "7",
+						AutoscalerMinSizeAnnotation: "3",
+						AutoscalerMaxSizeAnnotation: "7",
 					},
 				},
 			},
@@ -393,11 +393,19 @@ func TestMachineDeploymentValidation(t *testing.T) {
 				},
 			}
 			if tt.expectErr {
-				g.Expect(md.ValidateCreate()).NotTo(Succeed())
-				g.Expect(md.ValidateUpdate(md)).NotTo(Succeed())
+				warnings, err := md.ValidateCreate()
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = md.ValidateUpdate(md)
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			} else {
-				g.Expect(md.ValidateCreate()).To(Succeed())
-				g.Expect(md.ValidateUpdate(md)).To(Succeed())
+				warnings, err := md.ValidateCreate()
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = md.ValidateUpdate(md)
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			}
 		})
 	}
@@ -452,11 +460,19 @@ func TestMachineDeploymentVersionValidation(t *testing.T) {
 			}
 
 			if tt.expectErr {
-				g.Expect(md.ValidateCreate()).NotTo(Succeed())
-				g.Expect(md.ValidateUpdate(md)).NotTo(Succeed())
+				warnings, err := md.ValidateCreate()
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = md.ValidateUpdate(md)
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			} else {
-				g.Expect(md.ValidateCreate()).To(Succeed())
-				g.Expect(md.ValidateUpdate(md)).To(Succeed())
+				warnings, err := md.ValidateCreate()
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = md.ValidateUpdate(md)
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			}
 		})
 	}
@@ -499,11 +515,13 @@ func TestMachineDeploymentClusterNameImmutable(t *testing.T) {
 				},
 			}
 
+			warnings, err := newMD.ValidateUpdate(oldMD)
 			if tt.expectErr {
-				g.Expect(newMD.ValidateUpdate(oldMD)).NotTo(Succeed())
+				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(newMD.ValidateUpdate(oldMD)).To(Succeed())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }
@@ -530,18 +548,24 @@ func defaultValidateTestCustomDefaulter(object admission.Validator, customDefaul
 		t.Run("validate-on-create", func(t *testing.T) {
 			g := NewWithT(t)
 			g.Expect(customDefaulter.Default(ctx, createCopy)).To(Succeed())
-			g.Expect(createCopy.ValidateCreate()).To(Succeed())
+			warnings, err := createCopy.ValidateCreate()
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(warnings).To(BeEmpty())
 		})
 		t.Run("validate-on-update", func(t *testing.T) {
 			g := NewWithT(t)
 			g.Expect(customDefaulter.Default(ctx, defaultingUpdateCopy)).To(Succeed())
 			g.Expect(customDefaulter.Default(ctx, updateCopy)).To(Succeed())
-			g.Expect(defaultingUpdateCopy.ValidateUpdate(updateCopy)).To(Succeed())
+			warnings, err := defaultingUpdateCopy.ValidateUpdate(updateCopy)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(warnings).To(BeEmpty())
 		})
 		t.Run("validate-on-delete", func(t *testing.T) {
 			g := NewWithT(t)
 			g.Expect(customDefaulter.Default(ctx, deleteCopy)).To(Succeed())
-			g.Expect(deleteCopy.ValidateDelete()).To(Succeed())
+			warnings, err := deleteCopy.ValidateDelete()
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }

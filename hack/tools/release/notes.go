@@ -22,12 +22,16 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,12 +63,45 @@ var (
 		unknown,
 	}
 
+	repo = flag.String("repository", "kubernetes-sigs/cluster-api", "The tag or commit to start from.")
+
 	fromTag = flag.String("from", "", "The tag or commit to start from.")
 
-	since = flag.String("since", "", "Include commits starting from and including this date. Accepts format: YYYY-MM-DD")
-	until = flag.String("until", "", "Include commits up to and including this date. Accepts format: YYYY-MM-DD")
+	since      = flag.String("since", "", "Include commits starting from and including this date. Accepts format: YYYY-MM-DD")
+	until      = flag.String("until", "", "Include commits up to and including this date. Accepts format: YYYY-MM-DD")
+	numWorkers = flag.Int("workers", 10, "Number of concurrent routines to process PR entries. If running into GitHub rate limiting, use 1.")
+
+	prefixAreaLabel = flag.Bool("prefix-area-label", true, "If enabled, will prefix the area label.")
+
+	addKubernetesVersionSupport = flag.Bool("add-kubernetes-version-support", true, "If enabled, will add the Kubernetes version support header.")
 
 	tagRegex = regexp.MustCompile(`^\[release-[\w-\.]*\]`)
+
+	userFriendlyAreas = map[string]string{
+		"e2e-testing":                       "e2e",
+		"provider/control-plane-kubeadm":    "KCP",
+		"provider/infrastructure-docker":    "CAPD",
+		"dependency":                        "Dependency",
+		"devtools":                          "Devtools",
+		"machine":                           "Machine",
+		"api":                               "API",
+		"machinepool":                       "MachinePool",
+		"clustercachetracker":               "ClusterCacheTracker",
+		"clusterclass":                      "ClusterClass",
+		"testing":                           "Testing",
+		"release":                           "Release",
+		"machineset":                        "MachineSet",
+		"clusterresourceset":                "ClusterResourceSet",
+		"machinedeployment":                 "MachineDeployment",
+		"ipam":                              "IPAM",
+		"provider/bootstrap-kubeadm":        "CAPBK",
+		"provider/infrastructure-in-memory": "CAPIM",
+		"provider/core":                     "Core",
+		"runtime-sdk":                       "Runtime SDK",
+		"ci":                                "CI",
+	}
+
+	releaseBackportMarker = regexp.MustCompile(`(?m)^\[release-\d\.\d\]\s*`)
 )
 
 func main() {
@@ -104,7 +141,75 @@ func increaseDateByOneDay(date string) (string, error) {
 	return datetime.Format(layout), nil
 }
 
+const (
+	missingAreaLabelPrefix   = "MISSING_AREA"
+	areaLabelPrefix          = "area/"
+	multipleAreaLabelsPrefix = "MULTIPLE_AREAS["
+	documentationAreaLabel   = "documentation"
+)
+
+type githubPullRequest struct {
+	Labels []githubLabel `json:"labels"`
+}
+
+type githubLabel struct {
+	Name string `json:"name"`
+}
+
+func getAreaLabel(merge string) (string, error) {
+	// Get pr id from merge commit
+	prID := strings.Replace(strings.TrimSpace(strings.Split(merge, " ")[3]), "#", "", -1)
+
+	cmd := exec.Command("gh", "api", fmt.Sprintf("repos/%s/pulls/%s", *repo, prID)) //nolint:gosec
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s: %v", string(out), err)
+	}
+
+	pr := &githubPullRequest{}
+	if err := json.Unmarshal(out, pr); err != nil {
+		return "", err
+	}
+
+	var areaLabels []string
+	for _, label := range pr.Labels {
+		if area, ok := trimAreaLabel(label.Name); ok {
+			areaLabels = append(areaLabels, area)
+		}
+	}
+
+	switch len(areaLabels) {
+	case 0:
+		return missingAreaLabelPrefix, nil
+	case 1:
+		area := areaLabels[0]
+		if userFriendlyArea, ok := userFriendlyAreas[area]; ok {
+			area = userFriendlyArea
+		}
+		return area, nil
+	default:
+		return multipleAreaLabelsPrefix + strings.Join(areaLabels, "|") + "]", nil
+	}
+}
+
+// trimAreaLabel removes the "area/" prefix from area labels and returns it.
+// If the label is an area label, the second return value is true, otherwise false.
+func trimAreaLabel(label string) (string, bool) {
+	trimmed := strings.TrimPrefix(label, areaLabelPrefix)
+	if len(trimmed) < len(label) {
+		return trimmed, true
+	}
+
+	return label, false
+}
+
 func run() int {
+	if err := ensureInstalledDependencies(); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
 	var commitRange string
 	var cmd *exec.Cmd
 
@@ -157,58 +262,86 @@ func run() int {
 		}
 	}
 
-	for _, c := range commits {
-		body := trimTitle(c.body)
-		var key, prNumber, fork string
-		switch {
-		case strings.HasPrefix(body, ":sparkles:"), strings.HasPrefix(body, "✨"):
-			key = features
-			body = strings.TrimPrefix(body, ":sparkles:")
-			body = strings.TrimPrefix(body, "✨")
-		case strings.HasPrefix(body, ":bug:"), strings.HasPrefix(body, "🐛"):
-			key = bugs
-			body = strings.TrimPrefix(body, ":bug:")
-			body = strings.TrimPrefix(body, "🐛")
-		case strings.HasPrefix(body, ":book:"), strings.HasPrefix(body, "📖"):
-			key = documentation
-			body = strings.TrimPrefix(body, ":book:")
-			body = strings.TrimPrefix(body, "📖")
-			if strings.Contains(body, "CAEP") || strings.Contains(body, "proposal") {
-				key = proposals
-			}
-		case strings.HasPrefix(body, ":seedling:"), strings.HasPrefix(body, "🌱"):
-			key = other
-			body = strings.TrimPrefix(body, ":seedling:")
-			body = strings.TrimPrefix(body, "🌱")
-		case strings.HasPrefix(body, ":warning:"), strings.HasPrefix(body, "⚠️"):
-			key = warning
-			body = strings.TrimPrefix(body, ":warning:")
-			body = strings.TrimPrefix(body, "⚠️")
-		default:
-			key = unknown
-		}
+	results := make(chan releaseNoteEntryResult)
+	commitCh := make(chan *commit)
+	var wg sync.WaitGroup
 
-		body = strings.TrimSpace(body)
-		if body == "" {
-			continue
-		}
-		body = fmt.Sprintf("- %s", body)
-		_, _ = fmt.Sscanf(c.merge, "Merge pull request %s from %s", &prNumber, &fork)
-		if key == documentation {
-			merges[key] = append(merges[key], prNumber)
-			continue
-		}
-		merges[key] = append(merges[key], formatMerge(body, prNumber))
+	wg.Add(*numWorkers)
+	for i := 0; i < *numWorkers; i++ {
+		go func() {
+			for commit := range commitCh {
+				processed := releaseNoteEntryResult{}
+				processed.prEntry, processed.err = generateReleaseNoteEntry(commit)
+				results <- processed
+			}
+			wg.Done()
+		}()
 	}
 
-	// TODO Turn this into a link (requires knowing the project name + organization)
-	fmt.Printf("Changes since %v\n---\n", commitRange)
+	go func() {
+		for _, c := range commits {
+			commitCh <- c
+		}
+		close(commitCh)
+	}()
 
-	fmt.Printf("## :chart_with_upwards_trend: Fun stats\n")
-	fmt.Printf("- %d new commits merged\n", len(commits))
-	fmt.Printf("- %d breaking changes :warning:\n", len(merges[warning]))
-	fmt.Printf("- %d feature additions ✨\n", len(merges[features]))
-	fmt.Printf("- %d bugs fixed 🐛\n", len(merges[bugs]))
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for result := range results {
+		if result.err != nil {
+			fmt.Println(result.err)
+			os.Exit(0)
+		}
+
+		if result.prEntry.title == "" {
+			continue
+		}
+
+		if result.prEntry.section == documentation {
+			merges[result.prEntry.section] = append(merges[result.prEntry.section], result.prEntry.prNumber)
+		} else {
+			merges[result.prEntry.section] = append(merges[result.prEntry.section], result.prEntry.title)
+		}
+	}
+
+	if *addKubernetesVersionSupport {
+		// TODO Turn this into a link (requires knowing the project name + organization)
+		fmt.Print(`## 👌 Kubernetes version support
+
+- Management Cluster: v1.**X**.x -> v1.**X**.x
+- Workload Cluster: v1.**X**.x -> v1.**X**.x
+
+[More information about version support can be found here](https://cluster-api.sigs.k8s.io/reference/versions.html)
+
+`)
+	}
+
+	fmt.Printf("## Changes since %v\n---\n", commitRange)
+
+	fmt.Printf("## :chart_with_upwards_trend: Overview\n")
+	if count := len(commits); count == 1 {
+		fmt.Println("- 1 new commit merged")
+	} else if count > 1 {
+		fmt.Printf("- %d new commits merged\n", count)
+	}
+	if count := len(merges[warning]); count == 1 {
+		fmt.Println("- 1 breaking change :warning:")
+	} else if count > 1 {
+		fmt.Printf("- %d breaking changes :warning:\n", count)
+	}
+	if count := len(merges[features]); count == 1 {
+		fmt.Println("- 1 feature addition ✨")
+	} else if count > 1 {
+		fmt.Printf("- %d feature additions ✨\n", count)
+	}
+	if count := len(merges[bugs]); count == 1 {
+		fmt.Println("- 1 bug fixed 🐛")
+	} else if count > 1 {
+		fmt.Printf("- %d bugs fixed 🐛\n", count)
+	}
 	fmt.Println()
 
 	for _, key := range outputOrder {
@@ -219,13 +352,25 @@ func run() int {
 
 		switch key {
 		case documentation:
-			fmt.Printf(
-				":book: Additionally, there have been %d contributions to our documentation and book. (%s) \n\n",
-				len(mergeslice),
-				strings.Join(mergeslice, ", "),
-			)
+			if len(mergeslice) == 1 {
+				fmt.Printf(
+					":book: Additionally, there has been 1 contribution to our documentation and book. (%s) \n\n",
+					mergeslice[0],
+				)
+			} else {
+				fmt.Printf(
+					":book: Additionally, there have been %d contributions to our documentation and book. (%s) \n\n",
+					len(mergeslice),
+					strings.Join(mergeslice, ", "),
+				)
+			}
 		default:
 			fmt.Println("## " + key)
+			sort.Slice(mergeslice, func(i int, j int) bool {
+				str1 := strings.ToLower(mergeslice[i])
+				str2 := strings.ToLower(mergeslice[j])
+				return str1 < str2
+			})
 			for _, merge := range mergeslice {
 				fmt.Println(merge)
 			}
@@ -256,4 +401,111 @@ func formatMerge(line, prNumber string) string {
 		return line
 	}
 	return fmt.Sprintf("%s (%s)", line, prNumber)
+}
+
+func ensureInstalledDependencies() error {
+	if !commandExists("git") {
+		return errors.New("git not available. Git is required to be present in the PATH")
+	}
+
+	if !commandExists("gh") {
+		return errors.New("gh GitHub CLI not available. GitHub CLI is required to be present in the PATH. Refer to https://cli.github.com/ for installation")
+	}
+
+	return nil
+}
+
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+// releaseNoteEntryResult is the result of processing a PR to create a release note item.
+// Used to aggregate the line item and error when processing concurrently.
+type releaseNoteEntryResult struct {
+	prEntry *releaseNoteEntry
+	err     error
+}
+
+// releaseNoteEntry represents a line item in the release notes.
+type releaseNoteEntry struct {
+	title    string
+	section  string
+	prNumber string
+}
+
+// generateReleaseNoteEntry processes a commit into a PR line item for the release notes.
+func generateReleaseNoteEntry(c *commit) (*releaseNoteEntry, error) {
+	entry := &releaseNoteEntry{}
+	entry.title = trimTitle(c.body)
+	var fork string
+
+	var area string
+	if *prefixAreaLabel {
+		var err error
+		area, err = getAreaLabel(c.merge)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	switch {
+	case strings.HasPrefix(entry.title, ":sparkles:"), strings.HasPrefix(entry.title, "✨"):
+		entry.section = features
+		entry.title = strings.TrimPrefix(entry.title, ":sparkles:")
+		entry.title = strings.TrimPrefix(entry.title, "✨")
+	case strings.HasPrefix(entry.title, ":bug:"), strings.HasPrefix(entry.title, "🐛"):
+		entry.section = bugs
+		entry.title = strings.TrimPrefix(entry.title, ":bug:")
+		entry.title = strings.TrimPrefix(entry.title, "🐛")
+	case strings.HasPrefix(entry.title, ":book:"), strings.HasPrefix(entry.title, "📖"):
+		entry.section = documentation
+		entry.title = strings.TrimPrefix(entry.title, ":book:")
+		entry.title = strings.TrimPrefix(entry.title, "📖")
+		if strings.Contains(entry.title, "CAEP") || strings.Contains(entry.title, "proposal") {
+			entry.section = proposals
+		}
+	case strings.HasPrefix(entry.title, ":seedling:"), strings.HasPrefix(entry.title, "🌱"):
+		entry.section = other
+		entry.title = strings.TrimPrefix(entry.title, ":seedling:")
+		entry.title = strings.TrimPrefix(entry.title, "🌱")
+	case strings.HasPrefix(entry.title, ":warning:"), strings.HasPrefix(entry.title, "⚠️"):
+		entry.section = warning
+		entry.title = strings.TrimPrefix(entry.title, ":warning:")
+		entry.title = strings.TrimPrefix(entry.title, "⚠️")
+	default:
+		entry.section = unknown
+	}
+
+	// If the area label indicates documentation, use documentation as the section
+	// no matter what was the emoji used. This takes into account that the area label
+	// tends to be more accurate than the emoji (data point observed by the release team).
+	// We handle this after the switch statement to make sure we remove all emoji prefixes.
+	if area == documentationAreaLabel {
+		entry.section = documentation
+	}
+
+	entry.title = strings.TrimSpace(entry.title)
+	entry.title = trimReleaseBackportMarker(entry.title)
+
+	if entry.title == "" {
+		return entry, nil
+	}
+
+	if *prefixAreaLabel {
+		entry.title = fmt.Sprintf("- %s: %s", area, entry.title)
+	} else {
+		entry.title = fmt.Sprintf("- %s", entry.title)
+	}
+
+	_, _ = fmt.Sscanf(c.merge, "Merge pull request %s from %s", &entry.prNumber, &fork)
+	entry.title = formatMerge(entry.title, entry.prNumber)
+
+	return entry, nil
+}
+
+// trimReleaseBackportMarker removes the `[release-x.x]` prefix from a PR title if present.
+// These are mostly used for back-ported PRs in release branches.
+func trimReleaseBackportMarker(title string) string {
+	return releaseBackportMarker.ReplaceAllString(title, "${1}")
 }

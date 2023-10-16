@@ -267,7 +267,7 @@ kustomize_substitutions:
   EXP_CLUSTER_RESOURCE_SET: "true"
   EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION: "true"
   EXP_RUNTIME_SDK: "true"
-  EXP_LAZY_RESTMAPPER: "true"
+  EXP_MACHINE_SET_PREFLIGHT_CHECKS: "true"
 ```
 
 </aside>
@@ -338,6 +338,24 @@ analyzing them via Grafana.
   take a few minutes until the logs show up in Loki. The original timestamp is preserved as `original_ts`.
 
 </aside>
+
+As alternative to loki, JSON logs can be visualized with a human readable timestamp using `jq`:
+
+1. Browse the ProwJob artifacts and download the wanted logfile.
+2. Use `jq` to query the logs:
+
+   ```bash
+   cat manager.log \
+     | grep -v "TLS handshake error" \
+     | jq -r '(.ts / 1000 | todateiso8601) + " " + (. | tostring)'
+   ```
+
+   The `(. | tostring)` part could also be customized to only output parts of the JSON logline.
+   E.g.:
+  
+   * `(.err)` to only output the error message part.
+   * `(.msg)` to only output the message part.
+   * `(.controller + " " + .msg)` to output the controller name and message part.
 
 ### Known Issues
 

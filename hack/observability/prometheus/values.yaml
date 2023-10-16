@@ -4,12 +4,22 @@
 # and can be disabled.
 alertmanager:
   enabled: false
-kubeStateMetrics:
+kube-state-metrics:
   enabled: false
-nodeExporter:
+prometheus-node-exporter:
   enabled: false
-pushgateway:
+prometheus-pushgateway:
   enabled: false
+
+server:
+  extraFlags:
+  # Required for configmap-reload.
+  - "web.enable-lifecycle"
+  # Used by tempo to write traces.
+  - "web.enable-remote-write-receiver"
+  persistentVolume:
+    # Give Prometheus more space to store metrics.
+    size: 20Gi
 
 # Scrape metrics from deployed providers
 extraScrapeConfigs: |

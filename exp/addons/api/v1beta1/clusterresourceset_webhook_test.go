@@ -67,11 +67,19 @@ func TestClusterResourceSetLabelSelectorAsSelectorValidation(t *testing.T) {
 				},
 			}
 			if tt.expectErr {
-				g.Expect(clusterResourceSet.ValidateCreate()).NotTo(Succeed())
-				g.Expect(clusterResourceSet.ValidateUpdate(clusterResourceSet)).NotTo(Succeed())
+				warnings, err := clusterResourceSet.ValidateCreate()
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = clusterResourceSet.ValidateUpdate(clusterResourceSet)
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			} else {
-				g.Expect(clusterResourceSet.ValidateCreate()).To(Succeed())
-				g.Expect(clusterResourceSet.ValidateUpdate(clusterResourceSet)).To(Succeed())
+				warnings, err := clusterResourceSet.ValidateCreate()
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = clusterResourceSet.ValidateUpdate(clusterResourceSet)
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			}
 		})
 	}
@@ -124,11 +132,14 @@ func TestClusterResourceSetStrategyImmutable(t *testing.T) {
 				},
 			}
 
+			warnings, err := newClusterResourceSet.ValidateUpdate(oldClusterResourceSet)
 			if tt.expectErr {
-				g.Expect(newClusterResourceSet.ValidateUpdate(oldClusterResourceSet)).NotTo(Succeed())
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 				return
 			}
-			g.Expect(newClusterResourceSet.ValidateUpdate(oldClusterResourceSet)).To(Succeed())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }
@@ -174,11 +185,14 @@ func TestClusterResourceSetClusterSelectorImmutable(t *testing.T) {
 				},
 			}
 
+			warnings, err := newClusterResourceSet.ValidateUpdate(oldClusterResourceSet)
 			if tt.expectErr {
-				g.Expect(newClusterResourceSet.ValidateUpdate(oldClusterResourceSet)).NotTo(Succeed())
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 				return
 			}
-			g.Expect(newClusterResourceSet.ValidateUpdate(oldClusterResourceSet)).To(Succeed())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }
@@ -187,6 +201,6 @@ func TestClusterResourceSetSelectorNotEmptyValidation(t *testing.T) {
 	g := NewWithT(t)
 	clusterResourceSet := &ClusterResourceSet{}
 	err := clusterResourceSet.validate(nil)
-	g.Expect(err).ToNot(BeNil())
+	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("selector must not be empty"))
 }

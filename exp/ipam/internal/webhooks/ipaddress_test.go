@@ -222,11 +222,13 @@ func TestIPAddressValidateUpdate(t *testing.T) {
 			wh := IPAddress{
 				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.extraObjs...).Build(),
 			}
+			warnings, err := wh.ValidateUpdate(context.Background(), &tt.oldIP, &tt.newIP)
 			if tt.expectErr {
-				g.Expect(wh.ValidateUpdate(context.Background(), &tt.oldIP, &tt.newIP)).NotTo(Succeed())
+				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(wh.ValidateUpdate(context.Background(), &tt.oldIP, &tt.newIP)).To(Succeed())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }

@@ -170,6 +170,7 @@ It is strongly recommended that:
 * Control plane providers release a file called `control-plane-components.yaml`
 * IPAM providers release a file called `ipam-components.yaml`
 * Runtime extensions providers release a file called `runtime-extension-components.yaml`
+* Add-on providers release a file called `addon-components.yaml`
 
 #### Target namespace
 
@@ -250,14 +251,17 @@ providers.
 | CABPK         | cluster.x-k8s.io/provider=bootstrap-kubeadm           |
 | CABPM         | cluster.x-k8s.io/provider=bootstrap-microk8s          |
 | CABPKK3S      | cluster.x-k8s.io/provider=bootstrap-kubekey-k3s       |
+| CABPOCNE      | cluster.x-k8s.io/provider=bootstrap-ocne              |
 | CACPK         | cluster.x-k8s.io/provider=control-plane-kubeadm       |
 | CACPM         | cluster.x-k8s.io/provider=control-plane-microk8s      |
 | CACPN         | cluster.x-k8s.io/provider=control-plane-nested        |
 | CACPKK3S      | cluster.x-k8s.io/provider=control-plane-kubekey-k3s   |
+| CACPOCNE      | cluster.x-k8s.io/provider=control-plane-ocne          |
 | CAPA          | cluster.x-k8s.io/provider=infrastructure-aws          |
 | CAPB          | cluster.x-k8s.io/provider=infrastructure-byoh         |
 | CAPC          | cluster.x-k8s.io/provider=infrastructure-cloudstack   |
 | CAPD          | cluster.x-k8s.io/provider=infrastructure-docker       |
+| CAPIM         | cluster.x-k8s.io/provider=infrastructure-in-memory    |
 | CAPDO         | cluster.x-k8s.io/provider=infrastructure-digitalocean |
 | CAPG          | cluster.x-k8s.io/provider=infrastructure-gcp          |
 | CAPH          | cluster.x-k8s.io/provider=infrastructure-hetzner      |
@@ -275,6 +279,7 @@ providers.
 | CAPX          | cluster.x-k8s.io/provider=infrastructure-nutanix      |
 | CAPZ          | cluster.x-k8s.io/provider=infrastructure-azure        |
 | CAPOSC        | cluster.x-k8s.io/provider=infrastructure-outscale     |
+
 ### Workload cluster templates
 
 An infrastructure provider could publish a **cluster templates** file to be used by `clusterctl generate cluster`.

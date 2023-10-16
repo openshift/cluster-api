@@ -17,6 +17,7 @@ limitations under the License.
 package machine
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,7 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/controllers/noderefutil"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
@@ -51,7 +52,7 @@ func TestGetNode(t *testing.T) {
 		},
 	}
 
-	g.Expect(env.Create(ctx, testCluster)).To(BeNil())
+	g.Expect(env.Create(ctx, testCluster)).To(Succeed())
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 	defer func(do ...client.Object) {
 		g.Expect(env.Cleanup(ctx, do...)).To(Succeed())
@@ -116,7 +117,7 @@ func TestGetNode(t *testing.T) {
 
 	nodesToCleanup := make([]client.Object, 0, len(testCases))
 	for _, tc := range testCases {
-		g.Expect(env.Create(ctx, tc.node)).To(BeNil())
+		g.Expect(env.Create(ctx, tc.node)).To(Succeed())
 		nodesToCleanup = append(nodesToCleanup, tc.node)
 	}
 	defer func(do ...client.Object) {
@@ -125,14 +126,15 @@ func TestGetNode(t *testing.T) {
 
 	tracker, err := remote.NewClusterCacheTracker(
 		env.Manager, remote.ClusterCacheTrackerOptions{
-			Indexes: remote.DefaultIndexes,
+			Indexes: []remote.Index{remote.NodeProviderIDIndex},
 		},
 	)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	r := &Reconciler{
-		Tracker: tracker,
-		Client:  env,
+		Tracker:                   tracker,
+		Client:                    env,
+		UnstructuredCachingClient: env,
 	}
 
 	w, err := ctrl.NewControllerManagedBy(env.Manager).For(&corev1.Node{}).Build(r)
@@ -143,7 +145,7 @@ func TestGetNode(t *testing.T) {
 		Cluster: util.ObjectKey(testCluster),
 		Watcher: w,
 		Kind:    &corev1.Node{},
-		EventHandler: handler.EnqueueRequestsFromMapFunc(func(client.Object) []reconcile.Request {
+		EventHandler: handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
 			return nil
 		}),
 	})).To(Succeed())
@@ -154,10 +156,7 @@ func TestGetNode(t *testing.T) {
 			remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(testCluster))
 			g.Expect(err).ToNot(HaveOccurred())
 
-			providerID, err := noderefutil.NewProviderID(tc.providerIDInput)
-			g.Expect(err).ToNot(HaveOccurred())
-
-			node, err := r.getNode(ctx, remoteClient, providerID)
+			node, err := r.getNode(ctx, remoteClient, tc.providerIDInput)
 			if tc.error != nil {
 				g.Expect(err).To(Equal(tc.error))
 				return
@@ -173,6 +172,17 @@ func TestNodeLabelSync(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
+		},
+	}
+
+	defaultInfraMachine := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"kind":       "GenericInfrastructureMachine",
+			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"metadata": map[string]interface{}{
+				"name":      "infra-config1",
+				"namespace": metav1.NamespaceDefault,
+			},
 		},
 	}
 
@@ -214,6 +224,18 @@ func TestNodeLabelSync(t *testing.T) {
 
 		cluster := defaultCluster.DeepCopy()
 		cluster.Namespace = ns.Name
+
+		infraMachine := defaultInfraMachine.DeepCopy()
+		infraMachine.SetNamespace(ns.Name)
+
+		interruptibleTrueInfraMachineStatus := map[string]interface{}{
+			"interruptible": true,
+			"ready":         true,
+		}
+		interruptibleFalseInfraMachineStatus := map[string]interface{}{
+			"interruptible": false,
+			"ready":         true,
+		}
 
 		machine := defaultMachine.DeepCopy()
 		machine.Namespace = ns.Name
@@ -308,6 +330,13 @@ func TestNodeLabelSync(t *testing.T) {
 		g.Expect(env.Create(ctx, cluster)).To(Succeed())
 		defaultKubeconfigSecret := kubeconfig.GenerateSecret(cluster, kubeconfig.FromEnvTestConfig(env.Config, cluster))
 		g.Expect(env.Create(ctx, defaultKubeconfigSecret)).To(Succeed())
+
+		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
+		// Set InfrastructureMachine .status.interruptible and .status.ready to true.
+		interruptibleTrueInfraMachine := infraMachine.DeepCopy()
+		g.Expect(unstructured.SetNestedMap(interruptibleTrueInfraMachine.Object, interruptibleTrueInfraMachineStatus, "status")).Should(Succeed())
+		g.Expect(env.Status().Patch(ctx, interruptibleTrueInfraMachine, client.MergeFrom(infraMachine))).Should(Succeed())
+
 		g.Expect(env.Create(ctx, machine)).To(Succeed())
 
 		// Validate that the right labels where synced to the Node.
@@ -320,6 +349,10 @@ func TestNodeLabelSync(t *testing.T) {
 			for k, v := range managedMachineLabels {
 				g.Expect(node.Labels).To(HaveKeyWithValue(k, v))
 			}
+
+			// Interruptible label should be set on the node.
+			g.Expect(node.Labels).To(HaveKey(clusterv1.InterruptibleLabel))
+
 			// Unmanaged Machine labels should not have been synced to the Node.
 			for k, v := range unmanagedMachineLabels {
 				g.Expect(node.Labels).ToNot(HaveKeyWithValue(k, v))
@@ -336,6 +369,11 @@ func TestNodeLabelSync(t *testing.T) {
 
 			return true
 		}, 10*time.Second).Should(BeTrue())
+
+		// Set InfrastructureMachine .status.interruptible to false.
+		interruptibleFalseInfraMachine := interruptibleTrueInfraMachine.DeepCopy()
+		g.Expect(unstructured.SetNestedMap(interruptibleFalseInfraMachine.Object, interruptibleFalseInfraMachineStatus, "status")).Should(Succeed())
+		g.Expect(env.Status().Patch(ctx, interruptibleFalseInfraMachine, client.MergeFrom(interruptibleTrueInfraMachine))).Should(Succeed())
 
 		// Remove managed labels from Machine.
 		modifiedMachine := machine.DeepCopy()
@@ -354,6 +392,10 @@ func TestNodeLabelSync(t *testing.T) {
 			for k, v := range managedMachineLabels {
 				g.Expect(node.Labels).ToNot(HaveKeyWithValue(k, v))
 			}
+
+			// Interruptible label should not be on node.
+			g.Expect(node.Labels).NotTo(HaveKey(clusterv1.InterruptibleLabel))
+
 			// Unmanaged Machine labels should not have been synced at all to the Node.
 			for k, v := range unmanagedMachineLabels {
 				g.Expect(node.Labels).ToNot(HaveKeyWithValue(k, v))
@@ -699,7 +741,10 @@ func TestPatchNode(t *testing.T) {
 		},
 	}
 
-	r := Reconciler{Client: env}
+	r := Reconciler{
+		Client:                    env,
+		UnstructuredCachingClient: env,
+	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)

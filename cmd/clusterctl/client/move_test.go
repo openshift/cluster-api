@@ -134,7 +134,7 @@ func Test_clusterctlClient_Move(t *testing.T) {
 				g.Expect(err).To(HaveOccurred())
 				return
 			}
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 		})
 	}
 }
@@ -197,7 +197,7 @@ func Test_clusterctlClient_ToDirectory(t *testing.T) {
 				g.Expect(err).To(HaveOccurred())
 				return
 			}
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 		})
 	}
 }
@@ -260,7 +260,7 @@ func Test_clusterctlClient_FromDirectory(t *testing.T) {
 				g.Expect(err).To(HaveOccurred())
 				return
 			}
-			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 		})
 	}
 }
@@ -298,7 +298,7 @@ type fakeObjectMover struct {
 	fromDirectoryErr error
 }
 
-func (f *fakeObjectMover) Move(_ string, _ cluster.Client, _ bool) error {
+func (f *fakeObjectMover) Move(_ string, _ cluster.Client, _ bool, _ ...cluster.ResourceMutatorFunc) error {
 	return f.moveErr
 }
 

@@ -202,7 +202,7 @@ func TestClient_httpCall(t *testing.T) {
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
 		})
 	}
@@ -325,7 +325,7 @@ func TestURLForExtension(t *testing.T) {
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(u.Scheme).To(Equal(tt.want.scheme))
 				g.Expect(u.Host).To(Equal(tt.want.host))
 				g.Expect(u.Path).To(Equal(tt.want.path))
@@ -783,7 +783,7 @@ func TestClient_CallExtension(t *testing.T) {
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
 		})
 	}
@@ -1067,7 +1067,7 @@ func TestClient_CallAllExtensions(t *testing.T) {
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
 		})
 	}
@@ -1108,7 +1108,7 @@ func Test_client_matchNamespace(t *testing.T) {
 			},
 		},
 	})
-	g.Expect(err).To(BeNil())
+	g.Expect(err).ToNot(HaveOccurred())
 	notMatchingMatchExpressions, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{
 			{
@@ -1118,7 +1118,7 @@ func Test_client_matchNamespace(t *testing.T) {
 			},
 		},
 	})
-	g.Expect(err).To(BeNil())
+	g.Expect(err).ToNot(HaveOccurred())
 	tests := []struct {
 		name               string
 		selector           labels.Selector
@@ -1333,4 +1333,72 @@ func newUnstartedTLSServer(handler http.Handler) *httptest.Server {
 		Certificates: []tls.Certificate{cert},
 	}
 	return srv
+}
+
+func TestNameForHandler(t *testing.T) {
+	tests := []struct {
+		name            string
+		handler         runtimehooksv1.ExtensionHandler
+		extensionConfig *runtimev1.ExtensionConfig
+		want            string
+		wantErr         bool
+	}{
+		{
+			name:            "return well formatted name",
+			handler:         runtimehooksv1.ExtensionHandler{Name: "discover-variables"},
+			extensionConfig: &runtimev1.ExtensionConfig{ObjectMeta: metav1.ObjectMeta{Name: "runtime1"}},
+			want:            "discover-variables.runtime1",
+		},
+		{
+			name:            "return well formatted name",
+			handler:         runtimehooksv1.ExtensionHandler{Name: "discover-variables"},
+			extensionConfig: nil,
+			wantErr:         true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NameForHandler(tt.handler, tt.extensionConfig)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NameForHandler() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("NameForHandler() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtensionNameFromHandlerName(t *testing.T) {
+	tests := []struct {
+		name                  string
+		registeredHandlerName string
+		want                  string
+		wantErr               bool
+	}{
+		{
+			name:                  "Get name from correctly formatted handler name",
+			registeredHandlerName: "discover-variables.runtime1",
+			want:                  "runtime1",
+		},
+		{
+			name: "error from incorrectly formatted handler name",
+			// Two periods make this name badly formed.
+			registeredHandlerName: "discover-variables.runtime.1",
+			wantErr:               true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ExtensionNameFromHandlerName(tt.registeredHandlerName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ExtensionNameFromHandlerName() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("ExtensionNameFromHandlerName() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

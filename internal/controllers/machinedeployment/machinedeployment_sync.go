@@ -82,7 +82,7 @@ func (r *Reconciler) sync(ctx context.Context, md *clusterv1.MachineDeployment, 
 // This may lead to stale reads of machine sets, thus incorrect deployment status.
 func (r *Reconciler) getAllMachineSetsAndSyncRevision(ctx context.Context, md *clusterv1.MachineDeployment, msList []*clusterv1.MachineSet, createIfNotExisted bool) (*clusterv1.MachineSet, []*clusterv1.MachineSet, error) {
 	reconciliationTime := metav1.Now()
-	_, allOldMSs := mdutil.FindOldMachineSets(md, msList, &reconciliationTime)
+	allOldMSs := mdutil.FindOldMachineSets(md, msList, &reconciliationTime)
 
 	// Get new machine set with the updated revision number
 	newMS, err := r.getNewMachineSet(ctx, md, msList, allOldMSs, createIfNotExisted, &reconciliationTime)
@@ -189,7 +189,7 @@ func (r *Reconciler) createMachineSetAndWait(ctx context.Context, deployment *cl
 	// the MachineDeployment to reconcile with an outdated list of MachineSets which could lead to unwanted creation of
 	// a duplicate MachineSet.
 	var pollErrors []error
-	if err := wait.PollImmediate(100*time.Millisecond, 10*time.Second, func() (bool, error) {
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
 		ms := &clusterv1.MachineSet{}
 		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(newMS), ms); err != nil {
 			// Do not return error here. Continue to poll even if we hit an error
@@ -240,9 +240,9 @@ func (r *Reconciler) computeDesiredMachineSet(deployment *clusterv1.MachineDeplo
 		// Append a random string at the end of template hash. This is required to distinguish MachineSets that
 		// could be created with the same spec as a result of rolloutAfter. If not, computeDesiredMachineSet
 		// will end up updating the existing MachineSet instead of creating a new one.
-		uniqueIdentifierLabelValue = fmt.Sprintf("%d-%s", templateHash, apirand.String(5))
-
-		name = computeNewMachineSetName(deployment.Name+"-", apirand.SafeEncodeString(uniqueIdentifierLabelValue))
+		var randomSuffix string
+		name, randomSuffix = computeNewMachineSetName(deployment.Name + "-")
+		uniqueIdentifierLabelValue = fmt.Sprintf("%d-%s", templateHash, randomSuffix)
 
 		// Add foregroundDeletion finalizer to MachineSet if the MachineDeployment has it.
 		if sets.New[string](deployment.Finalizers...).Has(metav1.FinalizerDeleteDependents) {
@@ -366,11 +366,12 @@ const (
 // the upstream SimpleNameGenerator.
 // Note: We had to extract the logic as we want to use the MachineSet name suffix as
 // unique identifier for the MachineSet.
-func computeNewMachineSetName(base, suffix string) string {
+func computeNewMachineSetName(base string) (string, string) {
 	if len(base) > maxGeneratedNameLength {
 		base = base[:maxGeneratedNameLength]
 	}
-	return fmt.Sprintf("%s%s", base, suffix)
+	r := apirand.String(randomLength)
+	return fmt.Sprintf("%s%s", base, r), r
 }
 
 // scale scales proportionally in order to mitigate risk. Otherwise, scaling up can increase the size

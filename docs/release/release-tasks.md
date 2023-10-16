@@ -39,6 +39,7 @@ This document details the responsibilities and tasks for each role in the releas
       - [Change production branch in Netlify to the new release branch](#change-production-branch-in-netlify-to-the-new-release-branch)
       - [Update clusterctl links in the quickstart](#update-clusterctl-links-in-the-quickstart)
       - [Continuously: Communicate key dates to the community](#continuously-communicate-key-dates-to-the-community)
+      - [Communicate beta to providers](#communicate-beta-to-providers)
   - [CI Signal/Bug Triage/Automation Manager](#ci-signalbug-triageautomation-manager)
     - [Responsibilities](#responsibilities-2)
     - [Tasks](#tasks-2)
@@ -92,30 +93,30 @@ is used for e.g. local development and e2e tests. We also modify tests so that t
 
 This comes down to changing occurrences of the old version to the new version, e.g. `v1.3` to `v1.4`:
 1. Setup E2E tests for the new release:
-   1. Goal is that we have clusterctl upgrade tests for the latest stable versions of each contract / for each supported branch. For `v1.4` this means:
-      * v1alpha3: `v0.3`
+   1. Goal is that we have clusterctl upgrade tests for the latest stable versions of each contract / for each supported branch. For `v1.5` this means:
       * v1alpha4: `v0.4`
-      * v1beta1: `v1.0`, `v1.2`, `v1.3` (will change with each new release)
+      * v1beta1: `v1.0`, `v1.3`, `v1.4` (will change with each new release)
    2. Update providers in `docker.yaml`:
-       1. Add a new `v1.3.0` entry.
-       2. Remove providers that are not used anymore (for `v1.4` we don't have to remove any).
-       3. Change `v1.3.99` to `v1.4.99`.
+       1. Add a new `v1.4.0` entry.
+       2. Remove providers that are not used anymore in clusterctl upgrade tests.
+       3. Change `v1.4.99` to `v1.5.99`.
    3. Adjust `metadata.yaml`'s:
-      1. Create a new `v1.3` `metadata.yaml` (`test/e2e/data/shared/v1.3/metadata.yaml`) by copying
+      1. Create a new `v1.4` `metadata.yaml` (`test/e2e/data/shared/v1.4/metadata.yaml`) by copying
    `test/e2e/data/shared/main/metadata.yaml`
       2. Add the new release to the main `metadata.yaml` (`test/e2e/data/shared/main/metadata.yaml`).
-      3. Remove old `metadata.yaml`'s that are not used anymore (for `v1.4` we don't have to remove any).
+      3. Remove old `metadata.yaml`'s that are not used anymore in clusterctl upgrade tests.
    4. Adjust cluster templates in `test/e2e/data/infrastructure-docker`:
-      1. Create a new `v1.3` folder. It should be created based on the `main` folder and only contain the templates
+      1. Create a new `v1.4` folder. It should be created based on the `main` folder and only contain the templates
          we use in the clusterctl upgrade tests (as of today `cluster-template` and `cluster-template-topology`).
-      2. Remove old folders that are not used anymore (for `v1.4` we don't have to remove any).
+      2. Remove old folders that are not used anymore in clusterctl upgrade tests.
    5. Modify the test specs in `test/e2e/clusterctl_upgrade_test.go` (according to the versions we want to test described above).
       Please note that both `InitWithKubernetesVersion` and `WorkloadKubernetesVersion` should be the highest mgmt cluster version supported by the respective Cluster API version.
-2. Update `create-local-repository.py` and `tools/tilt-prepare/main.go`: `v1.3.99` => `v1.4.99`.
-3. Update `.github/workflows/scan.yml` - to setup Trivy scanning - and `.github/workflows/lint-docs-weekly.yml` - to setup link checking in the CAPI book - for the currently supported branches.
-4. Make sure all tests are green (also run `pull-cluster-api-e2e-full-main` and `pull-cluster-api-e2e-workload-upgrade-1-23-latest-main`).
+2. Update `create-local-repository.py` and `tools/tilt-prepare/main.go`: `v1.4.99` => `v1.5.99`.
+3. Make sure all tests are green (also run `pull-cluster-api-e2e-full-main` and `pull-cluster-api-e2e-workload-upgrade-1-23-latest-main`).
 
-Prior art: https://github.com/kubernetes-sigs/cluster-api/pull/6834/files
+Prior art: 
+- 1.3 - https://github.com/kubernetes-sigs/cluster-api/pull/6834/files
+- 1.4 - https://github.com/kubernetes-sigs/cluster-api/pull/7692/files
 
 #### Create a new GitHub milestone for the next release
 
@@ -159,6 +160,8 @@ From this point forward changes which should land in the release have to be cher
    ```
 2. Update the [milestone applier config](https://github.com/kubernetes/test-infra/blob/0b17ef5ffd6c7aa7d8ca1372d837acfb85f7bec6/config/prow/plugins.yaml#L371) accordingly (e.g. `release-1.4: v1.4` and `main: v1.5`)
    <br>Prior art: [cluster-api: update milestone applier config for v1.3](https://github.com/kubernetes/test-infra/pull/26631)
+3. Update the [PR markdown link checker](https://github.com/killianmuldoon/cluster-api/blob/main/.github/workflows/pr-md-link-check.yaml) accordingly (e.g. `main` -> `release-1.4`).
+   <br>Prior art: [Update branch for link checker](https://github.com/kubernetes-sigs/cluster-api/pull/9206)
 
 #### [Continuously] Maintain the GitHub release milestone
 
@@ -186,6 +189,9 @@ to a newer Go minor version according to our [backport policy](./../../CONTRIBUT
 1. Ensure CI is stable before cutting the release (e.g. by checking with the CI manager)
    Note: special attention should be given to image scan results, so we can avoid cutting a release with CVE or document known CVEs in release notes.
 2. Create and push the release tags to the GitHub repository:
+
+   **NOTE:** clusterctl will have issues installing providers between the time the release tag is cut and the Github release is published. See [issue 7889](https://github.com/kubernetes-sigs/cluster-api/issues/7889) for more details
+
    ```bash
    # Export the tag of the release to be cut, e.g.:
    export RELEASE_TAG=v1.0.1
@@ -210,27 +216,32 @@ to a newer Go minor version according to our [backport policy](./../../CONTRIBUT
        make promote-images
        ```
        **Notes**:
+        * `make promote-images` target tries to figure out your Github user handle in order to find the forked [k8s.io](https://github.com/kubernetes/k8s.io) repository.
+          If you have not forked the repo, please do it before running the Makefile target.
+        * if `make promote-images` fails with an error like `FATAL while checking fork of kubernetes/k8s.io` you may be able to solve it by manually setting the USER_FORK variable i.e.  `export USER_FORK=<personal GitHub handle>`
         * `kpromo` uses `git@github.com:...` as remote to push the branch for the PR. If you don't have `ssh` set up you can configure
           git to use `https` instead via `git config --global url."https://github.com/".insteadOf git@github.com:`.
         * This will automatically create a PR in [k8s.io](https://github.com/kubernetes/k8s.io) and assign the CAPI maintainers.
     4. Merge the PR (/lgtm + /hold cancel) and verify the images are available in the production registry:
-       ```bash
-       docker pull registry.k8s.io/cluster-api/clusterctl:${RELEASE_TAG}
-       docker pull registry.k8s.io/cluster-api/cluster-api-controller:${RELEASE_TAG}
-       docker pull registry.k8s.io/cluster-api/kubeadm-bootstrap-controller:${RELEASE_TAG}
-       docker pull registry.k8s.io/cluster-api/kubeadm-control-plane-controller:${RELEASE_TAG}
-       ```
+         * Wait for the [promotion prow job](https://prow.k8s.io/?repo=kubernetes%2Fk8s.io&job=post-k8sio-image-promo) to complete successfully. Then test the production images are accessible:
+         ```bash
+         docker pull registry.k8s.io/cluster-api/clusterctl:${RELEASE_TAG} &&
+         docker pull registry.k8s.io/cluster-api/cluster-api-controller:${RELEASE_TAG} &&
+         docker pull registry.k8s.io/cluster-api/kubeadm-bootstrap-controller:${RELEASE_TAG} &&
+         docker pull registry.k8s.io/cluster-api/kubeadm-control-plane-controller:${RELEASE_TAG}
+         ```
 4. Publish the release in GitHub:
-    1. Get the final release notes from the docs team and add them to the GitHub release.
-    2. Publish the release (ensure to flag the release as pre-release if necessary).
-5. Publish `clusterctl` to Homebrew by bumping the version in [clusterctl.rb](https://github.com/Homebrew/homebrew-core/blob/master/Formula/clusterctl.rb).
+   1. Ask the [Maintainer](#maintainer) to publish the release in GitHub.
+5. Publish `clusterctl` to Homebrew by bumping the version in [clusterctl.rb](https://github.com/Homebrew/homebrew-core/blob/master/Formula/c/clusterctl.rb).
    <br>**Notes**:
     * This is only done for new latest stable releases, not for beta / RC releases and not for previous release branches.
     * Check if homebrew already has a PR to update the version (homebrew introduced automation that picks it up). Open one if no PR exists.
+      * To open a PR, you need two things: `tag` (i.e v1.4.2 & v1.3.7 releases are being published, where release-1.4 is the latest stable release branch, so tag would be v1.4.2) and `revision` (it is a commit hash of the tag, i.e if the tag is v1.4.2, it can be found by looking for commit id in [v1.4.2 tag page](https://github.com/kubernetes-sigs/cluster-api/releases/tag/v1.4.2)).
+      * Once the PR is open, no action should be needed. Homebrew bot should push a second commit (see an example [here](https://github.com/Homebrew/homebrew-core/pull/129986/commits/0da6edddf1143aa50033f7e8ae1ebd07ecdd0941)) to the same PR to update the binary hashes automatically.
       * For an example please see: [PR: clusterctl 1.1.5](https://github.com/Homebrew/homebrew-core/pull/105075/files).
       * Homebrew has [conventions for commit messages](https://docs.brew.sh/Formula-Cookbook#commit) usually
         the commit message for us should look like: `clusterctl 1.1.5`.
-6. Set EOL date for previous release (prior art: https://github.com/kubernetes-sigs/cluster-api/issues/7146).
+6. **For minor releases** Set EOL date for previous release (prior art: https://github.com/kubernetes-sigs/cluster-api/issues/7146) and update Cluster API support and guarantees in CONTRIBUTING.md (prior art: https://github.com/kubernetes-sigs/cluster-api/pull/8308).
 
 Additional information:
 * [Versioning documentation](./../../CONTRIBUTING.md#versioning) for more information.
@@ -298,7 +309,7 @@ The goal of this task to make the book for the current release available under e
 1. Add a DNS entry for the book of the new release (should be available under e.g. `https://release-1-4.cluster-api.sigs.k8s.io`).
    <br>Prior art: [Add DNS for CAPI release-1.2 release branch](https://github.com/kubernetes/k8s.io/pull/3872)
 2. Open `https://release-1-4.cluster-api.sigs.k8s.io/` and verify that the certificates are valid
-   If they are not, talk to someone with access to Netlify, they have to click the `renew certificate` button in the Netlify UI.
+   If they are not, talk to someone with access to Netlify, they have to [click the `renew certificate` button](https://app.netlify.com/sites/kubernetes-sigs-cluster-api/settings/domain#https) in the Netlify UI.
 3. Update references in introduction.md only on the main branch (drop unsupported versions, add the new release version).
    <br>Prior art: [Add release 1.2 book link](https://github.com/kubernetes-sigs/cluster-api/pull/6697)
 
@@ -314,13 +325,15 @@ The goal of this task to make the book for the current release available under e
 3. Finalize the release notes:
     1. Copy & paste the release notes into a hackmd (makes collaboration very easy).
     2. Pay close attention to the `## :question: Sort these by hand` section, as it contains items that need to be manually sorted.
-    3. Ensure consistent formatting of entries (e.g. prefix (see [v1.2.0](https://github.com/kubernetes-sigs/cluster-api/releases/tag/v1.2.0) release notes)).
+    3. Ensure consistent formatting of entries (e.g. prefix).
+       <br>**Note**: Check against the release notes of the [previous release](https://github.com/kubernetes-sigs/cluster-api/releases/latest), depending on the release branch you are currently working on (e.g. v1.3.6 when working on v1.3.7 or v1.4.2 when working on v1.4.3).
     4. Merge dependency bump PR entries for the same dependency into a single entry.
     5. Move minor changes into a single line at the end of each section.
     6. Sort entries within a section alphabetically.
     7. Write highlights section based on the initial release notes doc.
-    8. Add Kubernetes version support section.
-    9. Modify `Changes since v1.x.y` to `Changes since v1.x`
+    8. Add the Kubernetes version support section and pay close attention to set the correct versions here.
+       <br>**Note**: Check our [Kubernetes support policy](https://cluster-api.sigs.k8s.io/reference/versions.html#supported-kubernetes-versions) in the CAPI book. In case of doubt, reach out to the current release lead.
+    9. **For minor releases** Modify `Changes since v1.x.y` to `Changes since v1.x`
        <br>**Note**: The release notes tool includes all merges since the previous release branch was branched of.
 4. Iterate until the GA release by generating incremental release notes and modifying the release notes in hackmd accordingly:
    ```bash
@@ -334,27 +347,30 @@ The goal of this task to make the book for the current release available under e
 The goal of this task to make the book for the current release available under `https://cluster-api.sigs.k8s.io`.
 
 Someone with access to Netlify should:
-1. Change production branch in Netlify the current release branch (e.g. `release-1.4`) to make the book available under `https://cluster-api.sigs.k8s.io`.
-2. Re-deploy via the Netlify UI.
+1. Change production branch in Netlify the current release branch (e.g. `release-1.4`) to make the book available under `https://cluster-api.sigs.k8s.io`. It's done under [production branch settings](https://app.netlify.com/sites/kubernetes-sigs-cluster-api/settings/deploys#branches-and-deploy-contexts)
+2. [Trigger a redeploy](https://app.netlify.com/sites/kubernetes-sigs-cluster-api/deploys).
 
 #### Update clusterctl links in the quickstart
 
 The goal of this task is to ensure the quickstart has links to the latest `clusterctl` binaries.
 
-1. Update clusterctl links in the quickstart (on main and cherry-pick onto release-1.4).
-   <br>Prior art: [Update clusterctl version to v1.2.x in quick start](https://github.com/kubernetes-sigs/cluster-api/pull/6716)
+Update clusterctl links in the quickstart (on main and cherry-pick onto release-1.4).
+<br>Prior art: [Update clusterctl version to v1.2.x in quick start](https://github.com/kubernetes-sigs/cluster-api/pull/6716)
 
-**Note**: The PR for this should be merged after the minor release has been published.
+**Note**: The PR for this should be merged after the minor release has been published. Recommended to create it before
+the release but with `/hold`. This will allow maintainers to review and approve before the release. When the release is
+done just remove the hold to merge it.
 
 #### Continuously: Communicate key dates to the community
 
-The goal of this task is to ensure all stakeholders are informed about the current release cycle.
+The goal of this task is to ensure all stakeholders are informed about the current release cycle. For example announcing
+upcoming code freezes etc based on the [release timeline (1.4 example)](./releases/release-1.4.md).
 
-Information can be distributed via: (TBD)
+Information can be distributed via:
 * `sig-cluster-lifecycle` mailing list
 * Slack
 * Office hours
-* ClusterAPI book
+* Cluster API book
 * ...
 
 Relevant information includes: (TBD)
@@ -364,10 +380,35 @@ Relevant information includes: (TBD)
 * ...
 
 Stakeholders are: (TBD)
-* End users of ClusterAPI
-* Contributors to core ClusterAPI
+* End users of Cluster API
+* Contributors to core Cluster API
 * Provider implementers
 * ...
+
+#### Communicate beta to providers
+
+The goal of this task is to inform all providers that a new beta.0 version a release is out and that it should be tested. We want to prevent issues where providers don't have enough time to test before a new version of CAPI is released. This stems from a previous issue we are trying to avoid: https://github.com/kubernetes-sigs/cluster-api/issues/8498
+
+We should inform at least the following providers via a new issue on their respective repos that a new version of CAPI is being released (provide the release date) and that the beta.0 version is ready for them to test.
+
+ - Addon provider helm: https://github.com/kubernetes-sigs/cluster-api-addon-provider-helm/issues/new
+ - AWS: https://github.com/kubernetes-sigs/cluster-api-provider-aws/issues/new
+ - Azure: https://github.com/kubernetes-sigs/cluster-api-provider-azure/issues/new
+ - Cloudstack: https://github.com/kubernetes-sigs/cluster-api-provider-cloudstack/issues/new
+ - Digital Ocean: https://github.com/kubernetes-sigs/cluster-api-provider-digitalocean/issues/new
+ - GCP: https://github.com/kubernetes-sigs/cluster-api-provider-gcp/issues/new
+ - Kubemark: https://github.com/kubernetes-sigs/cluster-api-provider-kubemark/issues/new
+ - Kubevirt: https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/issues/new
+ - IBMCloud: https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud/issues/new
+ - Metal3: https://github.com/metal3-io/cluster-api-provider-metal3/issues/new
+ - Nested: https://github.com/kubernetes-sigs/cluster-api-provider-nested/issues/new
+ - OCI: https://github.com/oracle/cluster-api-provider-oci/issues/new
+ - Openstack: https://github.com/kubernetes-sigs/cluster-api-provider-openstack/issues/new
+ - Operator: https://github.com/kubernetes-sigs/cluster-api-operator/issues/new
+ - Packet: https://github.com/kubernetes-sigs/cluster-api-provider-packet/issues/new
+ - vSphere: https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/issues/new
+
+TODO: Right now we don't have a template for this message but the Comms Team will provide one later. 
 
 ## CI Signal/Bug Triage/Automation Manager
 
@@ -405,8 +446,12 @@ While we add test coverage for the new release branch we will also drop the test
 3. Remove tests for old release branches according to our policy documented in [Support and guarantees](../../CONTRIBUTING.md#support-and-guarantees)
    For example, let's assume we just created tests for v1.4, then we can now drop test coverage for the release-1.1 branch.
 4. Verify the jobs and dashboards a day later by taking a look at: `https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-1.4`
+5. Update `.github/workflows/scan.yml` - to setup Trivy scanning - `.github/workflows/lint-docs-weekly.yml` - to setup link checking in the CAPI book - and `.github/workflows/test-release-weekly.yml` - to verify the release target is working - for the currently supported branches.
 
-Prior art: [Add jobs for CAPI release 1.2](https://github.com/kubernetes/test-infra/pull/26621)
+
+Prior art:
+* [Add jobs for CAPI release 1.2](https://github.com/kubernetes/test-infra/pull/26621)
+* [Update github workflows](https://github.com/kubernetes-sigs/cluster-api/pull/8398)
 
 #### [Continuously] Monitor CI signal
 
@@ -417,14 +462,15 @@ The goal of this task is to keep our tests running in CI stable.
 1. Add yourself to the [Cluster API alert mailing list](https://github.com/kubernetes/k8s.io/blob/151899b2de933e58a4dfd1bfc2c133ce5a8bbe22/groups/sig-cluster-lifecycle/groups.yaml#L20-L35)
     <br\>**Note**: An alternative to the alert mailing list is manually monitoring the [testgrid dashboards](https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api)
     (also dashboards of previous releases). Using the alert mailing list has proven to be a lot less effort though.
-2. Check the existing **failing-test** and **flaking-test** issue templates under `.github/ISSUE_TEMPLATE/` folder of the repo, used to create an issue for failing or flaking tests respectively. Please make sure they are up-to-date and if not, send a PR to update or improve them.
-3. Triage CI failures reported by mail alerts or found by monitoring the testgrid dashboards:
+2. Subscribe to `CI Activity` notifications for the Cluster API repo.
+3. Check the existing **failing-test** and **flaking-test** issue templates under `.github/ISSUE_TEMPLATE/` folder of the repo, used to create an issue for failing or flaking tests respectively. Please make sure they are up-to-date and if not, send a PR to update or improve them.
+4. Triage CI failures reported by mail alerts or found by monitoring the testgrid dashboards:
     1. Create an issue using an appropriate template (failing-test) in the Cluster API repository to surface the CI failure.
     2. Identify if the issue is a known issue, new issue or a regression.
     3. Mark the issue as `release-blocking` if applicable.
-4. Triage periodic GitHub actions failures, with special attention to image scan results;
+5. Triage periodic GitHub actions failures, with special attention to image scan results;
    Eventually open issues as described above.
-5. Monitor IPv6 testing PR informing jobs (look for `capi-pr-e2e-informing-ipv6-<branch_name>` tab on main and supported releases testgrid dashboards), since they are not part of any periodic jobs.
+6. Run periodic deep-dive sessions with the CI team to investigate failing and flaking tests. Example session recording: https://www.youtube.com/watch?v=YApWftmiDTg
 
 #### [Continuously] Reduce the amount of flaky tests
 

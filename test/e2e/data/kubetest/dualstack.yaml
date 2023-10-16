@@ -1,0 +1,12 @@
+ginkgo.focus: \[Feature\:IPv6DualStack\]
+ginkgo.skip: \[Feature\:SCTPConnectivity\]
+disable-log-dump: true
+ginkgo.progress: true
+ginkgo.slowSpecThreshold: 120.0
+ginkgo.flakeAttempts: 3
+ginkgo.trace: true
+ginkgo.v: true
+ginkgo.no-color: true
+# Use 5m instead of the default 10m to fail faster
+# if kube-system Pods are not coming up.
+system-pods-startup-timeout: 5m

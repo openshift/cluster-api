@@ -134,8 +134,8 @@ func (p *providerComponents) Delete(options DeleteOptions) error {
 	// Fetch all the components belonging to a provider.
 	// We want that the delete operation is able to clean-up everything.
 	labels := map[string]string{
-		clusterctlv1.ClusterctlLabelName: "",
-		clusterv1.ProviderLabelName:      options.Provider.ManifestLabel(),
+		clusterctlv1.ClusterctlLabel: "",
+		clusterv1.ProviderNameLabel:  options.Provider.ManifestLabel(),
 	}
 
 	namespaces := []string{options.Provider.Namespace}
@@ -146,7 +146,7 @@ func (p *providerComponents) Delete(options DeleteOptions) error {
 
 	// Filter the resources according to the delete options
 	resourcesToDelete := []unstructured.Unstructured{}
-	namespacesToDelete := sets.NewString()
+	namespacesToDelete := sets.Set[string]{}
 	instanceNamespacePrefix := fmt.Sprintf("%s-", options.Provider.Namespace)
 	for _, obj := range resources {
 		// If the CRDs should NOT be deleted, skip it;
@@ -181,13 +181,16 @@ func (p *providerComponents) Delete(options DeleteOptions) error {
 		// If the resource is a cluster resource, skip it if the resource name does not start with the instance prefix.
 		// This is required because there are cluster resources like e.g. ClusterRoles and ClusterRoleBinding, which are instance specific;
 		// During the installation, clusterctl adds the instance namespace prefix to such resources (see fixRBAC), and so we can rely
-		// on that for deleting only the global resources belonging the the instance we are processing.
+		// on that for deleting only the global resources belonging the instance we are processing.
 		// NOTE: namespace and CRD are special case managed above; webhook instead goes hand by hand with the controller they
 		// should always be deleted.
 		isWebhook := obj.GroupVersionKind().Kind == validatingWebhookConfigurationKind || obj.GroupVersionKind().Kind == mutatingWebhookConfigurationKind
 
 		if util.IsClusterResource(obj.GetKind()) &&
 			!isNamespace && !isCRD && !isWebhook &&
+			// TODO(oscr) Delete the check below condition when the min version to upgrade from is CAPI v1.3
+			// This check is needed due to the (now removed) support for multiple instances of the same provider.
+			// For more context read GitHub issue #7318 and/or PR #7339
 			!strings.HasPrefix(obj.GetName(), instanceNamespacePrefix) {
 			continue
 		}
@@ -212,12 +215,18 @@ func (p *providerComponents) Delete(options DeleteOptions) error {
 
 		// Otherwise delete the object
 		log.V(5).Info("Deleting", logf.UnstructuredToValues(obj)...)
-		if err := cs.Delete(ctx, &obj); err != nil {
-			if apierrors.IsNotFound(err) {
-				// Tolerate IsNotFound error that might happen because we are not enforcing a deletion order
-				// that considers relation across objects (e.g. Deployments -> ReplicaSets -> Pods)
-				continue
+		deleteBackoff := newWriteBackoff()
+		if err := retryWithExponentialBackoff(deleteBackoff, func() error {
+			if err := cs.Delete(ctx, &obj); err != nil {
+				if apierrors.IsNotFound(err) {
+					// Tolerate IsNotFound error that might happen because we are not enforcing a deletion order
+					// that considers relation across objects (e.g. Deployments -> ReplicaSets -> Pods)
+					return nil
+				}
+				return err
 			}
+			return nil
+		}); err != nil {
 			errList = append(errList, errors.Wrapf(err, "Error deleting object %s, %s/%s", obj.GroupVersionKind(), obj.GetNamespace(), obj.GetName()))
 		}
 	}

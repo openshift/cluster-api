@@ -104,12 +104,21 @@ func TestMachineSetLabelSelectorMatchValidation(t *testing.T) {
 					},
 				},
 			}
+
 			if tt.expectErr {
-				g.Expect(ms.ValidateCreate()).NotTo(Succeed())
-				g.Expect(ms.ValidateUpdate(ms)).NotTo(Succeed())
+				warnings, err := ms.ValidateCreate()
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = ms.ValidateUpdate(ms)
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			} else {
-				g.Expect(ms.ValidateCreate()).To(Succeed())
-				g.Expect(ms.ValidateUpdate(ms)).To(Succeed())
+				warnings, err := ms.ValidateCreate()
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = ms.ValidateUpdate(ms)
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			}
 		})
 	}
@@ -152,11 +161,13 @@ func TestMachineSetClusterNameImmutable(t *testing.T) {
 				},
 			}
 
+			warnings, err := newMS.ValidateUpdate(oldMS)
 			if tt.expectErr {
-				g.Expect(newMS.ValidateUpdate(oldMS)).NotTo(Succeed())
+				g.Expect(err).To(HaveOccurred())
 			} else {
-				g.Expect(newMS.ValidateUpdate(oldMS)).To(Succeed())
+				g.Expect(err).ToNot(HaveOccurred())
 			}
+			g.Expect(warnings).To(BeEmpty())
 		})
 	}
 }
@@ -209,11 +220,89 @@ func TestMachineSetVersionValidation(t *testing.T) {
 			}
 
 			if tt.expectErr {
-				g.Expect(md.ValidateCreate()).NotTo(Succeed())
-				g.Expect(md.ValidateUpdate(md)).NotTo(Succeed())
+				warnings, err := md.ValidateCreate()
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = md.ValidateUpdate(md)
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
 			} else {
-				g.Expect(md.ValidateCreate()).To(Succeed())
-				g.Expect(md.ValidateUpdate(md)).To(Succeed())
+				warnings, err := md.ValidateCreate()
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+				warnings, err = md.ValidateUpdate(md)
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(warnings).To(BeEmpty())
+			}
+		})
+	}
+}
+
+func TestValidateSkippedMachineSetPreflightChecks(t *testing.T) {
+	tests := []struct {
+		name      string
+		ms        *MachineSet
+		expectErr bool
+	}{
+		{
+			name:      "should pass if the machine set skip preflight checks annotation is not set",
+			ms:        &MachineSet{},
+			expectErr: false,
+		},
+		{
+			name: "should pass if not preflight checks are skipped",
+			ms: &MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						MachineSetSkipPreflightChecksAnnotation: "",
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "should pass if only valid preflight checks are skipped (single)",
+			ms: &MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						MachineSetSkipPreflightChecksAnnotation: string(MachineSetPreflightCheckKubeadmVersionSkew),
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "should pass if only valid preflight checks are skipped (multiple)",
+			ms: &MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						MachineSetSkipPreflightChecksAnnotation: string(MachineSetPreflightCheckKubeadmVersionSkew) + "," + string(MachineSetPreflightCheckControlPlaneIsStable),
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "should fail if invalid preflight checks are skipped",
+			ms: &MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						MachineSetSkipPreflightChecksAnnotation: string(MachineSetPreflightCheckKubeadmVersionSkew) + ",invalid-preflight-check-name",
+					},
+				},
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			err := validateSkippedMachineSetPreflightChecks(tt.ms)
+			if tt.expectErr {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).ToNot(HaveOccurred())
 			}
 		})
 	}

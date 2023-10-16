@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +35,6 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
-	"helm.sh/helm/v3/pkg/repo"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,6 +53,7 @@ import (
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
+	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
 	utilyaml "sigs.k8s.io/cluster-api/util/yaml"
 )
@@ -71,7 +70,7 @@ const (
 
 var (
 	// Defines the default version to be used for the provider CR if no version is specified in the tilt-provider.yaml|json file.
-	defaultProviderVersion = "v1.4.99"
+	defaultProviderVersion = "v1.5.99"
 
 	// This data struct mirrors a subset of info from the providers struct in the tilt file
 	// which is containing "hard-coded" tilt-provider.yaml files for the providers managed in the Cluster API repository.
@@ -87,6 +86,9 @@ var (
 		},
 		"docker": {
 			Context: pointer.String("test/infrastructure/docker"),
+		},
+		"in-memory": {
+			Context: pointer.String("test/infrastructure/inmemory"),
 		},
 		"test-extension": {
 			Context: pointer.String("test/extension"),
@@ -149,6 +151,13 @@ func init() {
 // This tool aims to speed up tilt startup time by running in parallel a set of task
 // preparing everything is required for tilt up.
 func main() {
+	// Set clusterctl logger with a log level of 5.
+	// This makes it easier to see what clusterctl is doing and to debug it.
+	logf.SetLogger(logf.NewLogger(logf.WithThreshold(pointer.Int(5))))
+
+	// Set controller-runtime logger as well.
+	ctrl.SetLogger(klog.Background())
+
 	klog.Infof("[main] started\n")
 	start := time.Now()
 
@@ -275,9 +284,17 @@ func tiltResources(ctx context.Context, ts *tiltSettings) error {
 	// NOTE: strictly speaking cert-manager is not a resource, however it is a dependency for most of the actual resources
 	// and running this is the same task group of the kustomize/provider tasks gives the maximum benefits in terms of reducing the total elapsed time.
 	if ts.DeployCertManager == nil || *ts.DeployCertManager {
-		tasks["cert-manager-cainjector"] = preLoadImageTask(fmt.Sprintf("quay.io/jetstack/cert-manager-cainjector:%s", config.CertManagerDefaultVersion))
-		tasks["cert-manager-webhook"] = preLoadImageTask(fmt.Sprintf("quay.io/jetstack/cert-manager-webhook:%s", config.CertManagerDefaultVersion))
-		tasks["cert-manager-controller"] = preLoadImageTask(fmt.Sprintf("quay.io/jetstack/cert-manager-controller:%s", config.CertManagerDefaultVersion))
+		cfg, err := clientcmd.NewDefaultClientConfigLoadingRules().Load()
+		if err != nil {
+			return errors.Wrap(err, "failed to load KubeConfig file")
+		}
+		// The images can only be preloaded when the cluster is a kind cluster.
+		// Note: Not repeating the validation on the config already done in allowK8sConfig here.
+		if strings.HasPrefix(cfg.Contexts[cfg.CurrentContext].Cluster, "kind-") {
+			tasks["cert-manager-cainjector"] = preLoadImageTask(fmt.Sprintf("quay.io/jetstack/cert-manager-cainjector:%s", config.CertManagerDefaultVersion))
+			tasks["cert-manager-webhook"] = preLoadImageTask(fmt.Sprintf("quay.io/jetstack/cert-manager-webhook:%s", config.CertManagerDefaultVersion))
+			tasks["cert-manager-controller"] = preLoadImageTask(fmt.Sprintf("quay.io/jetstack/cert-manager-controller:%s", config.CertManagerDefaultVersion))
+		}
 		tasks["cert-manager"] = certManagerTask()
 	}
 
@@ -585,12 +602,7 @@ func cleanupChartTask(path string) taskFunction {
 
 				helmChartVersion := helmChart.Version
 				if helmChartVersion == "" {
-					// If helmChart.Version is not set lookup the latest version.
-					helmChartVersion, err = resolveLatestHelmChartVersion(ctx, helmChart.Repo, helmChart.Name)
-					if err != nil {
-						return err
-					}
-					klog.Infof("[%s] resolved latest Helm Chart version to %q\n", prefix, helmChartVersion)
+					return errors.New("Helm Chart version must be set")
 				}
 
 				// Read Chart.yaml
@@ -625,42 +637,6 @@ func cleanupChartTask(path string) taskFunction {
 			errCh <- errors.Wrapf(err, "failed to cleanup Chart dir %q", path)
 		}
 	}
-}
-
-// resolveLatestHelmChartVersion resolves the latest version of a Helm Chart with name chartName
-// from a given chartRepo.
-func resolveLatestHelmChartVersion(ctx context.Context, chartRepo, chartName string) (string, error) {
-	chartIndexURL := fmt.Sprintf(chartRepo + "/index.yaml")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, chartIndexURL, http.NoBody)
-	if err != nil {
-		return "", errors.Wrapf(err, "failed to resolve latest Helm Chart version for Chart %q: failed to create request for chart index from URL %q", chartName, chartIndexURL)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", errors.Wrapf(err, "failed to resolve latest Helm Chart version for Chart %q: failed to get chart index from URL %q", chartName, chartIndexURL)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", errors.Wrapf(err, "failed to resolve latest Helm Chart version for Chart %q: failed to parse chart index from URL %q", chartName, chartIndexURL)
-	}
-
-	indexFile := &repo.IndexFile{}
-	if err := yaml.UnmarshalStrict(bodyBytes, indexFile); err != nil {
-		return "", errors.Wrapf(err, "failed to resolve latest Helm Chart version for Chart %q: failed to unmarshal chart index from URL %q", chartName, chartIndexURL)
-	}
-	// Sort entries to ensure the latest version is on top.
-	// This is required to get the latest version.
-	indexFile.SortEntries()
-
-	chartVersion, err := indexFile.Get(chartName, "")
-	if err != nil {
-		return "", errors.Wrapf(err, "failed to resolve latest Helm Chart version for Chart %q: failed to get latest version from chart index from URL %q", chartName, chartIndexURL)
-	}
-	return chartVersion.Version, nil
 }
 
 // kustomizeTask generates a task for running kustomize build on a path and saving the output on a file.
@@ -794,8 +770,8 @@ func writeIfChanged(prefix string, path string, yaml []byte) error {
 // This has the affect that the appended ones will take precedence, as those are read last.
 // Finally, we modify the deployment to enable prometheus metrics scraping.
 func prepareWorkload(name, prefix, binaryName, containerName string, objs []unstructured.Unstructured, ts *tiltSettings) error {
-	return updateDeployment(prefix, objs, func(d *appsv1.Deployment) {
-		for j, container := range d.Spec.Template.Spec.Containers {
+	return updateDeployment(prefix, objs, func(deployment *appsv1.Deployment) {
+		for j, container := range deployment.Spec.Template.Spec.Containers {
 			if container.Name != containerName {
 				continue
 			}
@@ -806,7 +782,7 @@ func prepareWorkload(name, prefix, binaryName, containerName string, objs []unst
 			container.SecurityContext = nil
 			// ensure it's also removed from the pod template matching this container
 			// setting this outside the loop would means altering every deployments
-			d.Spec.Template.Spec.SecurityContext = nil
+			deployment.Spec.Template.Spec.SecurityContext = nil
 
 			// alter deployment for working nicely with delve debugger;
 			// most specifically, configuring delve, starting the manager with profiling enabled, dropping liveness and
@@ -830,11 +806,19 @@ func prepareWorkload(name, prefix, binaryName, containerName string, objs []unst
 				debugArgs := make([]string, 0, len(args))
 				for _, a := range args {
 					if a == "--leader-elect" || a == "--leader-elect=true" {
-						continue
+						a = "--leader-elect=false"
 					}
 					debugArgs = append(debugArgs, a)
 				}
 				args = debugArgs
+
+				// Set annotation to point parca to the profiler port.
+				if d.ProfilerPort != nil && *d.ProfilerPort > 0 {
+					if deployment.Spec.Template.Annotations == nil {
+						deployment.Spec.Template.Annotations = map[string]string{}
+					}
+					deployment.Spec.Template.Annotations["parca.dev/port"] = "6060"
+				}
 
 				container.LivenessProbe = nil
 				container.ReadinessProbe = nil
@@ -859,7 +843,7 @@ func prepareWorkload(name, prefix, binaryName, containerName string, objs []unst
 
 			container.Command = cmd
 			container.Args = finalArgs
-			d.Spec.Template.Spec.Containers[j] = container
+			deployment.Spec.Template.Spec.Containers[j] = container
 		}
 	})
 }
@@ -935,6 +919,10 @@ func getProviderObj(version *string) func(prefix string, objs []unstructured.Uns
 		if strings.HasPrefix(manifestLabel, "runtime-extension-") {
 			providerType = string(clusterctlv1.RuntimeExtensionProviderType)
 			providerName = manifestLabel[len("runtime-extension-"):]
+		}
+		if strings.HasPrefix(manifestLabel, "addon-") {
+			providerType = string(clusterctlv1.AddonProviderType)
+			providerName = manifestLabel[len("addon-"):]
 		}
 
 		provider := &clusterctlv1.Provider{

@@ -17,6 +17,8 @@ limitations under the License.
 package scope
 
 import (
+	"strconv"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -33,6 +35,10 @@ type Scope struct {
 
 	// UpgradeTracker holds information about ongoing upgrades in the managed topology.
 	UpgradeTracker *UpgradeTracker
+
+	// HookResponseTracker holds the hook responses that will be used to
+	// calculate a combined reconcile result.
+	HookResponseTracker *HookResponseTracker
 }
 
 // New returns a new Scope with only the cluster; while processing a request in the topology/ClusterReconciler controller
@@ -41,11 +47,21 @@ func New(cluster *clusterv1.Cluster) *Scope {
 	// enforce TypeMeta values in the Cluster object so we can assume it is always set during reconciliation.
 	cluster.APIVersion = clusterv1.GroupVersion.String()
 	cluster.Kind = "Cluster"
+
+	// Determine the maximum upgrade concurrency from the annotation on the cluster.
+	maxMDUpgradeConcurrency := 1
+	if concurrency, ok := cluster.Annotations[clusterv1.ClusterTopologyUpgradeConcurrencyAnnotation]; ok {
+		// The error can be ignored because the webhook ensures that the value is a positive integer.
+		maxMDUpgradeConcurrency, _ = strconv.Atoi(concurrency)
+	}
 	return &Scope{
 		Blueprint: &ClusterBlueprint{},
 		Current: &ClusterState{
 			Cluster: cluster,
 		},
-		UpgradeTracker: NewUpgradeTracker(),
+		UpgradeTracker: NewUpgradeTracker(
+			MaxMDUpgradeConcurrency(maxMDUpgradeConcurrency),
+		),
+		HookResponseTracker: NewHookResponseTracker(),
 	}
 }
