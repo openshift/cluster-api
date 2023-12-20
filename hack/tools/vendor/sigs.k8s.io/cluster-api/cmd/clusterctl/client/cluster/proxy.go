@@ -17,18 +17,19 @@ limitations under the License.
 package cluster
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
-	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -53,13 +54,13 @@ type Proxy interface {
 	// CurrentNamespace returns the namespace from the current context in the kubeconfig file.
 	CurrentNamespace() (string, error)
 
-	// ValidateKubernetesVersion returns an error if management cluster version less than minimumKubernetesVersion.
+	// ValidateKubernetesVersion returns an error if management cluster version less than MinimumKubernetesVersion.
 	ValidateKubernetesVersion() error
 
 	// NewClient returns a new controller runtime Client object for working on the management cluster.
 	NewClient() (client.Client, error)
 
-	// CheckClusterAvailable checks if a a cluster is available and reachable.
+	// CheckClusterAvailable checks if a cluster is available and reachable.
 	CheckClusterAvailable() error
 
 	// ListResources lists namespaced and cluster-wide resources for a component matching the labels. Namespaced resources are only listed
@@ -68,13 +69,13 @@ type Proxy interface {
 	// Certificates for cert-manager, Clusters for CAPI, AWSCluster for CAPA and so on).
 	// This is done to avoid errors when listing resources of providers which have already been deleted/scaled down to 0 replicas/with
 	// malfunctioning webhooks.
-	ListResources(labels map[string]string, namespaces ...string) ([]unstructured.Unstructured, error)
+	ListResources(ctx context.Context, labels map[string]string, namespaces ...string) ([]unstructured.Unstructured, error)
 
 	// GetContexts returns the list of contexts in kubeconfig which begin with prefix.
 	GetContexts(prefix string) ([]string, error)
 
 	// GetResourceNames returns the list of resource names which begin with prefix.
-	GetResourceNames(groupVersion, kind string, options []client.ListOption, prefix string) ([]string, error)
+	GetResourceNames(ctx context.Context, groupVersion, kind string, options []client.ListOption, prefix string) ([]string, error)
 }
 
 type proxy struct {
@@ -120,22 +121,12 @@ func (k *proxy) ValidateKubernetesVersion() error {
 		return err
 	}
 
-	client := discovery.NewDiscoveryClientForConfigOrDie(config)
-	serverVersion, err := client.ServerVersion()
-	if err != nil {
-		return errors.Wrap(err, "failed to retrieve server version")
+	minVer := version.MinimumKubernetesVersion
+	if clusterTopologyFeatureGate, _ := strconv.ParseBool(os.Getenv("CLUSTER_TOPOLOGY")); clusterTopologyFeatureGate {
+		minVer = version.MinimumKubernetesVersionClusterTopology
 	}
 
-	compver, err := utilversion.MustParseGeneric(serverVersion.String()).Compare(minimumKubernetesVersion)
-	if err != nil {
-		return errors.Wrap(err, "failed to parse and compare server version")
-	}
-
-	if compver == -1 {
-		return errors.Errorf("unsupported management cluster server version: %s - minimum required version is %s", serverVersion.String(), minimumKubernetesVersion)
-	}
-
-	return nil
+	return version.CheckKubernetesVersion(config, minVer)
 }
 
 // GetConfig returns the config for a kubernetes client.
@@ -174,7 +165,7 @@ func (k *proxy) NewClient() (client.Client, error) {
 	var c client.Client
 	// Nb. The operation is wrapped in a retry loop to make newClientSet more resilient to temporary connection problems.
 	connectBackoff := newConnectBackoff()
-	if err := retryWithExponentialBackoff(connectBackoff, func() error {
+	if err := retryWithExponentialBackoff(context.TODO(), connectBackoff, func(_ context.Context) error {
 		var err error
 		c, err = client.New(config, client.Options{Scheme: localScheme})
 		if err != nil {
@@ -200,13 +191,10 @@ func (k *proxy) CheckClusterAvailable() error {
 	}
 
 	connectBackoff := newShortConnectBackoff()
-	if err := retryWithExponentialBackoff(connectBackoff, func() error {
+	return retryWithExponentialBackoff(context.TODO(), connectBackoff, func(_ context.Context) error {
 		_, err := client.New(config, client.Options{Scheme: localScheme})
 		return err
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 // ListResources lists namespaced and cluster-wide resources for a component matching the labels. Namespaced resources are only listed
@@ -216,13 +204,13 @@ func (k *proxy) CheckClusterAvailable() error {
 // This is done to avoid errors when listing resources of providers which have already been deleted/scaled down to 0 replicas/with
 // malfunctioning webhooks.
 // For example:
-// * The AWS provider has already been deleted, but there are still cluster-wide resources of AWSClusterControllerIdentity.
-// * The AWSClusterControllerIdentity resources are still stored in an older version (e.g. v1alpha4, when the preferred
-//   version is v1beta1)
-// * If we now want to delete e.g. the kubeadm bootstrap provider, we cannot list AWSClusterControllerIdentity resources
-//   as the conversion would fail, because the AWS controller hosting the conversion webhook has already been deleted.
-// * Thus we exclude resources of other providers if we detect that ListResources is called to list resources of a provider.
-func (k *proxy) ListResources(labels map[string]string, namespaces ...string) ([]unstructured.Unstructured, error) {
+//   - The AWS provider has already been deleted, but there are still cluster-wide resources of AWSClusterControllerIdentity.
+//   - The AWSClusterControllerIdentity resources are still stored in an older version (e.g. v1alpha4, when the preferred
+//     version is v1beta1)
+//   - If we now want to delete e.g. the kubeadm bootstrap provider, we cannot list AWSClusterControllerIdentity resources
+//     as the conversion would fail, because the AWS controller hosting the conversion webhook has already been deleted.
+//   - Thus we exclude resources of other providers if we detect that ListResources is called to list resources of a provider.
+func (k *proxy) ListResources(ctx context.Context, labels map[string]string, namespaces ...string) ([]unstructured.Unstructured, error) {
 	cs, err := k.newClientSet()
 	if err != nil {
 		return nil, err
@@ -236,7 +224,7 @@ func (k *proxy) ListResources(labels map[string]string, namespaces ...string) ([
 	// Get all the API resources in the cluster.
 	resourceListBackoff := newReadBackoff()
 	var resourceList []*metav1.APIResourceList
-	if err := retryWithExponentialBackoff(resourceListBackoff, func() error {
+	if err := retryWithExponentialBackoff(ctx, resourceListBackoff, func(ctx context.Context) error {
 		resourceList, err = cs.Discovery().ServerPreferredResources()
 		return err
 	}); err != nil {
@@ -245,17 +233,17 @@ func (k *proxy) ListResources(labels map[string]string, namespaces ...string) ([
 
 	// Exclude from discovery the objects from the cert-manager/provider's CRDs.
 	// Those objects are not part of the components, and they will eventually be removed when removing the CRD definition.
-	crdsToExclude := sets.String{}
+	crdsToExclude := sets.Set[string]{}
 
 	crdList := &apiextensionsv1.CustomResourceDefinitionList{}
-	if err := retryWithExponentialBackoff(newReadBackoff(), func() error {
+	if err := retryWithExponentialBackoff(ctx, newReadBackoff(), func(ctx context.Context) error {
 		return c.List(ctx, crdList)
 	}); err != nil {
 		return nil, errors.Wrap(err, "failed to list CRDs")
 	}
 	for _, crd := range crdList.Items {
-		component, isCoreComponent := labels[clusterctlv1.ClusterctlCoreLabelName]
-		_, isProviderResource := crd.Labels[clusterv1.ProviderLabelName]
+		component, isCoreComponent := labels[clusterctlv1.ClusterctlCoreLabel]
+		_, isProviderResource := crd.Labels[clusterv1.ProviderNameLabel]
 		if (isCoreComponent && component == clusterctlv1.ClusterctlCoreLabelCertManagerValue) || isProviderResource {
 			for _, version := range crd.Spec.Versions {
 				crdsToExclude.Insert(metav1.GroupVersionKind{
@@ -295,14 +283,14 @@ func (k *proxy) ListResources(labels map[string]string, namespaces ...string) ([
 			// List all the object instances of this resourceKind with the given labels
 			if resourceKind.Namespaced {
 				for _, namespace := range namespaces {
-					objList, err := listObjByGVK(c, resourceGroup.GroupVersion, resourceKind.Kind, []client.ListOption{client.MatchingLabels(labels), client.InNamespace(namespace)})
+					objList, err := listObjByGVK(ctx, c, resourceGroup.GroupVersion, resourceKind.Kind, []client.ListOption{client.MatchingLabels(labels), client.InNamespace(namespace)})
 					if err != nil {
 						return nil, err
 					}
 					ret = append(ret, objList.Items...)
 				}
 			} else {
-				objList, err := listObjByGVK(c, resourceGroup.GroupVersion, resourceKind.Kind, []client.ListOption{client.MatchingLabels(labels)})
+				objList, err := listObjByGVK(ctx, c, resourceGroup.GroupVersion, resourceKind.Kind, []client.ListOption{client.MatchingLabels(labels)})
 				if err != nil {
 					return nil, err
 				}
@@ -331,13 +319,13 @@ func (k *proxy) GetContexts(prefix string) ([]string, error) {
 }
 
 // GetResourceNames returns the list of resource names which begin with prefix.
-func (k *proxy) GetResourceNames(groupVersion, kind string, options []client.ListOption, prefix string) ([]string, error) {
+func (k *proxy) GetResourceNames(ctx context.Context, groupVersion, kind string, options []client.ListOption, prefix string) ([]string, error) {
 	client, err := k.NewClient()
 	if err != nil {
 		return nil, err
 	}
 
-	objList, err := listObjByGVK(client, groupVersion, kind, options)
+	objList, err := listObjByGVK(ctx, client, groupVersion, kind, options)
 	if err != nil {
 		return nil, err
 	}
@@ -354,16 +342,18 @@ func (k *proxy) GetResourceNames(groupVersion, kind string, options []client.Lis
 	return comps, nil
 }
 
-func listObjByGVK(c client.Client, groupVersion, kind string, options []client.ListOption) (*unstructured.UnstructuredList, error) {
+func listObjByGVK(ctx context.Context, c client.Client, groupVersion, kind string, options []client.ListOption) (*unstructured.UnstructuredList, error) {
 	objList := new(unstructured.UnstructuredList)
 	objList.SetAPIVersion(groupVersion)
 	objList.SetKind(kind)
 
-	if err := c.List(ctx, objList, options...); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return nil, errors.Wrapf(err, "failed to list objects for the %q GroupVersionKind", objList.GroupVersionKind())
-		}
+	resourceListBackoff := newReadBackoff()
+	if err := retryWithExponentialBackoff(ctx, resourceListBackoff, func(ctx context.Context) error {
+		return c.List(ctx, objList, options...)
+	}); err != nil {
+		return nil, errors.Wrapf(err, "failed to list objects for the %q GroupVersionKind", objList.GroupVersionKind())
 	}
+
 	return objList, nil
 }
 
@@ -412,7 +402,7 @@ func (k *proxy) newClientSet() (*kubernetes.Clientset, error) {
 	var cs *kubernetes.Clientset
 	// Nb. The operation is wrapped in a retry loop to make newClientSet more resilient to temporary connection problems.
 	connectBackoff := newConnectBackoff()
-	if err := retryWithExponentialBackoff(connectBackoff, func() error {
+	if err := retryWithExponentialBackoff(context.TODO(), connectBackoff, func(_ context.Context) error {
 		var err error
 		cs, err = kubernetes.NewForConfig(config)
 		if err != nil {

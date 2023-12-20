@@ -25,7 +25,10 @@ import (
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -35,8 +38,10 @@ import (
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/repository"
+	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/scheme"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/util"
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
+	"sigs.k8s.io/cluster-api/util/contract"
 )
 
 // ProviderInstaller defines methods for enforcing consistency rules for provider installation.
@@ -47,13 +52,15 @@ type ProviderInstaller interface {
 	Add(repository.Components)
 
 	// Install performs the installation of the providers ready in the install queue.
-	Install(InstallOptions) ([]repository.Components, error)
+	Install(context.Context, InstallOptions) ([]repository.Components, error)
 
 	// Validate performs steps to validate a management cluster by looking at the current state and the providers in the queue.
 	// The following checks are performed in order to ensure a fully operational cluster:
 	// - There must be only one instance of the same provider
 	// - All the providers in must support the same API Version of Cluster API (contract)
-	Validate() error
+	// - All provider CRDs that are referenced in core Cluster API CRDs must comply with the CRD naming scheme,
+	//   otherwise a warning is logged.
+	Validate(context.Context) error
 
 	// Images returns the list of images required for installing the providers ready in the install queue.
 	Images() []string
@@ -86,36 +93,36 @@ func (i *providerInstaller) Add(components repository.Components) {
 	})
 }
 
-func (i *providerInstaller) Install(opts InstallOptions) ([]repository.Components, error) {
+func (i *providerInstaller) Install(ctx context.Context, opts InstallOptions) ([]repository.Components, error) {
 	ret := make([]repository.Components, 0, len(i.installQueue))
 	for _, components := range i.installQueue {
-		if err := installComponentsAndUpdateInventory(components, i.providerComponents, i.providerInventory); err != nil {
+		if err := installComponentsAndUpdateInventory(ctx, components, i.providerComponents, i.providerInventory); err != nil {
 			return nil, err
 		}
 
 		ret = append(ret, components)
 	}
 
-	return ret, i.waitForProvidersReady(opts)
+	return ret, waitForProvidersReady(ctx, opts, i.installQueue, i.proxy)
 }
 
-func installComponentsAndUpdateInventory(components repository.Components, providerComponents ComponentsClient, providerInventory InventoryClient) error {
+func installComponentsAndUpdateInventory(ctx context.Context, components repository.Components, providerComponents ComponentsClient, providerInventory InventoryClient) error {
 	log := logf.Log
 	log.Info("Installing", "Provider", components.ManifestLabel(), "Version", components.Version(), "TargetNamespace", components.TargetNamespace())
 
 	inventoryObject := components.InventoryObject()
 
 	log.V(1).Info("Creating objects", "Provider", components.ManifestLabel(), "Version", components.Version(), "TargetNamespace", components.TargetNamespace())
-	if err := providerComponents.Create(components.Objs()); err != nil {
+	if err := providerComponents.Create(ctx, components.Objs()); err != nil {
 		return err
 	}
 
 	log.V(1).Info("Creating inventory entry", "Provider", components.ManifestLabel(), "Version", components.Version(), "TargetNamespace", components.TargetNamespace())
-	return providerInventory.Create(inventoryObject)
+	return providerInventory.Create(ctx, inventoryObject)
 }
 
 // waitForProvidersReady waits till the installed components are ready.
-func (i *providerInstaller) waitForProvidersReady(opts InstallOptions) error {
+func waitForProvidersReady(ctx context.Context, opts InstallOptions, installQueue []repository.Components, proxy Proxy) error {
 	// If we dont have to wait for providers to be installed
 	// return early.
 	if !opts.WaitProviders {
@@ -125,16 +132,16 @@ func (i *providerInstaller) waitForProvidersReady(opts InstallOptions) error {
 	log := logf.Log
 	log.Info("Waiting for providers to be available...")
 
-	return i.waitManagerDeploymentsReady(opts)
+	return waitManagerDeploymentsReady(ctx, opts, installQueue, proxy)
 }
 
 // waitManagerDeploymentsReady waits till the installed manager deployments are ready.
-func (i *providerInstaller) waitManagerDeploymentsReady(opts InstallOptions) error {
-	for _, components := range i.installQueue {
+func waitManagerDeploymentsReady(ctx context.Context, opts InstallOptions, installQueue []repository.Components, proxy Proxy) error {
+	for _, components := range installQueue {
 		for _, obj := range components.Objs() {
 			if util.IsDeploymentWithManager(obj) {
-				if err := i.waitDeploymentReady(obj, opts.WaitProviderTimeout); err != nil {
-					return err
+				if err := waitDeploymentReady(ctx, obj, opts.WaitProviderTimeout, proxy); err != nil {
+					return errors.Wrapf(err, "deployment %q is not ready after %s", obj.GetName(), opts.WaitProviderTimeout)
 				}
 			}
 		}
@@ -142,9 +149,9 @@ func (i *providerInstaller) waitManagerDeploymentsReady(opts InstallOptions) err
 	return nil
 }
 
-func (i *providerInstaller) waitDeploymentReady(deployment unstructured.Unstructured, timeout time.Duration) error {
-	return wait.Poll(100*time.Millisecond, timeout, func() (bool, error) {
-		c, err := i.proxy.NewClient()
+func waitDeploymentReady(ctx context.Context, deployment unstructured.Unstructured, timeout time.Duration, proxy Proxy) error {
+	return wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, timeout, false, func(ctx context.Context) (bool, error) {
+		c, err := proxy.NewClient()
 		if err != nil {
 			return false, err
 		}
@@ -153,7 +160,7 @@ func (i *providerInstaller) waitDeploymentReady(deployment unstructured.Unstruct
 			Name:      deployment.GetName(),
 		}
 		dep := &appsv1.Deployment{}
-		if err := c.Get(context.TODO(), key, dep); err != nil {
+		if err := c.Get(ctx, key, dep); err != nil {
 			return false, err
 		}
 		for _, c := range dep.Status.Conditions {
@@ -165,9 +172,9 @@ func (i *providerInstaller) waitDeploymentReady(deployment unstructured.Unstruct
 	})
 }
 
-func (i *providerInstaller) Validate() error {
+func (i *providerInstaller) Validate(ctx context.Context) error {
 	// Get the list of providers currently in the cluster.
-	providerList, err := i.providerInventory.List()
+	providerList, err := i.providerInventory.List(ctx)
 	if err != nil {
 		return err
 	}
@@ -191,7 +198,7 @@ func (i *providerInstaller) Validate() error {
 	}
 	coreProvider := coreProviders[0]
 
-	managementClusterContract, err := i.getProviderContract(providerInstanceContracts, coreProvider)
+	managementClusterContract, err := i.getProviderContract(ctx, providerInstanceContracts, coreProvider)
 	if err != nil {
 		return err
 	}
@@ -201,7 +208,7 @@ func (i *providerInstaller) Validate() error {
 		provider := components.InventoryObject()
 
 		// Gets the API Version of Cluster API (contract) the provider support and compare it with the management cluster contract.
-		providerContract, err := i.getProviderContract(providerInstanceContracts, provider)
+		providerContract, err := i.getProviderContract(ctx, providerInstanceContracts, provider)
 		if err != nil {
 			return err
 		}
@@ -209,11 +216,77 @@ func (i *providerInstaller) Validate() error {
 			return errors.Errorf("installing provider %q can lead to a non functioning management cluster: the target version for the provider supports the %s API Version of Cluster API (contract), while the management cluster is using %s", components.ManifestLabel(), providerContract, managementClusterContract)
 		}
 	}
+
+	// Validate if provider CRDs comply with the naming scheme.
+	for _, components := range i.installQueue {
+		componentObjects := components.Objs()
+
+		for _, obj := range componentObjects {
+			// Continue if object is not a CRD.
+			if obj.GetKind() != customResourceDefinitionKind {
+				continue
+			}
+
+			gk, err := getCRDGroupKind(obj)
+			if err != nil {
+				return errors.Wrap(err, "failed to read group and kind from CustomResourceDefinition")
+			}
+
+			if err := validateCRDName(obj, gk); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
+func getCRDGroupKind(obj unstructured.Unstructured) (*schema.GroupKind, error) {
+	var group string
+	var kind string
+	version := obj.GroupVersionKind().Version
+	switch version {
+	case apiextensionsv1beta1.SchemeGroupVersion.Version:
+		crd := &apiextensionsv1beta1.CustomResourceDefinition{}
+		if err := scheme.Scheme.Convert(&obj, crd, nil); err != nil {
+			return nil, errors.Wrapf(err, "failed to convert %s CustomResourceDefinition %q", version, obj.GetName())
+		}
+		group = crd.Spec.Group
+		kind = crd.Spec.Names.Kind
+	case apiextensionsv1.SchemeGroupVersion.Version:
+		crd := &apiextensionsv1.CustomResourceDefinition{}
+		if err := scheme.Scheme.Convert(&obj, crd, nil); err != nil {
+			return nil, errors.Wrapf(err, "failed to convert %s CustomResourceDefinition %q", version, obj.GetName())
+		}
+		group = crd.Spec.Group
+		kind = crd.Spec.Names.Kind
+	default:
+		return nil, errors.Errorf("failed to read %s CustomResourceDefinition %q", version, obj.GetName())
+	}
+	return &schema.GroupKind{Group: group, Kind: kind}, nil
+}
+
+func validateCRDName(obj unstructured.Unstructured, gk *schema.GroupKind) error {
+	// Return if CRD has skip CRD name preflight check annotation.
+	if _, ok := obj.GetAnnotations()[clusterctlv1.SkipCRDNamePreflightCheckAnnotation]; ok {
+		return nil
+	}
+
+	correctCRDName := contract.CalculateCRDName(gk.Group, gk.Kind)
+
+	// Return if name is correct.
+	if obj.GetName() == correctCRDName {
+		return nil
+	}
+
+	return errors.Errorf("ERROR: CRD name %q is invalid for a CRD referenced in a core Cluster API CRD,"+
+		"it should be %q. Support for CRDs that are referenced in core Cluster API resources with invalid names has been "+
+		"dropped. Note: Please check if this CRD is actually referenced in core Cluster API "+
+		"CRDs. If not, this warning can be hidden by setting the %q' annotation.", obj.GetName(), correctCRDName, clusterctlv1.SkipCRDNamePreflightCheckAnnotation)
+}
+
 // getProviderContract returns the API Version of Cluster API (contract) for a provider instance.
-func (i *providerInstaller) getProviderContract(providerInstanceContracts map[string]string, provider clusterctlv1.Provider) (string, error) {
+func (i *providerInstaller) getProviderContract(ctx context.Context, providerInstanceContracts map[string]string, provider clusterctlv1.Provider) (string, error) {
 	// If the contract for the provider instance is already known, return it.
 	if contract, ok := providerInstanceContracts[provider.InstanceName()]; ok {
 		return contract, nil
@@ -227,12 +300,12 @@ func (i *providerInstaller) getProviderContract(providerInstanceContracts map[st
 		return "", err
 	}
 
-	providerRepository, err := i.repositoryClientFactory(configRepository, i.configClient)
+	providerRepository, err := i.repositoryClientFactory(ctx, configRepository, i.configClient)
 	if err != nil {
 		return "", err
 	}
 
-	latestMetadata, err := providerRepository.Metadata(provider.Version).Get()
+	latestMetadata, err := providerRepository.Metadata(provider.Version).Get(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -277,11 +350,11 @@ func simulateInstall(providerList *clusterctlv1.ProviderList, components reposit
 }
 
 func (i *providerInstaller) Images() []string {
-	ret := sets.NewString()
+	ret := sets.Set[string]{}
 	for _, components := range i.installQueue {
 		ret = ret.Insert(components.Images()...)
 	}
-	return ret.List()
+	return sets.List(ret)
 }
 
 func newProviderInstaller(configClient config.Client, repositoryClientFactory RepositoryClientFactory, proxy Proxy, providerMetadata InventoryClient, providerComponents ComponentsClient) *providerInstaller {

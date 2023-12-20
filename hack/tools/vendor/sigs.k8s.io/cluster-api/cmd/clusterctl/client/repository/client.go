@@ -17,7 +17,9 @@ limitations under the License.
 package repository
 
 import (
+	"context"
 	"net/url"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -32,8 +34,13 @@ import (
 type Client interface {
 	config.Provider
 
+	// DefaultVersion returns the default provider version returned by a repository.
+	// In case the repository URL points to latest, this method returns the current latest version; in other cases
+	// it returns the version of the provider hosted in the repository.
+	DefaultVersion() string
+
 	// GetVersions return the list of versions that are available in a provider repository
-	GetVersions() ([]string, error)
+	GetVersions(ctx context.Context) ([]string, error)
 
 	// Components provide access to YAML file for creating provider components.
 	Components() ComponentsClient
@@ -42,7 +49,7 @@ type Client interface {
 	// Please note that templates are expected to exist for the infrastructure providers only.
 	Templates(version string) TemplateClient
 
-	// ClusterClasses provide access to YAML file for the cluster classes available
+	// ClusterClasses provide access to YAML file for the ClusterClasses available
 	// for the provider.
 	ClusterClasses(version string) ClusterClassClient
 
@@ -61,8 +68,12 @@ type repositoryClient struct {
 // ensure repositoryClient implements Client.
 var _ Client = &repositoryClient{}
 
-func (c *repositoryClient) GetVersions() ([]string, error) {
-	return c.repository.GetVersions()
+func (c *repositoryClient) DefaultVersion() string {
+	return c.repository.DefaultVersion()
+}
+
+func (c *repositoryClient) GetVersions(ctx context.Context) ([]string, error) {
+	return c.repository.GetVersions(ctx)
 }
 
 func (c *repositoryClient) Components() ComponentsClient {
@@ -105,11 +116,11 @@ func InjectYamlProcessor(p yaml.Processor) Option {
 }
 
 // New returns a Client.
-func New(provider config.Provider, configClient config.Client, options ...Option) (Client, error) {
-	return newRepositoryClient(provider, configClient, options...)
+func New(ctx context.Context, provider config.Provider, configClient config.Client, options ...Option) (Client, error) {
+	return newRepositoryClient(ctx, provider, configClient, options...)
 }
 
-func newRepositoryClient(provider config.Provider, configClient config.Client, options ...Option) (*repositoryClient, error) {
+func newRepositoryClient(ctx context.Context, provider config.Provider, configClient config.Client, options ...Option) (*repositoryClient, error) {
 	client := &repositoryClient{
 		Provider:     provider,
 		configClient: configClient,
@@ -121,7 +132,7 @@ func newRepositoryClient(provider config.Provider, configClient config.Client, o
 
 	// if there is an injected repository, use it, otherwise use a default one
 	if client.repository == nil {
-		r, err := repositoryFactory(provider, configClient.Variables())
+		r, err := repositoryFactory(ctx, provider, configClient.Variables())
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get repository client for the %s with name %s", provider.Type(), provider.Name())
 		}
@@ -150,32 +161,45 @@ type Repository interface {
 	ComponentsPath() string
 
 	// GetFile return a file for a given provider version.
-	GetFile(version string, path string) ([]byte, error)
+	GetFile(ctx context.Context, version string, path string) ([]byte, error)
 
 	// GetVersions return the list of versions that are available in a provider repository
-	GetVersions() ([]string, error)
+	GetVersions(ctx context.Context) ([]string, error)
 }
 
 // repositoryFactory returns the repository implementation corresponding to the provider URL.
-func repositoryFactory(providerConfig config.Provider, configVariablesClient config.VariablesClient) (Repository, error) {
+func repositoryFactory(ctx context.Context, providerConfig config.Provider, configVariablesClient config.VariablesClient) (Repository, error) {
 	// parse the repository url
 	rURL, err := url.Parse(providerConfig.URL())
 	if err != nil {
 		return nil, errors.Errorf("failed to parse repository url %q", providerConfig.URL())
 	}
 
-	// if the url is a github repository
-	if rURL.Scheme == httpsScheme && rURL.Host == githubDomain {
-		repo, err := NewGitHubRepository(providerConfig, configVariablesClient)
-		if err != nil {
-			return nil, errors.Wrap(err, "error creating the GitHub repository client")
+	if rURL.Scheme == httpsScheme {
+		// if the url is a GitHub repository
+		if rURL.Host == githubDomain {
+			repo, err := NewGitHubRepository(ctx, providerConfig, configVariablesClient)
+			if err != nil {
+				return nil, errors.Wrap(err, "error creating the GitHub repository client")
+			}
+			return repo, err
 		}
-		return repo, err
+
+		// if the url is a GitLab repository
+		if strings.HasPrefix(rURL.Host, gitlabHostPrefix) && strings.HasPrefix(rURL.RawPath, gitlabPackagesAPIPrefix) {
+			repo, err := NewGitLabRepository(providerConfig, configVariablesClient)
+			if err != nil {
+				return nil, errors.Wrap(err, "error creating the GitLab repository client")
+			}
+			return repo, err
+		}
+
+		return nil, errors.Errorf("invalid provider url. Only GitHub and GitLab are supported for %q schema", rURL.Scheme)
 	}
 
 	// if the url is a local filesystem repository
 	if rURL.Scheme == "file" || rURL.Scheme == "" {
-		repo, err := newLocalRepository(providerConfig, configVariablesClient)
+		repo, err := newLocalRepository(ctx, providerConfig, configVariablesClient)
 		if err != nil {
 			return nil, errors.Wrap(err, "error creating the local filesystem repository client")
 		}

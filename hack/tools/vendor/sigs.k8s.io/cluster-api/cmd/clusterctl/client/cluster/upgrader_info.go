@@ -17,6 +17,7 @@ limitations under the License.
 package cluster
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -46,19 +47,19 @@ type upgradeInfo struct {
 
 // getUpgradeInfo returns all the info required for taking upgrade decisions for a provider.
 // NOTE: This could contain also versions for the previous or next Cluster API contract (not supported in current clusterctl release, but upgrade plan should report this options).
-func (u *providerUpgrader) getUpgradeInfo(provider clusterctlv1.Provider) (*upgradeInfo, error) {
+func (u *providerUpgrader) getUpgradeInfo(ctx context.Context, provider clusterctlv1.Provider) (*upgradeInfo, error) {
 	// Gets the list of versions available in the provider repository.
 	configRepository, err := u.configClient.Providers().Get(provider.ProviderName, provider.GetProviderType())
 	if err != nil {
 		return nil, err
 	}
 
-	providerRepository, err := u.repositoryClientFactory(configRepository, u.configClient)
+	providerRepository, err := u.repositoryClientFactory(ctx, configRepository, u.configClient)
 	if err != nil {
 		return nil, err
 	}
 
-	repositoryVersions, err := providerRepository.GetVersions()
+	repositoryVersions, err := providerRepository.GetVersions(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func (u *providerUpgrader) getUpgradeInfo(provider clusterctlv1.Provider) (*upgr
 		}
 	}
 
-	latestMetadata, err := providerRepository.Metadata(versionTag(latestVersion)).Get()
+	latestMetadata, err := providerRepository.Metadata(versionTag(latestVersion)).Get(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func newUpgradeInfo(metadata *clusterctlv1.Metadata, currentVersion *version.Ver
 
 // getContractsForUpgrade return the list of API Version of Cluster API (contract) version available for a provider upgrade.
 func (i *upgradeInfo) getContractsForUpgrade() []string {
-	contractsForUpgrade := sets.NewString()
+	contractsForUpgrade := sets.Set[string]{}
 	for _, releaseSeries := range i.metadata.ReleaseSeries {
 		// Drop the release series if older than the current version, because not relevant for upgrade.
 		if i.currentVersion.Major() > releaseSeries.Major || (i.currentVersion.Major() == releaseSeries.Major && i.currentVersion.Minor() > releaseSeries.Minor) {
@@ -158,7 +159,7 @@ func (i *upgradeInfo) getContractsForUpgrade() []string {
 		contractsForUpgrade.Insert(releaseSeries.Contract)
 	}
 
-	return contractsForUpgrade.List()
+	return sets.List(contractsForUpgrade)
 }
 
 // getLatestNextVersion returns the next available version for a provider within the target API Version of Cluster API (contract).

@@ -24,8 +24,8 @@ import (
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/pkg/errors"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"sigs.k8s.io/cluster-api/internal/contract"
 	tlog "sigs.k8s.io/cluster-api/internal/log"
@@ -57,7 +57,7 @@ func (i PreserveFields) ApplyToHelper(opts *PatchOptions) {
 	opts.preserveFields = i
 }
 
-// patchObject overwrites spec in object with spec.template.spec of patchedTemplate,
+// patchObject overwrites spec in object with spec.template.spec of modifiedObject,
 // while preserving the configured fields.
 // For example, ControlPlane.spec will be overwritten with the patched
 // ControlPlaneTemplate.spec.template.spec but preserving spec.version and spec.replicas
@@ -66,7 +66,7 @@ func patchObject(ctx context.Context, object, modifiedObject *unstructured.Unstr
 	return patchUnstructured(ctx, object, modifiedObject, "spec.template.spec", "spec", opts...)
 }
 
-// patchTemplate overwrites spec.template.spec in template with spec.template.spec of patchedTemplate,
+// patchTemplate overwrites spec.template.spec in template with spec.template.spec of modifiedTemplate,
 // while preserving the configured fields.
 // For example, it's possible to patch BootstrapTemplate.spec.template.spec with a patched
 // BootstrapTemplate.spec.template.spec while preserving fields configured via opts.fieldsToPreserve.
@@ -135,7 +135,7 @@ func calculateDiff(original, patched *unstructured.Unstructured) ([]byte, error)
 }
 
 // patchTemplateSpec overwrites spec in templateJSON with spec of patchedTemplateBytes.
-func patchTemplateSpec(templateJSON *apiextensionsv1.JSON, patchedTemplateBytes []byte) error {
+func patchTemplateSpec(templateJSON *runtime.RawExtension, patchedTemplateBytes []byte) error {
 	// Convert templates to Unstructured.
 	template, err := bytesToUnstructured(templateJSON.Raw)
 	if err != nil {
@@ -161,6 +161,7 @@ func patchTemplateSpec(templateJSON *apiextensionsv1.JSON, patchedTemplateBytes 
 	if err != nil {
 		return errors.Wrapf(err, "failed to marshal patched template")
 	}
+	templateJSON.Object = template
 	templateJSON.Raw = templateBytes
 	return nil
 }

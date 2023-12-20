@@ -25,32 +25,37 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sigs.k8s.io/cluster-api/controllers/external"
-	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
 )
 
 // bootstrapTemplateNamePrefix calculates the name prefix for a BootstrapTemplate.
 func bootstrapTemplateNamePrefix(clusterName, machineDeploymentTopologyName string) string {
-	return fmt.Sprintf("%s-%s-bootstrap-", clusterName, machineDeploymentTopologyName)
+	return fmt.Sprintf("%s-%s-", clusterName, machineDeploymentTopologyName)
 }
 
 // infrastructureMachineTemplateNamePrefix calculates the name prefix for a InfrastructureMachineTemplate.
 func infrastructureMachineTemplateNamePrefix(clusterName, machineDeploymentTopologyName string) string {
-	return fmt.Sprintf("%s-%s-infra-", clusterName, machineDeploymentTopologyName)
+	return fmt.Sprintf("%s-%s-", clusterName, machineDeploymentTopologyName)
+}
+
+// bootstrapConfigNamePrefix calculates the name prefix for a BootstrapConfig.
+func bootstrapConfigNamePrefix(clusterName, machinePoolTopologyName string) string {
+	return fmt.Sprintf("%s-%s-", clusterName, machinePoolTopologyName)
+}
+
+// infrastructureMachinePoolNamePrefix calculates the name prefix for a InfrastructureMachinePool.
+func infrastructureMachinePoolNamePrefix(clusterName, machinePoolTopologyName string) string {
+	return fmt.Sprintf("%s-%s-", clusterName, machinePoolTopologyName)
 }
 
 // infrastructureMachineTemplateNamePrefix calculates the name prefix for a InfrastructureMachineTemplate.
 func controlPlaneInfrastructureMachineTemplateNamePrefix(clusterName string) string {
-	return fmt.Sprintf("%s-control-plane-", clusterName)
+	return fmt.Sprintf("%s-", clusterName)
 }
 
 // getReference gets the object referenced in ref.
-// If necessary, it updates the ref to the latest apiVersion of the current contract.
 func (r *Reconciler) getReference(ctx context.Context, ref *corev1.ObjectReference) (*unstructured.Unstructured, error) {
 	if ref == nil {
 		return nil, errors.New("reference is not set")
-	}
-	if err := utilconversion.UpdateReferenceAPIContract(ctx, r.Client, r.APIReader, ref); err != nil {
-		return nil, err
 	}
 
 	obj, err := external.Get(ctx, r.UnstructuredCachingClient, ref, ref.Namespace)

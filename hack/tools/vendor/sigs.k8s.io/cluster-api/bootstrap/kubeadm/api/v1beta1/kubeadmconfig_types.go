@@ -17,9 +17,13 @@ limitations under the License.
 package v1beta1
 
 import (
+	"fmt"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/feature"
 )
 
 // Format specifies the output format of the bootstrap data
@@ -32,6 +36,16 @@ const (
 
 	// Ignition make the bootstrap data to be of Ignition format.
 	Ignition Format = "ignition"
+)
+
+var (
+	cannotUseWithIgnition                            = fmt.Sprintf("not supported when spec.format is set to: %q", Ignition)
+	conflictingFileSourceMsg                         = "only one of content or contentFrom may be specified for a single file"
+	conflictingUserSourceMsg                         = "only one of passwd or passwdFrom may be specified for a single user"
+	kubeadmBootstrapFormatIgnitionFeatureDisabledMsg = "can be set only if the KubeadmBootstrapFormatIgnition feature gate is enabled"
+	missingSecretNameMsg                             = "secret file source must specify non-empty secret name"
+	missingSecretKeyMsg                              = "secret file source must specify non-empty secret key"
+	pathConflictMsg                                  = "path property must be unique among all files"
 )
 
 // KubeadmConfigSpec defines the desired state of KubeadmConfig.
@@ -79,7 +93,6 @@ type KubeadmConfigSpec struct {
 
 	// Format specifies the output format of the bootstrap data
 	// +optional
-	// +kubebuilder:default=cloud-config
 	Format Format `json:"format,omitempty"`
 
 	// Verbosity is the number for the kubeadm log level verbosity.
@@ -98,11 +111,250 @@ type KubeadmConfigSpec struct {
 	//
 	// For more information, refer to https://github.com/kubernetes-sigs/cluster-api/pull/2763#discussion_r397306055.
 	// +optional
+	//
+	// Deprecated: This experimental fix is no longer needed and this field will be removed in a future release.
+	// When removing also remove from staticcheck exclude-rules for SA1019 in golangci.yml
 	UseExperimentalRetryJoin bool `json:"useExperimentalRetryJoin,omitempty"`
 
 	// Ignition contains Ignition specific configuration.
 	// +optional
 	Ignition *IgnitionSpec `json:"ignition,omitempty"`
+}
+
+// Default defaults a KubeadmConfigSpec.
+func (c *KubeadmConfigSpec) Default() {
+	if c.Format == "" {
+		c.Format = CloudConfig
+	}
+	if c.InitConfiguration != nil && c.InitConfiguration.NodeRegistration.ImagePullPolicy == "" {
+		c.InitConfiguration.NodeRegistration.ImagePullPolicy = "IfNotPresent"
+	}
+	if c.JoinConfiguration != nil && c.JoinConfiguration.NodeRegistration.ImagePullPolicy == "" {
+		c.JoinConfiguration.NodeRegistration.ImagePullPolicy = "IfNotPresent"
+	}
+}
+
+// Validate ensures the KubeadmConfigSpec is valid.
+func (c *KubeadmConfigSpec) Validate(pathPrefix *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	allErrs = append(allErrs, c.validateFiles(pathPrefix)...)
+	allErrs = append(allErrs, c.validateUsers(pathPrefix)...)
+	allErrs = append(allErrs, c.validateIgnition(pathPrefix)...)
+
+	return allErrs
+}
+
+func (c *KubeadmConfigSpec) validateFiles(pathPrefix *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	knownPaths := map[string]struct{}{}
+
+	for i := range c.Files {
+		file := c.Files[i]
+		if file.Content != "" && file.ContentFrom != nil {
+			allErrs = append(
+				allErrs,
+				field.Invalid(
+					pathPrefix.Child("files").Index(i),
+					file,
+					conflictingFileSourceMsg,
+				),
+			)
+		}
+		// n.b.: if we ever add types besides Secret as a ContentFrom
+		// Source, we must add webhook validation here for one of the
+		// sources being non-nil.
+		if file.ContentFrom != nil {
+			if file.ContentFrom.Secret.Name == "" {
+				allErrs = append(
+					allErrs,
+					field.Required(
+						pathPrefix.Child("files").Index(i).Child("contentFrom", "secret", "name"),
+						missingSecretNameMsg,
+					),
+				)
+			}
+			if file.ContentFrom.Secret.Key == "" {
+				allErrs = append(
+					allErrs,
+					field.Required(
+						pathPrefix.Child("files").Index(i).Child("contentFrom", "secret", "key"),
+						missingSecretKeyMsg,
+					),
+				)
+			}
+		}
+		_, conflict := knownPaths[file.Path]
+		if conflict {
+			allErrs = append(
+				allErrs,
+				field.Invalid(
+					pathPrefix.Child("files").Index(i).Child("path"),
+					file,
+					pathConflictMsg,
+				),
+			)
+		}
+		knownPaths[file.Path] = struct{}{}
+	}
+
+	return allErrs
+}
+
+func (c *KubeadmConfigSpec) validateUsers(pathPrefix *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	for i := range c.Users {
+		user := c.Users[i]
+		if user.Passwd != nil && user.PasswdFrom != nil {
+			allErrs = append(
+				allErrs,
+				field.Invalid(
+					pathPrefix.Child("users").Index(i),
+					user,
+					conflictingUserSourceMsg,
+				),
+			)
+		}
+		// n.b.: if we ever add types besides Secret as a PasswdFrom
+		// Source, we must add webhook validation here for one of the
+		// sources being non-nil.
+		if user.PasswdFrom != nil {
+			if user.PasswdFrom.Secret.Name == "" {
+				allErrs = append(
+					allErrs,
+					field.Required(
+						pathPrefix.Child("users").Index(i).Child("passwdFrom", "secret", "name"),
+						missingSecretNameMsg,
+					),
+				)
+			}
+			if user.PasswdFrom.Secret.Key == "" {
+				allErrs = append(
+					allErrs,
+					field.Required(
+						pathPrefix.Child("users").Index(i).Child("passwdFrom", "secret", "key"),
+						missingSecretKeyMsg,
+					),
+				)
+			}
+		}
+	}
+
+	return allErrs
+}
+
+func (c *KubeadmConfigSpec) validateIgnition(pathPrefix *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if !feature.Gates.Enabled(feature.KubeadmBootstrapFormatIgnition) {
+		if c.Format == Ignition {
+			allErrs = append(allErrs, field.Forbidden(
+				pathPrefix.Child("format"), kubeadmBootstrapFormatIgnitionFeatureDisabledMsg))
+		}
+
+		if c.Ignition != nil {
+			allErrs = append(allErrs, field.Forbidden(
+				pathPrefix.Child("ignition"), kubeadmBootstrapFormatIgnitionFeatureDisabledMsg))
+		}
+
+		return allErrs
+	}
+
+	if c.Format != Ignition {
+		if c.Ignition != nil {
+			allErrs = append(
+				allErrs,
+				field.Invalid(
+					pathPrefix.Child("format"),
+					c.Format,
+					fmt.Sprintf("must be set to %q if spec.ignition is set", Ignition),
+				),
+			)
+		}
+
+		return allErrs
+	}
+
+	for i, user := range c.Users {
+		if user.Inactive != nil && *user.Inactive {
+			allErrs = append(
+				allErrs,
+				field.Forbidden(
+					pathPrefix.Child("users").Index(i).Child("inactive"),
+					cannotUseWithIgnition,
+				),
+			)
+		}
+	}
+
+	if c.UseExperimentalRetryJoin {
+		allErrs = append(
+			allErrs,
+			field.Forbidden(
+				pathPrefix.Child("useExperimentalRetryJoin"),
+				cannotUseWithIgnition,
+			),
+		)
+	}
+
+	for i, file := range c.Files {
+		if file.Encoding == Gzip || file.Encoding == GzipBase64 {
+			allErrs = append(
+				allErrs,
+				field.Forbidden(
+					pathPrefix.Child("files").Index(i).Child("encoding"),
+					cannotUseWithIgnition,
+				),
+			)
+		}
+	}
+
+	if c.DiskSetup == nil {
+		return allErrs
+	}
+
+	for i, partition := range c.DiskSetup.Partitions {
+		if partition.TableType != nil && *partition.TableType != "gpt" {
+			allErrs = append(
+				allErrs,
+				field.Invalid(
+					pathPrefix.Child("diskSetup", "partitions").Index(i).Child("tableType"),
+					*partition.TableType,
+					fmt.Sprintf(
+						"only partition type %q is supported when spec.format is set to %q",
+						"gpt",
+						Ignition,
+					),
+				),
+			)
+		}
+	}
+
+	for i, fs := range c.DiskSetup.Filesystems {
+		if fs.ReplaceFS != nil {
+			allErrs = append(
+				allErrs,
+				field.Forbidden(
+					pathPrefix.Child("diskSetup", "filesystems").Index(i).Child("replaceFS"),
+					cannotUseWithIgnition,
+				),
+			)
+		}
+
+		if fs.Partition != nil {
+			allErrs = append(
+				allErrs,
+				field.Forbidden(
+					pathPrefix.Child("diskSetup", "filesystems").Index(i).Child("partition"),
+					cannotUseWithIgnition,
+				),
+			)
+		}
+	}
+
+	return allErrs
 }
 
 // IgnitionSpec contains Ignition specific configuration.
@@ -191,7 +443,7 @@ type KubeadmConfigList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&KubeadmConfig{}, &KubeadmConfigList{})
+	objectTypes = append(objectTypes, &KubeadmConfig{}, &KubeadmConfigList{})
 }
 
 // Encoding specifies the cloud-init file encoding.
@@ -224,6 +476,10 @@ type File struct {
 	// +optional
 	Encoding Encoding `json:"encoding,omitempty"`
 
+	// Append specifies whether to append Content to existing file if Path exists.
+	// +optional
+	Append bool `json:"append,omitempty"`
+
 	// Content is the actual content of the file.
 	// +optional
 	Content string `json:"content,omitempty"`
@@ -246,6 +502,26 @@ type FileSource struct {
 // The contents of the target Secret's Data field will be presented
 // as files using the keys in the Data field as the file names.
 type SecretFileSource struct {
+	// Name of the secret in the KubeadmBootstrapConfig's namespace to use.
+	Name string `json:"name"`
+
+	// Key is the key in the secret's data map for this value.
+	Key string `json:"key"`
+}
+
+// PasswdSource is a union of all possible external source types for passwd data.
+// Only one field may be populated in any given instance. Developers adding new
+// sources of data for target systems should add them here.
+type PasswdSource struct {
+	// Secret represents a secret that should populate this password.
+	Secret SecretPasswdSource `json:"secret"`
+}
+
+// SecretPasswdSource adapts a Secret into a PasswdSource.
+//
+// The contents of the target Secret's Data field will be presented
+// as passwd using the keys in the Data field as the file names.
+type SecretPasswdSource struct {
 	// Name of the secret in the KubeadmBootstrapConfig's namespace to use.
 	Name string `json:"name"`
 
@@ -281,6 +557,10 @@ type User struct {
 	// Passwd specifies a hashed password for the user
 	// +optional
 	Passwd *string `json:"passwd,omitempty"`
+
+	// PasswdFrom is a referenced source of passwd to populate the passwd.
+	// +optional
+	PasswdFrom *PasswdSource `json:"passwdFrom,omitempty"`
 
 	// PrimaryGroup specifies the primary group for the user
 	// +optional
