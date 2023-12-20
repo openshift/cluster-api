@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1alpha1"
+	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 )
 
 func TestIPAddressValidateCreate(t *testing.T) {
@@ -156,7 +156,8 @@ func TestIPAddressValidateCreate(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
+	for i := range tests {
+		tt := tests[i]
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 			scheme := runtime.NewScheme()
@@ -214,7 +215,8 @@ func TestIPAddressValidateUpdate(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
+	for i := range tests {
+		tt := tests[i]
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 			scheme := runtime.NewScheme()

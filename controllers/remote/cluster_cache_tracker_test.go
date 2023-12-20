@@ -18,6 +18,7 @@ package remote
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
@@ -31,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -43,10 +45,14 @@ func mapper(_ context.Context, i client.Object) []reconcile.Request {
 		{
 			NamespacedName: types.NamespacedName{
 				Namespace: i.GetNamespace(),
-				Name:      "mapped-" + i.GetName(),
+				Name:      getMappedName(i.GetName()),
 			},
 		},
 	}
+}
+
+func getMappedName(name string) string {
+	return fmt.Sprintf("mapped-%s", name)
 }
 
 func TestClusterCacheTracker(t *testing.T) {
@@ -68,8 +74,10 @@ func TestClusterCacheTracker(t *testing.T) {
 			t.Log("Setting up a new manager")
 			var err error
 			mgr, err = manager.New(env.Config, manager.Options{
-				Scheme:             scheme.Scheme,
-				MetricsBindAddress: "0",
+				Scheme: scheme.Scheme,
+				Metrics: metricsserver.Options{
+					BindAddress: "0",
+				},
 			})
 			g.Expect(err).ToNot(HaveOccurred())
 
@@ -124,7 +132,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			g.Expect(cleanupTestSecrets(ctx, k8sClient)).To(Succeed())
 			t.Log("Deleting any Clusters")
 			g.Expect(cleanupTestClusters(ctx, k8sClient)).To(Succeed())
-			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
+			g.Expect(<-c.ch).To(Equal(getMappedName(clusterA.Name)))
 			g.Consistently(c.ch).ShouldNot(Receive())
 			t.Log("Deleting Namespace")
 			g.Expect(env.Delete(ctx, ns)).To(Succeed())
@@ -147,7 +155,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			})).To(Succeed())
 
 			t.Log("Waiting to receive the watch notification")
-			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
+			g.Expect(<-c.ch).To(Equal(getMappedName(clusterA.Name)))
 
 			t.Log("Ensuring no additional watch notifications arrive")
 			g.Consistently(c.ch).ShouldNot(Receive())
@@ -159,7 +167,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			g.Expect(k8sClient.Update(ctx, clusterA)).To(Succeed())
 
 			t.Log("Waiting to receive the watch notification")
-			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
+			g.Expect(<-c.ch).To(Equal(getMappedName(clusterA.Name)))
 
 			t.Log("Ensuring no additional watch notifications arrive")
 			g.Consistently(c.ch).ShouldNot(Receive())
@@ -181,7 +189,7 @@ func TestClusterCacheTracker(t *testing.T) {
 			g.Expect(k8sClient.Update(ctx, clusterA)).To(Succeed())
 
 			t.Log("Waiting to receive the watch notification")
-			g.Expect(<-c.ch).To(Equal("mapped-" + clusterA.Name))
+			g.Expect(<-c.ch).To(Equal(getMappedName(clusterA.Name)))
 
 			t.Log("Ensuring no additional watch notifications arrive")
 			g.Consistently(c.ch).ShouldNot(Receive())

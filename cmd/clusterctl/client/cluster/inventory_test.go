@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1alpha3 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1alpha4 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test"
 )
@@ -67,14 +67,16 @@ func Test_inventoryClient_CheckInventoryCRDs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
+			ctx := context.Background()
+
 			proxy := test.NewFakeProxy()
 			p := newInventoryClient(proxy, fakePollImmediateWaiter)
 			if tt.fields.alreadyHasCRD {
 				// forcing creation of metadata before test
-				g.Expect(p.EnsureCustomResourceDefinitions()).To(Succeed())
+				g.Expect(p.EnsureCustomResourceDefinitions(ctx)).To(Succeed())
 			}
 
-			res, err := checkInventoryCRDs(proxy)
+			res, err := checkInventoryCRDs(ctx, proxy)
 			g.Expect(res).To(Equal(tt.want))
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
@@ -115,7 +117,7 @@ func Test_inventoryClient_List(t *testing.T) {
 			g := NewWithT(t)
 
 			p := newInventoryClient(test.NewFakeProxy().WithObjs(tt.fields.initObjs...), fakePollImmediateWaiter)
-			got, err := p.List()
+			got, err := p.List(context.Background())
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -177,10 +179,12 @@ func Test_inventoryClient_Create(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
+			ctx := context.Background()
+
 			p := &inventoryClient{
 				proxy: tt.fields.proxy,
 			}
-			err := p.Create(tt.args.m)
+			err := p.Create(ctx, tt.args.m)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -188,7 +192,7 @@ func Test_inventoryClient_Create(t *testing.T) {
 
 			g.Expect(err).ToNot(HaveOccurred())
 
-			got, err := p.List()
+			got, err := p.List(ctx)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -280,26 +284,6 @@ func Test_CheckCAPIContract(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "Pass when Cluster API with v1alpha3 contract is installed, but this is explicitly tolerated",
-			fields: fields{
-				proxy: test.NewFakeProxy().WithObjs(&apiextensionsv1.CustomResourceDefinition{
-					ObjectMeta: metav1.ObjectMeta{Name: "clusters.cluster.x-k8s.io"},
-					Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-						Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
-							{
-								Name:    clusterv1alpha3.GroupVersion.Version,
-								Storage: true,
-							},
-						},
-					},
-				}),
-			},
-			args: args{
-				options: []CheckCAPIContractOption{AllowCAPIContract{Contract: clusterv1alpha3.GroupVersion.Version}, AllowCAPIContract{Contract: test.PreviousCAPIContractNotSupported}},
-			},
-			wantErr: false,
-		},
-		{
 			name: "Pass when Cluster API with previous contract is installed, but this is explicitly tolerated",
 			fields: fields{
 				proxy: test.NewFakeProxy().WithObjs(&apiextensionsv1.CustomResourceDefinition{
@@ -318,7 +302,7 @@ func Test_CheckCAPIContract(t *testing.T) {
 				}),
 			},
 			args: args{
-				options: []CheckCAPIContractOption{AllowCAPIContract{Contract: clusterv1alpha3.GroupVersion.Version}, AllowCAPIContract{Contract: test.PreviousCAPIContractNotSupported}},
+				options: []CheckCAPIContractOption{AllowCAPIContract{Contract: clusterv1alpha4.GroupVersion.Version}, AllowCAPIContract{Contract: test.PreviousCAPIContractNotSupported}},
 			},
 			wantErr: false,
 		},
@@ -351,7 +335,7 @@ func Test_CheckCAPIContract(t *testing.T) {
 			p := &inventoryClient{
 				proxy: tt.fields.proxy,
 			}
-			err := p.CheckCAPIContract(tt.args.options...)
+			err := p.CheckCAPIContract(context.Background(), tt.args.options...)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -398,7 +382,7 @@ func Test_inventoryClient_CheckSingleProviderInstance(t *testing.T) {
 			g := NewWithT(t)
 
 			p := newInventoryClient(test.NewFakeProxy().WithObjs(tt.fields.initObjs...), fakePollImmediateWaiter)
-			err := p.CheckSingleProviderInstance()
+			err := p.CheckSingleProviderInstance(context.Background())
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return

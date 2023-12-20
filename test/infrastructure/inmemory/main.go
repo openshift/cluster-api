@@ -51,27 +51,26 @@ import (
 	"sigs.k8s.io/cluster-api/test/infrastructure/inmemory/internal/cloud"
 	cloudv1 "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/internal/cloud/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/test/infrastructure/inmemory/internal/server"
+	"sigs.k8s.io/cluster-api/test/infrastructure/inmemory/webhooks"
 	"sigs.k8s.io/cluster-api/util/flags"
 	"sigs.k8s.io/cluster-api/version"
 )
 
 var (
-	scheme      = runtime.NewScheme()
-	cloudScheme = runtime.NewScheme()
-	setupLog    = ctrl.Log.WithName("setup")
+	cloudScheme    = runtime.NewScheme()
+	scheme         = runtime.NewScheme()
+	setupLog       = ctrl.Log.WithName("setup")
+	controllerName = "cluster-api-inmemory-controller-manager"
 
 	// flags.
-	metricsBindAddr             string
 	enableLeaderElection        bool
 	leaderElectionLeaseDuration time.Duration
 	leaderElectionRenewDeadline time.Duration
 	leaderElectionRetryPeriod   time.Duration
-	watchNamespace              string
 	watchFilterValue            string
+	watchNamespace              string
 	profilerAddress             string
 	enableContentionProfiling   bool
-	clusterConcurrency          int
-	machineConcurrency          int
 	syncPeriod                  time.Duration
 	restConfigQPS               float32
 	restConfigBurst             int
@@ -79,7 +78,11 @@ var (
 	webhookCertDir              string
 	healthAddr                  string
 	tlsOptions                  = flags.TLSOptions{}
+	diagnosticsOptions          = flags.DiagnosticsOptions{}
 	logOptions                  = logs.NewOptions()
+	// CAPIM specific flags.
+	clusterConcurrency int
+	machineConcurrency int
 )
 
 func init() {
@@ -98,9 +101,6 @@ func init() {
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
 	logsv1.AddFlags(logOptions, fs)
-
-	fs.StringVar(&metricsBindAddr, "metrics-bind-addr", "localhost:8080",
-		"The address the metric endpoint binds to.")
 
 	fs.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
@@ -124,7 +124,7 @@ func InitFlags(fs *pflag.FlagSet) {
 		"Bind address to expose the pprof profiler (e.g. localhost:6060)")
 
 	fs.BoolVar(&enableContentionProfiling, "contention-profiling", false,
-		"Enable block profiling, if profiler-address is set.")
+		"Enable block profiling")
 
 	fs.IntVar(&clusterConcurrency, "cluster-concurrency", 10,
 		"Number of clusters to process simultaneously")
@@ -150,15 +150,25 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
 
+	flags.AddDiagnosticsOptions(fs, &diagnosticsOptions)
 	flags.AddTLSOptions(fs, &tlsOptions)
 
 	feature.MutableGates.AddFlag(fs)
 }
 
+// Add RBAC for the authorized diagnostics endpoint.
+// +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+
 func main() {
 	InitFlags(pflag.CommandLine)
 	pflag.CommandLine.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
+	// Set log level 2 as default.
+	if err := pflag.CommandLine.Set("v", "2"); err != nil {
+		setupLog.Error(err, "failed to set log level: %v")
+		os.Exit(1)
+	}
 	pflag.Parse()
 
 	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
@@ -172,7 +182,7 @@ func main() {
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS
 	restConfig.Burst = restConfigBurst
-	restConfig.UserAgent = remote.DefaultClusterAPIUserAgent("cluster-api-inmemory-controller-manager")
+	restConfig.UserAgent = remote.DefaultClusterAPIUserAgent(controllerName)
 
 	tlsOptionOverrides, err := flags.GetTLSOptionOverrideFuncs(tlsOptions)
 	if err != nil {
@@ -180,18 +190,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	var watchNamespaces []string
+	diagnosticsOpts := flags.GetDiagnosticsOptions(diagnosticsOptions)
+
+	var watchNamespaces map[string]cache.Config
 	if watchNamespace != "" {
-		watchNamespaces = []string{watchNamespace}
+		watchNamespaces = map[string]cache.Config{
+			watchNamespace: {},
+		}
 	}
 
-	if profilerAddress != "" && enableContentionProfiling {
+	if enableContentionProfiling {
 		goruntime.SetBlockProfileRate(1)
 	}
 
 	ctrlOptions := ctrl.Options{
 		Scheme:                     scheme,
-		MetricsBindAddress:         metricsBindAddr,
 		LeaderElection:             enableLeaderElection,
 		LeaderElectionID:           "inmemory-controller-leader-election-capi",
 		LeaseDuration:              &leaderElectionLeaseDuration,
@@ -200,9 +213,10 @@ func main() {
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
 		HealthProbeBindAddress:     healthAddr,
 		PprofBindAddress:           profilerAddress,
+		Metrics:                    diagnosticsOpts,
 		Cache: cache.Options{
-			Namespaces: watchNamespaces,
-			SyncPeriod: &syncPeriod,
+			DefaultNamespaces: watchNamespaces,
+			SyncPeriod:        &syncPeriod,
 		},
 		Client: client.Options{
 			Cache: &client.CacheOptions{
@@ -235,7 +249,6 @@ func main() {
 	setupReconcilers(ctx, mgr)
 	setupWebhooks(mgr)
 
-	// +kubebuilder:scaffold:builder
 	setupLog.Info("starting manager", "version", version.Get().String())
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
@@ -297,22 +310,22 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 }
 
 func setupWebhooks(mgr ctrl.Manager) {
-	if err := (&infrav1.InMemoryCluster{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.InMemoryCluster{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "InMemoryCluster")
 		os.Exit(1)
 	}
 
-	if err := (&infrav1.InMemoryClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.InMemoryClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "InMemoryClusterTemplate")
 		os.Exit(1)
 	}
 
-	if err := (&infrav1.InMemoryMachine{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.InMemoryMachine{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "InMemoryMachine")
 		os.Exit(1)
 	}
 
-	if err := (&infrav1.InMemoryMachineTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.InMemoryMachineTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "InMemoryMachineTemplate")
 		os.Exit(1)
 	}

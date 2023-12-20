@@ -124,6 +124,7 @@ type KubeadmConfigStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
 // +kubebuilder:deprecatedversion
 // +kubebuilder:resource:path=kubeadmconfigs,scope=Namespaced,categories=cluster-api
 // +kubebuilder:subresource:status
@@ -162,7 +163,7 @@ type KubeadmConfigList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&KubeadmConfig{}, &KubeadmConfigList{})
+	objectTypes = append(objectTypes, &KubeadmConfig{}, &KubeadmConfigList{})
 }
 
 // Encoding specifies the cloud-init file encoding.

@@ -17,6 +17,7 @@ limitations under the License.
 package cluster
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"strings"
@@ -95,9 +96,9 @@ func Test_topologyClient_Plan(t *testing.T) {
 					{kind: "DockerCluster", namespace: "default", namePrefix: "my-cluster-"},
 					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-md-0-"},
 					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-md-1-"},
-					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-control-plane-"},
-					{kind: "KubeadmConfigTemplate", namespace: "default", namePrefix: "my-cluster-md-0-bootstrap-"},
-					{kind: "KubeadmConfigTemplate", namespace: "default", namePrefix: "my-cluster-md-1-bootstrap-"},
+					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-"},
+					{kind: "KubeadmConfigTemplate", namespace: "default", namePrefix: "my-cluster-md-0-"},
+					{kind: "KubeadmConfigTemplate", namespace: "default", namePrefix: "my-cluster-md-1-"},
 					{kind: "KubeadmControlPlane", namespace: "default", namePrefix: "my-cluster-"},
 					{kind: "MachineDeployment", namespace: "default", namePrefix: "my-cluster-md-0-"},
 					{kind: "MachineDeployment", namespace: "default", namePrefix: "my-cluster-md-1-"},
@@ -169,7 +170,7 @@ func Test_topologyClient_Plan(t *testing.T) {
 				created: []item{
 					// Modifying the DockerClusterTemplate will result in template rotation. A new template will be created
 					// and used by KCP.
-					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-control-plane-"},
+					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-"},
 				},
 				reconciledCluster: &client.ObjectKey{Namespace: "default", Name: "my-cluster"},
 			},
@@ -234,7 +235,7 @@ func Test_topologyClient_Plan(t *testing.T) {
 				created: []item{
 					// Modifying the DockerClusterTemplate will result in template rotation. A new template will be created
 					// and used by KCP.
-					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-control-plane-"},
+					{kind: "DockerMachineTemplate", namespace: "default", namePrefix: "my-cluster-"},
 				},
 				reconciledCluster: &client.ObjectKey{Namespace: "default", Name: "my-cluster"},
 			},
@@ -264,6 +265,8 @@ func Test_topologyClient_Plan(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
+			ctx := context.Background()
+
 			existingObjects := []client.Object{}
 			for _, o := range tt.existingObjects {
 				existingObjects = append(existingObjects, o)
@@ -275,7 +278,7 @@ func Test_topologyClient_Plan(t *testing.T) {
 				inventoryClient,
 			)
 
-			res, err := tc.Plan(tt.args.in)
+			res, err := tc.Plan(ctx, tt.args.in)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -300,7 +303,7 @@ func Test_topologyClient_Plan(t *testing.T) {
 				g.Expect(res.ReconciledCluster).To(BeNil())
 			} else {
 				g.Expect(res.ReconciledCluster).NotTo(BeNil())
-				g.Expect(*res.ReconciledCluster).To(Equal(*tt.want.reconciledCluster))
+				g.Expect(*res.ReconciledCluster).To(BeComparableTo(*tt.want.reconciledCluster))
 			}
 
 			// Check the created objects.

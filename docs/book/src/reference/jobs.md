@@ -19,8 +19,6 @@ Prow Presubmits:
     * GINKGO_FOCUS: `[PR-Blocking]`
 * optional for merge, run if go code changes:
   * [pull-cluster-api-apidiff-main] `./scripts/ci-apidiff.sh`
-  * [pull-cluster-api-e2e-informing-main] `./scripts/ci-e2e.sh`
-    * GINKGO_FOCUS: `[PR-Informing]`
 * mandatory for merge, run if manually triggered:
   * [pull-cluster-api-test-mink8s-main] `./scripts/ci-test.sh`
     * KUBEBUILDER_ENVTEST_KUBERNETES_VERSION: `1.24.2`
@@ -38,23 +36,29 @@ Prow Presubmits:
   * [pull-cluster-api-e2e-scale-main-experimental] `./scripts/ci-e2e-scale.sh`
 
 GitHub Presubmit Workflows:
-* golangci-lint: golangci/golangci-lint-action
+* PR golangci-lint: golangci/golangci-lint-action
   * Runs golangci-lint. Can be run locally via `make lint`.
-* verify: kubernetes-sigs/kubebuilder-release-tools verifier
+* PR verify: kubernetes-sigs/kubebuilder-release-tools verifier
   * Verifies the PR titles have a valid format, i.e. contains one of the valid icons.
   * Verifies the PR description is valid, i.e. is long enough.
-* Check PR Markdown links (run when markdown files changed)
-  * Checks markdown for broken links.
-* dependabot (run on dependabot PRs)
+* PR check Markdown links (run when markdown files changed)
+  * Checks markdown modified in PR for broken links.
+* PR dependabot (run on dependabot PRs)
   * Regenerates Go modules and code.
-* release (run on tags)
-  * Creates a GitHub release with release notes for the tag.
+* PR approve GH Workflows
+  * Approves other GH workflows if the `ok-to-test` label is set.
 
 GitHub Weekly Workflows:
-* golangci-lint: golangci/golangci-lint-action
-  * Weekly check all Markdown links
-* scan-images:
+* Weekly check all Markdown links
+  * Checks markdown across the repo for broken links.
+* Weekly image scan:
   * Scan all images for vulnerabilities. Can be run locally via `make verify-container-images`
+* Weekly release test:
+  * Test the the `release` make target is working without errors.
+  
+Other Github workflows
+* release (runs when tags are pushed)
+  * Creates a GitHub release with release notes for the tag.
 
 ### Postsubmits
 

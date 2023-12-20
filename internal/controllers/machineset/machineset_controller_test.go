@@ -297,7 +297,7 @@ func TestMachineSetReconciler(t *testing.T) {
 			fakeInfrastructureRefReady(m.Spec.InfrastructureRef, infraResource, g)
 		}
 
-		// Verify that in-place mutable fields propagate form MachineSet to Machines.
+		// Verify that in-place mutable fields propagate from MachineSet to Machines.
 		t.Log("Updating NodeDrainTimeout on MachineSet")
 		patchHelper, err := patch.NewHelper(instance, env)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -487,7 +487,7 @@ func TestMachineSetOwnerReference(t *testing.T) {
 			var actual clusterv1.MachineSet
 			if len(tc.expectedOR) > 0 {
 				g.Expect(msr.Client.Get(ctx, key, &actual)).To(Succeed())
-				g.Expect(actual.OwnerReferences).To(Equal(tc.expectedOR))
+				g.Expect(actual.OwnerReferences).To(BeComparableTo(tc.expectedOR))
 			} else {
 				g.Expect(actual.OwnerReferences).To(BeEmpty())
 			}
@@ -527,7 +527,7 @@ func TestMachineSetReconcile(t *testing.T) {
 		}
 		result, err := msr.Reconcile(ctx, request)
 		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(result).To(Equal(reconcile.Result{}))
+		g.Expect(result).To(BeComparableTo(reconcile.Result{}))
 	})
 
 	t.Run("records event if reconcile fails", func(t *testing.T) {
@@ -665,7 +665,7 @@ func TestMachineSetToMachines(t *testing.T) {
 			gs := NewWithT(t)
 
 			got := r.MachineToMachineSets(ctx, tc.mapObject)
-			gs.Expect(got).To(Equal(tc.expected))
+			gs.Expect(got).To(BeComparableTo(tc.expected))
 		})
 	}
 }
@@ -754,7 +754,8 @@ func TestShouldExcludeMachine(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
+	for i := range testCases {
+		tc := testCases[i]
 		g := NewWithT(t)
 
 		got := shouldExcludeMachine(&tc.machineSet, &tc.machine)
@@ -804,14 +805,15 @@ func TestAdoptOrphan(t *testing.T) {
 		Client:                    c,
 		UnstructuredCachingClient: c,
 	}
-	for _, tc := range testCases {
+	for i := range testCases {
+		tc := testCases[i]
 		g.Expect(r.adoptOrphan(ctx, tc.machineSet.DeepCopy(), tc.machine.DeepCopy())).To(Succeed())
 
 		key := client.ObjectKey{Namespace: tc.machine.Namespace, Name: tc.machine.Name}
 		g.Expect(r.Client.Get(ctx, key, &tc.machine)).To(Succeed())
 
 		got := tc.machine.GetOwnerReferences()
-		g.Expect(got).To(Equal(tc.expected))
+		g.Expect(got).To(BeComparableTo(tc.expected))
 	}
 }
 
@@ -1684,7 +1686,7 @@ func assertMachine(g *WithT, actualMachine *clusterv1.Machine, expectedMachine *
 		g.Expect(actualMachine.Annotations).Should(HaveKeyWithValue(k, v))
 	}
 	// Check Spec
-	g.Expect(actualMachine.Spec).Should(Equal(expectedMachine.Spec))
+	g.Expect(actualMachine.Spec).Should(BeComparableTo(expectedMachine.Spec))
 	// Check Finalizer
 	if expectedMachine.Finalizers != nil {
 		g.Expect(actualMachine.Finalizers).Should(Equal(expectedMachine.Finalizers))

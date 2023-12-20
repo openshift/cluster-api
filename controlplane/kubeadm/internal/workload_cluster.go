@@ -29,7 +29,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -120,6 +120,7 @@ type WorkloadCluster interface {
 	RemoveNodeFromKubeadmConfigMap(ctx context.Context, nodeName string, version semver.Version) error
 	ForwardEtcdLeadership(ctx context.Context, machine *clusterv1.Machine, leaderCandidate *clusterv1.Machine) error
 	AllowBootstrapTokensToGetNodes(ctx context.Context) error
+	AllowClusterAdminPermissions(ctx context.Context, version semver.Version) error
 
 	// State recovery tasks.
 	ReconcileEtcdMembers(ctx context.Context, nodeNames []string, version semver.Version) ([]string, error)

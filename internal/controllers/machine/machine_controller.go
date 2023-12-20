@@ -604,7 +604,11 @@ func (r *Reconciler) drainNode(ctx context.Context, cluster *clusterv1.Cluster, 
 
 	restConfig, err := r.Tracker.GetRESTConfig(ctx, util.ObjectKey(cluster))
 	if err != nil {
-		log.Error(err, "Error creating a remote client while deleting Machine, won't retry")
+		if errors.Is(err, remote.ErrClusterLocked) {
+			log.V(5).Info("Requeuing drain Node because another worker has the lock on the ClusterCacheTracker")
+			return ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(err, "Error creating a remote client for cluster while draining Node, won't retry")
 		return ctrl.Result{}, nil
 	}
 	restConfig = rest.CopyConfig(restConfig)
@@ -700,7 +704,10 @@ func (r *Reconciler) deleteNode(ctx context.Context, cluster *clusterv1.Cluster,
 
 	remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
-		log.Error(err, "Error creating a remote client for cluster while deleting Machine, won't retry")
+		if errors.Is(err, remote.ErrClusterLocked) {
+			return errors.Wrapf(err, "failed deleting Node because another worker has the lock on the ClusterCacheTracker")
+		}
+		log.Error(err, "Error creating a remote client for cluster while deleting Node, won't retry")
 		return nil
 	}
 
@@ -790,10 +797,15 @@ func (r *Reconciler) shouldAdopt(m *clusterv1.Machine) bool {
 	}
 
 	// Note: following checks are required because after restore from a backup both the Machine controller and the
-	// MachineSet/ControlPlane controller are racing to adopt Machines, see https://github.com/kubernetes-sigs/cluster-api/issues/7529
+	// MachineSet, MachinePool, or ControlPlane controller are racing to adopt Machines, see https://github.com/kubernetes-sigs/cluster-api/issues/7529
 
 	// If the Machine is originated by a MachineSet, it should not be adopted directly by the Cluster as a stand-alone Machine.
 	if _, ok := m.Labels[clusterv1.MachineSetNameLabel]; ok {
+		return false
+	}
+
+	// If the Machine is originated by a MachinePool object, it should not be adopted directly by the Cluster as a stand-alone Machine.
+	if _, ok := m.Labels[clusterv1.MachinePoolNameLabel]; ok {
 		return false
 	}
 

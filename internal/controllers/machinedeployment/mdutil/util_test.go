@@ -162,7 +162,7 @@ func TestMachineSetsByDecreasingReplicas(t *testing.T) {
 			// sort the machine sets and verify the sorted list
 			g := NewWithT(t)
 			sort.Sort(MachineSetsByDecreasingReplicas(tt.machineSets))
-			g.Expect(tt.machineSets).To(Equal(tt.want))
+			g.Expect(tt.machineSets).To(BeComparableTo(tt.want))
 		})
 	}
 }
@@ -384,12 +384,13 @@ func TestFindNewMachineSet(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
+	for i := range tests {
+		test := tests[i]
 		t.Run(test.Name, func(t *testing.T) {
 			g := NewWithT(t)
 
 			ms := FindNewMachineSet(&test.deployment, test.msList, test.reconciliationTime)
-			g.Expect(ms).To(Equal(test.expected))
+			g.Expect(ms).To(BeComparableTo(test.expected))
 		})
 	}
 }
@@ -478,7 +479,8 @@ func TestFindOldMachineSets(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
+	for i := range tests {
+		test := tests[i]
 		t.Run(test.Name, func(t *testing.T) {
 			g := NewWithT(t)
 
@@ -716,7 +718,8 @@ func TestDeploymentComplete(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
+	for i := range tests {
+		test := tests[i]
 		t.Run(test.name, func(t *testing.T) {
 			g := NewWithT(t)
 

@@ -21,7 +21,7 @@ import (
 	"compress/gzip"
 	"testing"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/gomega"
 
@@ -96,7 +96,7 @@ func TestWriteFiles(t *testing.T) {
 
 			cmds, err := rt.w.Commands()
 			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(rt.expectedCmds).To(Equal(cmds))
+			g.Expect(rt.expectedCmds).To(BeComparableTo(cmds))
 		})
 	}
 }
@@ -116,7 +116,7 @@ write_files:
     ---
     ClusterConfiguration...
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: InitConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock
@@ -127,7 +127,7 @@ write_files:
   permissions: '0640'
 - content: |
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: JoinConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock
@@ -174,7 +174,7 @@ write_files:
     ---
     ClusterConfiguration...
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: InitConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock
@@ -185,7 +185,7 @@ write_files:
   permissions: '0640'
 - content: |
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: JoinConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock
@@ -236,7 +236,7 @@ write_files:
     ---
     ClusterConfiguration...
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: InitConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock
@@ -247,7 +247,7 @@ write_files:
   permissions: '0640'
 - content: |
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: JoinConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock
@@ -296,7 +296,7 @@ write_files:
     ---
     ClusterConfiguration...
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: InitConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock
@@ -307,7 +307,7 @@ write_files:
   permissions: '0640'
 - content: |
     ---
-    apiVersion: kubeadm.k8s.io/v1beta1
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: JoinConfiguration
     nodeRegistration:
       criSocket: unix:///var/run/containerd/containerd.sock

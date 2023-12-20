@@ -67,7 +67,7 @@ func TestMux(t *testing.T) {
 	manager := cmanager.New(scheme)
 
 	wcl := "workload-cluster"
-	host := "127.0.0.1" //nolint:goconst
+	host := "127.0.0.1"
 	wcmux, err := NewWorkloadClustersMux(manager, host, CustomPorts{
 		// NOTE: make sure to use ports different than other tests, so we can run tests in parallel
 		MinPort:   DefaultMinPort,
@@ -188,7 +188,7 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 
 	node := &corev1.Node{}
 	g.Expect(c.Get(ctx, client.ObjectKeyFromObject(n3), node)).To(Succeed())
-	g.Expect(node.Spec.Taints).To(Equal(taints))
+	g.Expect(node.Spec.Taints).To(BeComparableTo(taints))
 
 	// delete
 

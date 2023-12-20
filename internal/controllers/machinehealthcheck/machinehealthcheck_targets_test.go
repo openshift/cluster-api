@@ -176,9 +176,9 @@ func TestGetTargetsFromMHC(t *testing.T) {
 			gs.Expect(targets).To(HaveLen(len(tc.expectedTargets)))
 			for i, target := range targets {
 				expectedTarget := tc.expectedTargets[i]
-				gs.Expect(target.Machine).To(Equal(expectedTarget.Machine))
-				gs.Expect(target.MHC).To(Equal(expectedTarget.MHC))
-				gs.Expect(target.Node).To(Equal(expectedTarget.Node))
+				gs.Expect(target.Machine).To(BeComparableTo(expectedTarget.Machine))
+				gs.Expect(target.MHC).To(BeComparableTo(expectedTarget.MHC))
+				gs.Expect(target.Node).To(BeComparableTo(expectedTarget.Node))
 			}
 		})
 	}
@@ -469,9 +469,10 @@ func TestHealthCheckTargets(t *testing.T) {
 			gs.Expect(healthy).To(ConsistOf(tc.expectedHealthy))
 			gs.Expect(unhealthy).To(ConsistOf(tc.expectedNeedsRemediation))
 			gs.Expect(nextCheckTimes).To(WithTransform(roundDurations, ConsistOf(tc.expectedNextCheckTimes)))
-			for i, expectedMachineConditions := range tc.expectedNeedsRemediationCondition {
+			for i, expectedMachineCondition := range tc.expectedNeedsRemediationCondition {
 				actualConditions := unhealthy[i].Machine.GetConditions()
-				gs.Expect(actualConditions).To(WithTransform(removeLastTransitionTimes, ContainElements(expectedMachineConditions)))
+				conditionsMatcher := WithTransform(removeLastTransitionTimes, ContainElements(expectedMachineCondition))
+				gs.Expect(actualConditions).To(conditionsMatcher)
 			}
 		})
 	}

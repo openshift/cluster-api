@@ -198,6 +198,7 @@ type KubeadmControlPlaneStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
 // +kubebuilder:deprecatedversion
 // +kubebuilder:resource:path=kubeadmcontrolplanes,shortName=kcp,scope=Namespaced,categories=cluster-api
 // +kubebuilder:subresource:status
@@ -244,5 +245,5 @@ type KubeadmControlPlaneList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&KubeadmControlPlane{}, &KubeadmControlPlaneList{})
+	objectTypes = append(objectTypes, &KubeadmControlPlane{}, &KubeadmControlPlaneList{})
 }

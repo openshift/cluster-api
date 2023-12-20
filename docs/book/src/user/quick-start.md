@@ -12,6 +12,16 @@ If using a [provider] that does not support v1beta1 or v1alpha4 yet, please foll
 
 ## Installation
 
+There are two major quickstart paths:  Using clusterctl or the Cluster API Operator.  
+ 
+ This article describes a path that uses the `clusterctl` CLI tool to handle the lifecycle of a Cluster API [management cluster](https://cluster-api.sigs.k8s.io/reference/glossary#management-cluster).
+
+The clusterctl command line interface is specifically designed for providing a simple “day 1 experience” and a quick start with Cluster API. It automates fetching the YAML files defining [provider components](https://cluster-api.sigs.k8s.io/reference/glossary#provider-components) and installing them.
+
+Additionally it encodes a set of best practices in managing providers, that helps the user in avoiding mis-configurations or in managing day 2 operations such as upgrades.
+
+The Cluster API Operator is a Kubernetes Operator built on top of clusterctl and designed to empower cluster administrators to handle the lifecycle of Cluster API providers within a management cluster using a declarative approach. It aims to improve user experience in deploying and managing Cluster API, making it easier to handle day-to-day tasks and automate workflows with GitOps. Visit the [CAPI Operator quickstart] if you want to experiment with this tool.
+
 ### Common Prerequisites
 
 - Install and setup [kubectl] in your local environment
@@ -161,17 +171,17 @@ If you are unsure you can determine your computers architecture by running `unam
 
 Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.5.x"}} -o clusterctl
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-amd64" version:"1.5.x"}} -o clusterctl
 ```
 
 Download for ARM64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-arm64" version:"1.5.x"}} -o clusterctl
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-arm64" version:"1.5.x"}} -o clusterctl
 ```
 
 Download for PPC64LE:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-ppc64le" version:"1.5.x"}} -o clusterctl
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-linux-ppc64le" version:"1.5.x"}} -o clusterctl
 ```
 
 Install clusterctl:
@@ -191,12 +201,12 @@ If you are unsure you can determine your computers architecture by running `unam
 
 Download for AMD64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.5.x"}} -o clusterctl
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-amd64" version:"1.5.x"}} -o clusterctl
 ```
 
 Download for M1 CPU ("Apple Silicon") / ARM64:
 ```bash
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.5.x"}} -o clusterctl
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-darwin-arm64" version:"1.5.x"}} -o clusterctl
 ```
 
 Make the clusterctl binary executable.
@@ -235,7 +245,7 @@ Go to the working directory where you want clusterctl downloaded.
 
 Download the latest release; on Windows, type:
 ```powershell
-curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.5.x"}} -o clusterctl.exe
+curl.exe -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api" asset:"clusterctl-windows-amd64.exe" version:"1.5.x"}} -o clusterctl.exe
 ```
 Append or prepend the path of that directory to the `PATH` environment variable.
 
@@ -281,7 +291,7 @@ Download the latest binary of `clusterawsadm` from the [AWS provider releases]. 
 
 Download the latest release; on Linux, type:
 ```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-linux-amd64" version:">=2.0.0"}} -o clusterawsadm
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-linux-amd64" version:">=2.0.0"}} -o clusterawsadm
 ```
 
 Make it executable
@@ -325,12 +335,12 @@ clusterctl init --infrastructure aws
 
 Download the latest release; on macOs, type:
 ```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-amd64" version:">=2.0.0"}} -o clusterawsadm
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-amd64" version:">=2.0.0"}} -o clusterawsadm
 ```
 
 Or if your Mac has an M1 CPU (”Apple Silicon”):
 ```
-curl -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-arm64" version:">=2.0.0"}} -o clusterawsadm
+curl -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-darwin-arm64" version:">=2.0.0"}} -o clusterawsadm
 ```
 
 Make it executable
@@ -407,7 +417,7 @@ clusterctl init --infrastructure aws
 
 Download the latest release; on Windows, type:
 ```
-curl.exe -L {{#releaselink gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-windows-amd64" version:">=2.0.0"}} -o clusterawsadm.exe
+curl.exe -L {{#releaselink repo:"https://github.com/kubernetes-sigs/cluster-api" gomodule:"sigs.k8s.io/cluster-api-provider-aws" asset:"clusterawsadm-windows-amd64" version:">=2.0.0"}} -o clusterawsadm.exe
 ```
 
 Append or prepend the path of that directory to the `PATH` environment variable.
@@ -539,7 +549,7 @@ clusterctl init --infrastructure docker
 In order to initialize the Equinix Metal Provider (formerly Packet) you have to expose the environment
 variable `PACKET_API_KEY`. This variable is used to authorize the infrastructure
 provider manager against the Equinix Metal API. You can retrieve your token directly
-from the [Equinix Metal Console](https://console.equinix.com/).
+from the Equinix Metal Console.
 
 ```bash
 export PACKET_API_KEY="34ts3g4s5g45gd45dhdh"
@@ -729,6 +739,35 @@ clusterctl init --infrastructure vsphere
 
 For more information about prerequisites, credentials management, or permissions for vSphere, see the [vSphere
 project][vSphere getting started guide].
+
+{{#/tab }}
+{{#tab Proxmox}}
+
+First, we need to add the IPAM provider to your clusterctl config file `~/.cluster-api/clusterctl.yaml`:
+```yaml
+providers:
+  - name: in-cluster
+    url: https://github.com/kubernetes-sigs/cluster-api-ipam-provider-in-cluster/releases/latest/ipam-components.yaml
+    type: IPAMProvider
+```
+
+```bash
+# The host for the Proxmox cluster
+export PROXMOX_URL="https://pve.example:8006"
+# The Proxmox token ID to access the remote Proxmox endpoint
+export PROXMOX_TOKEN='root@pam!capi'
+# The secret associated with the token ID
+# You may want to set this in `$XDG_CONFIG_HOME/cluster-api/clusterctl.yaml` so your password is not in
+# bash history
+export PROXMOX_SECRET="1234-1234-1234-1234"
+
+
+# Finally, initialize the management cluster
+clusterctl init --infrastructure proxmox --ipam in-cluster
+```
+
+For more information about the CAPI provider for Proxmox, see the [Proxmox
+project][Proxmox getting started guide].
 
 {{#/tab }}
 {{#/tabs }}
@@ -1198,6 +1237,37 @@ export CONTROL_PLANE_ENDPOINT_IP="1.2.3.4"
 For more information about prerequisites, credentials management, or permissions for vSphere, see the [vSphere getting started guide].
 
 {{#/tab }}
+{{#tab Proxmox}}
+
+A ClusterAPI compatible image must be available in your Proxmox cluster. For instructions on how to build a compatible VM template
+see [image-builder](https://image-builder.sigs.k8s.io/capi/capi.html).
+
+```bash
+# The node that hosts the VM template to be used to provision VMs
+export PROXMOX_SOURCENODE="pve"
+# The template VM ID used for cloning VMs
+export TEMPLATE_VMID=100
+# The ssh authorized keys used to ssh to the machines.
+export VM_SSH_KEYS="ssh-ed25519 ..., ssh-ed25519 ..."
+# The IP address used for the control plane endpoint
+export CONTROL_PLANE_ENDPOINT_IP=10.10.10.4
+# The IP ranges for Cluster nodes
+export NODE_IP_RANGES="[10.10.10.5-10.10.10.50, 10.10.10.55-10.10.10.70]"
+# The gateway for the machines network-config.
+export GATEWAY="10.10.10.1"
+# Subnet Mask in CIDR notation for your node IP ranges
+export IP_PREFIX=24
+# The Proxmox network device for VMs
+export BRIDGE="vmbr1"
+# The dns nameservers for the machines network-config.
+export DNS_SERVERS="[8.8.8.8,8.8.4.4]"
+# The Proxmox nodes used for VM deployments
+export ALLOWED_NODES="[pve1,pve2,pve3]"
+```
+
+For more information about prerequisites and advanced setups for Proxmox, see the [Proxmox getting started guide].
+
+{{#/tab }}
 {{#/tabs }}
 
 #### Generating the cluster configuration
@@ -1613,3 +1683,5 @@ kind delete cluster
 [provider components]: ../reference/glossary.md#provider-components
 [vSphere getting started guide]: https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/master/docs/getting_started.md
 [workload cluster]: ../reference/glossary.md#workload-cluster
+[CAPI Operator quickstart]: ./quick-start-operator.md
+[Proxmox getting started guide]: https://github.com/ionos-cloud/cluster-api-provider-proxmox/blob/main/docs/Usage.md

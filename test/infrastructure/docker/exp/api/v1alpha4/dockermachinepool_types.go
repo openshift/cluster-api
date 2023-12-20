@@ -113,6 +113,7 @@ type DockerMachinePoolInstanceStatus struct {
 
 // +kubebuilder:resource:path=dockermachinepools,scope=Namespaced,categories=cluster-api
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
 // +kubebuilder:deprecatedversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of DockerMachinePool"
@@ -150,5 +151,5 @@ type DockerMachinePoolList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&DockerMachinePool{}, &DockerMachinePoolList{})
+	objectTypes = append(objectTypes, &DockerMachinePool{}, &DockerMachinePoolList{})
 }

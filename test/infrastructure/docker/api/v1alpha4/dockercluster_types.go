@@ -95,6 +95,7 @@ type APIEndpoint struct {
 // +kubebuilder:resource:path=dockerclusters,scope=Namespaced,categories=cluster-api
 // +kubebuilder:subresource:status
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
 // +kubebuilder:deprecatedversion
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of DockerCluster"
 
@@ -131,5 +132,5 @@ type DockerClusterList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&DockerCluster{}, &DockerClusterList{})
+	objectTypes = append(objectTypes, &DockerCluster{}, &DockerClusterList{})
 }

@@ -20,7 +20,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -93,6 +93,10 @@ func (f fakeWorkloadCluster) GetAPIServerCertificateExpiry(_ context.Context, _ 
 }
 
 func (f fakeWorkloadCluster) AllowBootstrapTokensToGetNodes(_ context.Context) error {
+	return nil
+}
+
+func (f fakeWorkloadCluster) AllowClusterAdminPermissions(_ context.Context, _ semver.Version) error {
 	return nil
 }
 

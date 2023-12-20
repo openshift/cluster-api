@@ -28,6 +28,7 @@ import (
 	"k8s.io/utils/pointer"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
 )
@@ -395,7 +396,7 @@ func TestGlobal(t *testing.T) {
 
 			got, err := Global(tt.clusterTopology, tt.cluster, tt.forPatch, tt.variableDefinitionsForPatch)
 			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(got).To(Equal(tt.want))
+			g.Expect(got).To(BeComparableTo(tt.want))
 		})
 	}
 }
@@ -481,7 +482,7 @@ func TestControlPlane(t *testing.T) {
 
 			got, err := ControlPlane(tt.controlPlaneTopology, tt.controlPlane, tt.controlPlaneInfrastructureMachineTemplate)
 			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(got).To(Equal(tt.want))
+			g.Expect(got).To(BeComparableTo(tt.want))
 		})
 	}
 }
@@ -848,7 +849,374 @@ func TestMachineDeployment(t *testing.T) {
 
 			got, err := MachineDeployment(tt.mdTopology, tt.md, tt.mdBootstrapTemplate, tt.mdInfrastructureMachineTemplate, tt.forPatch, tt.variableDefinitionsForPatch)
 			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(got).To(Equal(tt.want))
+			g.Expect(got).To(BeComparableTo(tt.want))
+		})
+	}
+}
+
+func TestMachinePool(t *testing.T) {
+	tests := []struct {
+		name                        string
+		mpTopology                  *clusterv1.MachinePoolTopology
+		forPatch                    string
+		variableDefinitionsForPatch map[string]bool
+		mp                          *expv1.MachinePool
+		mpBootstrapConfig           *unstructured.Unstructured
+		mpInfrastructureMachinePool *unstructured.Unstructured
+		want                        []runtimehooksv1.Variable
+	}{
+		{
+			name:                        "Should calculate MachinePool variables",
+			variableDefinitionsForPatch: map[string]bool{"location": true, "cpu": true},
+			forPatch:                    "patch1",
+			mpTopology: &clusterv1.MachinePoolTopology{
+				Replicas: pointer.Int32(3),
+				Name:     "mp-topology",
+				Class:    "mp-class",
+				Variables: &clusterv1.MachinePoolVariables{
+					Overrides: []clusterv1.ClusterVariable{
+						{
+							Name:  "location",
+							Value: toJSON("\"us-central\""),
+						},
+						{
+							Name:  "cpu",
+							Value: toJSON("8"),
+						},
+					},
+				},
+			},
+			mp: builder.MachinePool(metav1.NamespaceDefault, "mp1").
+				WithReplicas(3).
+				WithVersion("v1.21.1").
+				Build(),
+			want: []runtimehooksv1.Variable{
+				{
+					Name:  "location",
+					Value: toJSON("\"us-central\""),
+				},
+				{
+					Name:  "cpu",
+					Value: toJSON("8"),
+				},
+				{
+					Name: BuiltinsName,
+					Value: toJSONCompact(`{
+					"machinePool":{
+						"version": "v1.21.1",
+						"class": "mp-class",
+						"name": "mp1",
+						"topologyName": "mp-topology",
+						"replicas":3
+					}}`),
+				},
+			},
+		},
+		{
+			name:     "Should calculate MachinePool variables for a given patch name",
+			forPatch: "patch1",
+			variableDefinitionsForPatch: map[string]bool{
+				"location": true,
+				"cpu":      true,
+			},
+			mpTopology: &clusterv1.MachinePoolTopology{
+				Replicas: pointer.Int32(3),
+				Name:     "mp-topology",
+				Class:    "mp-class",
+				Variables: &clusterv1.MachinePoolVariables{
+					Overrides: []clusterv1.ClusterVariable{
+						{
+							Name:           "location",
+							Value:          toJSON("\"us-central\""),
+							DefinitionFrom: "patch1",
+						},
+						{
+							Name:  "location",
+							Value: toJSON("\"us-east\""),
+							// This variable should be excluded because it is defined for a different patch.
+							DefinitionFrom: "anotherPatch",
+						},
+
+						{
+							Name:  "http-proxy",
+							Value: toJSON("\"internal.proxy.com\""),
+							// This variable should be excluded because it is not in variableDefinitionsForPatch.
+							DefinitionFrom: "",
+						},
+						{
+							Name:  "cpu",
+							Value: toJSON("8"),
+							// This variable should be included because it is defined for all patches.
+						},
+					},
+				},
+			},
+			mp: builder.MachinePool(metav1.NamespaceDefault, "mp1").
+				WithReplicas(3).
+				WithVersion("v1.21.1").
+				Build(),
+			want: []runtimehooksv1.Variable{
+				{
+					Name:  "location",
+					Value: toJSON("\"us-central\""),
+				},
+				{
+					Name:  "cpu",
+					Value: toJSON("8"),
+				},
+				{
+					Name: BuiltinsName,
+					Value: toJSONCompact(`{
+					"machinePool":{
+						"version": "v1.21.1",
+						"class": "mp-class",
+						"name": "mp1",
+						"topologyName": "mp-topology",
+						"replicas":3
+					}}`),
+				},
+			},
+		},
+		{
+			name:                        "Should calculate MachinePool variables (without overrides)",
+			forPatch:                    "patch1",
+			variableDefinitionsForPatch: map[string]bool{"location": true, "cpu": true},
+			mpTopology: &clusterv1.MachinePoolTopology{
+				Replicas: pointer.Int32(3),
+				Name:     "mp-topology",
+				Class:    "mp-class",
+			},
+			mp: builder.MachinePool(metav1.NamespaceDefault, "mp1").
+				WithReplicas(3).
+				WithVersion("v1.21.1").
+				Build(),
+			want: []runtimehooksv1.Variable{
+				{
+					Name: BuiltinsName,
+					Value: toJSONCompact(`{
+					"machinePool":{
+						"version": "v1.21.1",
+						"class": "mp-class",
+						"name": "mp1",
+						"topologyName": "mp-topology",
+						"replicas":3
+					}}`),
+				},
+			},
+		},
+		{
+			name:                        "Should calculate MachinePool variables, replicas not set",
+			forPatch:                    "patch1",
+			variableDefinitionsForPatch: map[string]bool{"location": true, "cpu": true},
+			mpTopology: &clusterv1.MachinePoolTopology{
+				Name:  "mp-topology",
+				Class: "mp-class",
+				Variables: &clusterv1.MachinePoolVariables{
+					Overrides: []clusterv1.ClusterVariable{
+						{
+							Name:  "location",
+							Value: toJSON("\"us-central\""),
+						},
+						{
+							Name:  "cpu",
+							Value: toJSON("8"),
+						},
+					},
+				},
+			},
+			mp: builder.MachinePool(metav1.NamespaceDefault, "mp1").
+				WithVersion("v1.21.1").
+				Build(),
+			want: []runtimehooksv1.Variable{
+				{
+					Name:  "location",
+					Value: toJSON("\"us-central\""),
+				},
+				{
+					Name:  "cpu",
+					Value: toJSON("8"),
+				},
+				{
+					Name: BuiltinsName,
+					Value: toJSONCompact(`{
+					"machinePool":{
+						"version": "v1.21.1",
+						"class": "mp-class",
+						"name": "mp1",
+						"topologyName": "mp-topology"
+					}}`),
+				},
+			},
+		},
+		{
+			name:                        "Should calculate MachinePool variables with BoostrapConfig",
+			variableDefinitionsForPatch: map[string]bool{"location": true, "cpu": true},
+			forPatch:                    "patch1",
+			mpTopology: &clusterv1.MachinePoolTopology{
+				Replicas: pointer.Int32(3),
+				Name:     "mp-topology",
+				Class:    "mp-class",
+				Variables: &clusterv1.MachinePoolVariables{
+					Overrides: []clusterv1.ClusterVariable{
+						{
+							Name:  "location",
+							Value: toJSON("\"us-central\""),
+						},
+						{
+							Name:  "cpu",
+							Value: toJSON("8"),
+						},
+					},
+				},
+			},
+			mp: builder.MachinePool(metav1.NamespaceDefault, "mp1").
+				WithReplicas(3).
+				WithVersion("v1.21.1").
+				Build(),
+			mpBootstrapConfig: builder.BootstrapConfig(metav1.NamespaceDefault, "mpBC1").Build(),
+			want: []runtimehooksv1.Variable{
+				{
+					Name:  "location",
+					Value: toJSON("\"us-central\""),
+				},
+				{
+					Name:  "cpu",
+					Value: toJSON("8"),
+				},
+				{
+					Name: BuiltinsName,
+					Value: toJSONCompact(`{
+					"machinePool":{
+						"version": "v1.21.1",
+						"class": "mp-class",
+						"name": "mp1",
+						"topologyName": "mp-topology",
+						"replicas":3,
+						"bootstrap":{
+							"configRef":{
+								"name": "mpBC1"
+							}
+						}
+					}}`),
+				},
+			},
+		},
+		{
+			name:                        "Should calculate MachinePool variables with InfrastructureMachinePool",
+			variableDefinitionsForPatch: map[string]bool{"location": true, "cpu": true},
+			forPatch:                    "patch1",
+			mpTopology: &clusterv1.MachinePoolTopology{
+				Replicas: pointer.Int32(3),
+				Name:     "mp-topology",
+				Class:    "mp-class",
+				Variables: &clusterv1.MachinePoolVariables{
+					Overrides: []clusterv1.ClusterVariable{
+						{
+							Name:  "location",
+							Value: toJSON("\"us-central\""),
+						},
+						{
+							Name:  "cpu",
+							Value: toJSON("8"),
+						},
+					},
+				},
+			},
+			mp: builder.MachinePool(metav1.NamespaceDefault, "mp1").
+				WithReplicas(3).
+				WithVersion("v1.21.1").
+				Build(),
+			mpInfrastructureMachinePool: builder.InfrastructureMachinePool(metav1.NamespaceDefault, "mpIMP1").Build(),
+			want: []runtimehooksv1.Variable{
+				{
+					Name:  "location",
+					Value: toJSON("\"us-central\""),
+				},
+				{
+					Name:  "cpu",
+					Value: toJSON("8"),
+				},
+				{
+					Name: BuiltinsName,
+					Value: toJSONCompact(`{
+					"machinePool":{
+						"version": "v1.21.1",
+						"class": "mp-class",
+						"name": "mp1",
+						"topologyName": "mp-topology",
+						"replicas":3,
+						"infrastructureRef":{
+							"name": "mpIMP1"
+						}
+					}}`),
+				},
+			},
+		},
+		{
+			name:                        "Should calculate MachinePool variables with BootstrapConfig and InfrastructureMachinePool",
+			variableDefinitionsForPatch: map[string]bool{"location": true, "cpu": true},
+			forPatch:                    "patch1",
+			mpTopology: &clusterv1.MachinePoolTopology{
+				Replicas: pointer.Int32(3),
+				Name:     "mp-topology",
+				Class:    "mp-class",
+				Variables: &clusterv1.MachinePoolVariables{
+					Overrides: []clusterv1.ClusterVariable{
+						{
+							Name:  "location",
+							Value: toJSON("\"us-central\""),
+						},
+						{
+							Name:  "cpu",
+							Value: toJSON("8"),
+						},
+					},
+				},
+			},
+			mp: builder.MachinePool(metav1.NamespaceDefault, "mp1").
+				WithReplicas(3).
+				WithVersion("v1.21.1").
+				Build(),
+			mpBootstrapConfig:           builder.BootstrapConfig(metav1.NamespaceDefault, "mpBC1").Build(),
+			mpInfrastructureMachinePool: builder.InfrastructureMachinePool(metav1.NamespaceDefault, "mpIMP1").Build(),
+			want: []runtimehooksv1.Variable{
+				{
+					Name:  "location",
+					Value: toJSON("\"us-central\""),
+				},
+				{
+					Name:  "cpu",
+					Value: toJSON("8"),
+				},
+				{
+					Name: BuiltinsName,
+					Value: toJSONCompact(`{
+					"machinePool":{
+						"version": "v1.21.1",
+						"class": "mp-class",
+						"name": "mp1",
+						"topologyName": "mp-topology",
+						"replicas":3,
+						"bootstrap":{
+							"configRef":{
+								"name": "mpBC1"
+							}
+						},
+						"infrastructureRef":{
+							"name": "mpIMP1"
+						}
+					}}`),
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			got, err := MachinePool(tt.mpTopology, tt.mp, tt.mpBootstrapConfig, tt.mpInfrastructureMachinePool, tt.forPatch, tt.variableDefinitionsForPatch)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(got).To(BeComparableTo(tt.want))
 		})
 	}
 }

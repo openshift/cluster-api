@@ -230,7 +230,7 @@ func TestCalculateStatus(t *testing.T) {
 			g := NewWithT(t)
 
 			actualStatus := calculateStatus(test.machineSets, test.newMachineSet, test.deployment)
-			g.Expect(actualStatus).To(Equal(test.expectedStatus))
+			g.Expect(actualStatus).To(BeComparableTo(test.expectedStatus))
 		})
 	}
 }
@@ -766,7 +766,7 @@ func assertMachineSet(g *WithT, actualMS *clusterv1.MachineSet, expectedMS *clus
 	g.Expect(actualMS.Spec.DeletePolicy).Should(Equal(expectedMS.Spec.DeletePolicy))
 
 	// Check MachineTemplateSpec
-	g.Expect(actualMS.Spec.Template.Spec).Should(Equal(expectedMS.Spec.Template.Spec))
+	g.Expect(actualMS.Spec.Template.Spec).Should(BeComparableTo(expectedMS.Spec.Template.Spec))
 }
 
 // asserts the conditions set on the Getter object.

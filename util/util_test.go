@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -104,7 +104,7 @@ func TestMachineToInfrastructureMapFunc(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fn := MachineToInfrastructureMapFunc(tc.input)
 			out := fn(ctx, tc.request)
-			g.Expect(out).To(Equal(tc.output))
+			g.Expect(out).To(BeComparableTo(tc.output))
 		})
 	}
 }
@@ -226,7 +226,7 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 
 			fn := ClusterToInfrastructureMapFunc(context.Background(), tc.input, clientBuilder.Build(), referenceObject)
 			out := fn(ctx, tc.request)
-			g.Expect(out).To(Equal(tc.output))
+			g.Expect(out).To(BeComparableTo(tc.output))
 		})
 	}
 }
