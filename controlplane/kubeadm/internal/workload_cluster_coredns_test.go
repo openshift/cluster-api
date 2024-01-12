@@ -19,7 +19,7 @@ package internal
 import (
 	"testing"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
@@ -567,7 +567,7 @@ func TestUpdateCoreDNS(t *testing.T) {
 					g.Eventually(func() []rbacv1.PolicyRule {
 						g.Expect(env.Get(ctx, client.ObjectKey{Name: coreDNSClusterRoleName}, &actualClusterRole)).To(Succeed())
 						return actualClusterRole.Rules
-					}, "5s").Should(Equal(tt.expectRules))
+					}, "5s").Should(BeComparableTo(tt.expectRules))
 				}
 			}
 		})
@@ -760,7 +760,7 @@ func TestUpdateCoreDNSClusterRole(t *testing.T) {
 			var actualClusterRole rbacv1.ClusterRole
 			g.Expect(fakeClient.Get(ctx, client.ObjectKey{Name: coreDNSClusterRoleName, Namespace: metav1.NamespaceSystem}, &actualClusterRole)).To(Succeed())
 
-			g.Expect(actualClusterRole.Rules).To(Equal(tt.expectCoreDNSPolicyRules))
+			g.Expect(actualClusterRole.Rules).To(BeComparableTo(tt.expectCoreDNSPolicyRules))
 		})
 	}
 }
@@ -1369,7 +1369,8 @@ func TestGetCoreDNSInfo(t *testing.T) {
 				expectErr:     true,
 			},
 		}
-		for _, tt := range tests {
+		for i := range tests {
+			tt := tests[i]
 			t.Run(tt.name, func(t *testing.T) {
 				g := NewWithT(t)
 				fakeClient := fake.NewClientBuilder().WithObjects(tt.objs...).Build()
@@ -1394,7 +1395,7 @@ func TestGetCoreDNSInfo(t *testing.T) {
 				tt.expectedInfo.Corefile = expectedCorefile
 				tt.expectedInfo.Deployment = actualDepl
 
-				g.Expect(actualInfo).To(Equal(&tt.expectedInfo))
+				g.Expect(actualInfo).To(BeComparableTo(&tt.expectedInfo))
 			})
 		}
 	})
@@ -1433,7 +1434,8 @@ func TestUpdateCoreDNSImageInfoInKubeadmConfigMap(t *testing.T) {
 				`),
 		},
 	}
-	for _, tt := range tests {
+	for i := range tests {
+		tt := tests[i]
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 			fakeClient := fake.NewClientBuilder().WithObjects(&corev1.ConfigMap{
@@ -1676,7 +1678,7 @@ func TestPatchCoreDNSDeploymentTolerations(t *testing.T) {
 
 			patchCoreDNSDeploymentTolerations(d, tt.kubernetesVersion)
 
-			g.Expect(d.Spec.Template.Spec.Tolerations).To(Equal(tt.expectedTolerations))
+			g.Expect(d.Spec.Template.Spec.Tolerations).To(BeComparableTo(tt.expectedTolerations))
 		})
 	}
 }

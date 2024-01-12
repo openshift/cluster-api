@@ -20,13 +20,13 @@ limitations under the License.
 package e2e
 
 import (
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/utils/pointer"
 )
 
-var _ = Describe("When upgrading a workload cluster using ClusterClass with RuntimeSDK [PR-Informing] [ClusterClass]", func() {
+var _ = Describe("When upgrading a workload cluster using ClusterClass with RuntimeSDK [ClusterClass]", func() {
 	clusterUpgradeWithRuntimeSDKSpec(ctx, func() clusterUpgradeWithRuntimeSDKSpecInput {
 		version, err := semver.ParseTolerant(e2eConfig.GetVariable(KubernetesVersionUpgradeFrom))
 		Expect(err).ToNot(HaveOccurred(), "Invalid argument, KUBERNETES_VERSION_UPGRADE_FROM is not a valid version")

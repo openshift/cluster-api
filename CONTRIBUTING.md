@@ -11,6 +11,7 @@
   - [CLIs](#clis)
 - [Branches](#branches)
   - [Support and guarantees](#support-and-guarantees)
+  - [Removal of v1alpha3 & v1alpha4 apiVersions](#removal-of-v1alpha3--v1alpha4-apiversions)
 - [Contributing a Patch](#contributing-a-patch)
 - [Documentation changes](#documentation-changes)
 - [Releases](#releases)
@@ -22,6 +23,7 @@
 - [Features and bugs](#features-and-bugs)
 - [Experiments](#experiments)
 - [Breaking Changes](#breaking-changes)
+- [Dependency Licence Management](#dependency-licence-management)
 - [API conventions](#api-conventions)
   - [Optional vs. Required](#optional-vs-required)
     - [Example](#example)
@@ -164,8 +166,9 @@ Cluster API maintains the most recent release/releases for all supported API and
 
 | Minor Release | API Version  | Supported Until                                     |
 |---------------|--------------|-----------------------------------------------------|
-| v1.4.x        | **v1beta1**  | when v1.6.0 will be released                        |
-| v1.3.x        | **v1beta1**  | when v1.5.0 will be released, tentatively July 2023 |
+| v1.5.x        | **v1beta1**  | when v1.7.0 will be released                        |
+| v1.4.x        | **v1beta1**  | when v1.6.0 will be released, tentatively Nov 2023  |
+| v1.3.x        | **v1beta1**  | EOL since 2023-07-25 - v1.5.0 release date          |
 | v1.2.x        | **v1beta1**  | EOL since 2023-03-28 - v1.4.0 release date          |
 | v1.1.x        | **v1beta1**  | EOL since 2022-07-18 - v1.2.0 release date (*)      |
 | v1.0.x        | **v1beta1**  | EOL since 2022-02-02 - v1.1.0 release date (*)      |
@@ -414,6 +417,10 @@ There may, at times, need to be exceptions where breaking changes are allowed in
 discretion of the project's maintainers, and must be carefully considered before merging. An example of an allowed
 breaking change might be a fix for a behavioral bug that was released in an initial minor version (such as `v0.3.0`).
 
+## Dependency Licence Management
+
+Cluster API follows the [license policy of the CNCF](https://github.com/cncf/foundation/blob/main/allowed-third-party-license-policy.md). This sets limits on which
+licenses dependencies and other artifacts use. For go dependencies only dependencies listed in the `go.mod` are considered dependencies. This is in line with [how dependencies are reviewed in Kubernetes](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/vendor.md#reviewing-and-approving-dependency-changes).
 
 ## API conventions
 

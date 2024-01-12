@@ -235,7 +235,7 @@ func TestMachinePoolOwnerReference(t *testing.T) {
 			// this first requeue is to add finalizer
 			result, err := mr.Reconcile(ctx, tc.request)
 			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(result).To(Equal(ctrl.Result{}))
+			g.Expect(result).To(BeComparableTo(ctrl.Result{}))
 			g.Expect(mr.Client.Get(ctx, key, &actual)).To(Succeed())
 			g.Expect(actual.Finalizers).To(ContainElement(expv1.MachinePoolFinalizer))
 
@@ -243,7 +243,7 @@ func TestMachinePoolOwnerReference(t *testing.T) {
 
 			if len(tc.expectedOR) > 0 {
 				g.Expect(mr.Client.Get(ctx, key, &actual)).To(Succeed())
-				g.Expect(actual.OwnerReferences).To(Equal(tc.expectedOR))
+				g.Expect(actual.OwnerReferences).To(BeComparableTo(tc.expectedOR))
 			} else {
 				g.Expect(actual.OwnerReferences).To(BeEmpty())
 			}
@@ -409,7 +409,8 @@ func TestReconcileMachinePoolRequest(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
+	for i := range testCases {
+		tc := testCases[i]
 		t.Run("machinePool should be "+tc.machinePool.Name, func(t *testing.T) {
 			g := NewWithT(t)
 
@@ -434,7 +435,7 @@ func TestReconcileMachinePoolRequest(t *testing.T) {
 				g.Expect(err).ToNot(HaveOccurred())
 			}
 
-			g.Expect(result).To(Equal(tc.expected.result))
+			g.Expect(result).To(BeComparableTo(tc.expected.result))
 		})
 	}
 }

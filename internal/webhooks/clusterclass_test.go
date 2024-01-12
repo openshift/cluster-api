@@ -17,6 +17,7 @@ limitations under the License.
 package webhooks
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -1141,6 +1142,30 @@ func TestClusterClassValidation(t *testing.T) {
 			expectErr: true,
 		},
 		{
+			name: "should return error for invalid labels and annotations",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithWorkerMachineDeploymentClasses(
+					*builder.MachineDeploymentClass("aa").
+						WithInfrastructureTemplate(
+							builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "infra1").Build()).
+						WithBootstrapTemplate(
+							builder.BootstrapTemplate(metav1.NamespaceDefault, "bootstrap1").Build()).
+						WithLabels(invalidLabels()).
+						WithAnnotations(invalidAnnotations()).
+						Build()).
+				WithControlPlaneMetadata(invalidLabels(), invalidAnnotations()).
+				Build(),
+			expectErr: true,
+		},
+		{
 			name: "should not return error for valid namingStrategy.template",
 			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithInfrastructureClusterTemplate(
@@ -1159,6 +1184,14 @@ func TestClusterClassValidation(t *testing.T) {
 						WithBootstrapTemplate(
 							builder.BootstrapTemplate(metav1.NamespaceDefault, "bootstrap1").Build()).
 						WithNamingStrategy(&clusterv1.MachineDeploymentClassNamingStrategy{Template: pointer.String("{{ .cluster.name }}-md-{{ .machineDeployment.topologyName }}-{{ .random }}")}).
+						Build()).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("bb").
+						WithInfrastructureTemplate(
+							builder.InfrastructureMachinePoolTemplate(metav1.NamespaceDefault, "infra2").Build()).
+						WithBootstrapTemplate(
+							builder.BootstrapTemplate(metav1.NamespaceDefault, "bootstrap2").Build()).
+						WithNamingStrategy(&clusterv1.MachinePoolClassNamingStrategy{Template: pointer.String("{{ .cluster.name }}-md-{{ .machinePool.topologyName }}-{{ .random }}")}).
 						Build()).
 				Build(),
 			expectErr: false,
@@ -1233,6 +1266,50 @@ func TestClusterClassValidation(t *testing.T) {
 						WithBootstrapTemplate(
 							builder.BootstrapTemplate(metav1.NamespaceDefault, "bootstrap1").Build()).
 						WithNamingStrategy(&clusterv1.MachineDeploymentClassNamingStrategy{Template: pointer.String("template-md-{{ .cluster.name }}-")}).
+						Build()).
+				Build(),
+			expectErr: true,
+		},
+		{
+			name: "should return error for invalid MachinePool namingStrategy.template",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("bb").
+						WithInfrastructureTemplate(
+							builder.InfrastructureMachinePoolTemplate(metav1.NamespaceDefault, "infra2").Build()).
+						WithBootstrapTemplate(
+							builder.BootstrapTemplate(metav1.NamespaceDefault, "bootstrap2").Build()).
+						WithNamingStrategy(&clusterv1.MachinePoolClassNamingStrategy{Template: pointer.String("template-mp-{{ .cluster.name")}).
+						Build()).
+				Build(),
+			expectErr: true,
+		},
+		{
+			name: "should return error for invalid MachinePool namingStrategy.template when the generated name does not conform to RFC 1123",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("bb").
+						WithInfrastructureTemplate(
+							builder.InfrastructureMachinePoolTemplate(metav1.NamespaceDefault, "infra2").Build()).
+						WithBootstrapTemplate(
+							builder.BootstrapTemplate(metav1.NamespaceDefault, "bootstrap2").Build()).
+						WithNamingStrategy(&clusterv1.MachinePoolClassNamingStrategy{Template: pointer.String("template-mp-{{ .cluster.name }}-")}).
 						Build()).
 				Build(),
 			expectErr: true,
@@ -1736,5 +1813,19 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 			}
 			g.Expect(err).ToNot(HaveOccurred())
 		})
+	}
+}
+
+func invalidLabels() map[string]string {
+	return map[string]string{
+		"foo":          "$invalid-key",
+		"bar":          strings.Repeat("a", 64) + "too-long-value",
+		"/invalid-key": "foo",
+	}
+}
+
+func invalidAnnotations() map[string]string {
+	return map[string]string{
+		"/invalid-key": "foo",
 	}
 }

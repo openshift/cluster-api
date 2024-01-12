@@ -19,7 +19,7 @@ package controllers
 import (
 	"context"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -66,6 +66,11 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 	// as per https://github.com/kubernetes/kubernetes/commit/b117a928a6c3f650931bdac02a41fca6680548c4
 	if err := workloadCluster.AllowBootstrapTokensToGetNodes(ctx); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to set role and role binding for kubeadm")
+	}
+
+	// Ensure kubeadm clusterRoleBinding for v1.29+ as per https://github.com/kubernetes/kubernetes/pull/121305
+	if err := workloadCluster.AllowClusterAdminPermissions(ctx, parsedVersion); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "failed to set cluster-admin ClusterRoleBinding for kubeadm")
 	}
 
 	if err := workloadCluster.UpdateKubernetesVersionInKubeadmConfigMap(ctx, parsedVersion); err != nil {
