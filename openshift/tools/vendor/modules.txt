@@ -170,7 +170,7 @@ github.com/munnerz/goautoneg
 # github.com/opencontainers/go-digest v1.0.0
 ## explicit; go 1.13
 github.com/opencontainers/go-digest
-# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20240215153220-d299b8b0a225
+# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20240216070530-91b37162630f
 ## explicit; go 1.18
 github.com/openshift/cluster-capi-operator/manifests-gen
 # github.com/pelletier/go-toml/v2 v2.0.8
