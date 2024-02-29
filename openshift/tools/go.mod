@@ -2,7 +2,7 @@ module tools
 
 go 1.18
 
-require github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20231129212918-dcb7a56ab14c
+require github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20240227175641-28229ac79a01
 
 require (
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
