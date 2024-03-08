@@ -1,6 +1,6 @@
-# This is a file for CAPI end-to-end test configuration. 
+# This is a file for CAPI end-to-end test configuration.
 # The format of this file follows https://pkg.go.dev/sigs.k8s.io/cluster-api/test/framework/clusterctl#E2EConfig
-# 
+#
 # CI E2E test configuration scenario using locally build images and manifests for:
 # - cluster-api
 # - bootstrap kubeadm
@@ -23,11 +23,11 @@ images:
   loadBehavior: tryLoad
 - name: gcr.io/k8s-staging-cluster-api/test-extension-{ARCH}:dev
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-cainjector:v1.13.2
+- name: quay.io/jetstack/cert-manager-cainjector:v1.14.2
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-webhook:v1.13.2
+- name: quay.io/jetstack/cert-manager-webhook:v1.14.2
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-controller:v1.13.2
+- name: quay.io/jetstack/cert-manager-controller:v1.14.2
   loadBehavior: tryLoad
 
 providers:
@@ -35,6 +35,24 @@ providers:
 - name: cluster-api
   type: CoreProvider
   versions:
+  - name: v0.3.25 # latest published release in the v1alpha3 series; this is used for v1alpha3 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.3.25/core-components.yaml"
+    type: "url"
+    contract: v1alpha3
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.3/metadata.yaml"
+  - name: v0.4.8 # latest published release in the v1alpha4 series; this is used for v1alpha4 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.4.8/core-components.yaml"
+    type: "url"
+    contract: v1alpha4
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.4/metadata.yaml"
   - name: v1.0.5 # supported release in the v1beta1 series; this is used for v1beta1 --> main clusterctl upgrades test only.
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.0.5/core-components.yaml"
     type: "url"
@@ -73,6 +91,24 @@ providers:
 - name: kubeadm
   type: BootstrapProvider
   versions:
+  - name: v0.3.25 # latest published release in the v1alpha3 series; this is used for v1alpha3 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.3.25/bootstrap-components.yaml"
+    type: "url"
+    contract: v1alpha3
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.3/metadata.yaml"
+  - name: v0.4.8 # latest published release in the v1alpha4 series; this is used for v1alpha4 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.4.8/bootstrap-components.yaml"
+    type: "url"
+    contract: v1alpha4
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.4/metadata.yaml"
   - name: v1.0.5 # supported release in the v1beta1 series; this is used for v1beta1 --> main clusterctl upgrades test only.
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.0.5/bootstrap-components.yaml"
     type: "url"
@@ -111,6 +147,24 @@ providers:
 - name: kubeadm
   type: ControlPlaneProvider
   versions:
+  - name: v0.3.25 # latest published release in the v1alpha3 series; this is used for v1alpha3 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.3.25/control-plane-components.yaml"
+    type: "url"
+    contract: v1alpha3
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.3/metadata.yaml"
+  - name: v0.4.8 # latest published release in the v1alpha4 series; this is used for v1alpha4 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.4.8/control-plane-components.yaml"
+    type: "url"
+    contract: v1alpha4
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.4/metadata.yaml"
   - name: v1.0.5 # supported release in the v1beta1 series; this is used for v1beta1 --> main clusterctl upgrades test only.
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.0.5/control-plane-components.yaml"
     type: "url"
@@ -149,6 +203,26 @@ providers:
 - name: docker
   type: InfrastructureProvider
   versions:
+  - name: v0.3.25 # latest published release in the v1alpha3 series; this is used for v1alpha3 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.3.25/infrastructure-components-development.yaml"
+    type: "url"
+    contract: v1alpha3
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.3/metadata.yaml"
+    - sourcePath: "../data/infrastructure-docker/v0.3/cluster-template.yaml"
+  - name: v0.4.8 # latest published release in the v1alpha4 series; this is used for v1alpha4 --> v1beta1 clusterctl upgrades test only.
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v0.4.8/infrastructure-components-development.yaml"
+    type: "url"
+    contract: v1alpha4
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v0.4/metadata.yaml"
+    - sourcePath: "../data/infrastructure-docker/v0.4/cluster-template.yaml"
   - name: v1.0.5 # supported release in the v1beta1 series; this is used for v1beta1 --> main clusterctl upgrades test only.
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.0.5/infrastructure-components-development.yaml"
     type: "url"
@@ -229,6 +303,9 @@ providers:
   versions:
     - name: v1.6.99 # next; use manifest from source files
       value: ../../../test/extension/config/default
+      replacements:
+      - old: "--leader-elect"
+        new: "--leader-elect\n        - --logging-format=json"
       files:
       - sourcePath: "../data/shared/main/metadata.yaml"
 
@@ -237,14 +314,12 @@ variables:
   # allowing the same e2e config file to be re-used in different Prow jobs e.g. each one with a K8s version permutation.
   # The following Kubernetes versions should be the latest versions with already published kindest/node images.
   # This avoids building node images in the default case which improves the test duration significantly.
-  KUBERNETES_VERSION_MANAGEMENT: "v1.28.0"
-  # TODO when bumping this version: also remove the pinning of the conformanceImage at the [ipv6] tests in
-  # `test/e2e/quick_start_test.go`.
-  KUBERNETES_VERSION: "v1.28.0"
-  KUBERNETES_VERSION_UPGRADE_FROM: "v1.27.3"
-  KUBERNETES_VERSION_UPGRADE_TO: "v1.28.0"
-  ETCD_VERSION_UPGRADE_TO: "3.5.9-0"
-  COREDNS_VERSION_UPGRADE_TO: "v1.10.1"
+  KUBERNETES_VERSION_MANAGEMENT: "v1.29.0"
+  KUBERNETES_VERSION: "v1.29.0"
+  KUBERNETES_VERSION_UPGRADE_FROM: "v1.28.0"
+  KUBERNETES_VERSION_UPGRADE_TO: "v1.29.0"
+  ETCD_VERSION_UPGRADE_TO: "3.5.10-0"
+  COREDNS_VERSION_UPGRADE_TO: "v1.11.1"
   DOCKER_SERVICE_DOMAIN: "cluster.local"
   IP_FAMILY: "dual"
   DOCKER_SERVICE_CIDRS: "10.128.0.0/12"
