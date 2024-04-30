@@ -610,6 +610,20 @@ spec:
                 items:
                   description: ClusterClassVariable defines a variable which can be configured in the Cluster topology and used in patches.
                   properties:
+                    metadata:
+                      description: Metadata is the metadata of a variable. It can be used to add additional data for higher level tools to a ClusterClassVariable.
+                      properties:
+                        annotations:
+                          additionalProperties:
+                            type: string
+                          description: Annotations is an unstructured key value map that can be used to store and retrieve arbitrary metadata. They are not queryable.
+                          type: object
+                        labels:
+                          additionalProperties:
+                            type: string
+                          description: Map of string keys and values that can be used to organize and categorize (scope and select) variables.
+                          type: object
+                      type: object
                     name:
                       description: Name of the variable.
                       type: string
@@ -1101,6 +1115,20 @@ spec:
                           from:
                             description: From specifies the origin of the variable definition. This will be `inline` for variables defined in the ClusterClass or the name of a patch defined in the ClusterClass for variables discovered from a DiscoverVariables runtime extensions.
                             type: string
+                          metadata:
+                            description: Metadata is the metadata of a variable. It can be used to add additional data for higher level tools to a ClusterClassVariable.
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: Annotations is an unstructured key value map that can be used to store and retrieve arbitrary metadata. They are not queryable.
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: Map of string keys and values that can be used to organize and categorize (scope and select) variables.
+                                type: object
+                            type: object
                           required:
                             description: 'Required specifies if the variable is required. Note: this applies to the variable as a whole and thus the top-level object defined in the schema. If nested fields are required, this will be specified inside the schema.'
                             type: boolean
