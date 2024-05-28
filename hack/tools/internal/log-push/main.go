@@ -122,7 +122,7 @@ func getLogsFromFile(logPath string, logFileRegex *regexp.Regexp) (map[string]Lo
 	klog.Infof("Getting logs from %s", logPath)
 
 	logData := map[string]LogData{}
-	err := filepath.Walk(logPath, func(fileName string, info fs.FileInfo, err error) error {
+	err := filepath.Walk(logPath, func(fileName string, _ fs.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -430,11 +430,4 @@ func pushStreamToLoki(ctx context.Context, lokiURL, lokiOrgID string, body []byt
 
 	klog.Infof("Push response: status: %q, body: %q", resp.Status, string(respBody))
 	return nil
-}
-
-func min(a, b int) int {
-	if a <= b {
-		return a
-	}
-	return b
 }

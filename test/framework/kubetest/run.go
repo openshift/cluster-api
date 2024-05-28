@@ -27,9 +27,11 @@ import (
 	"strconv"
 	"strings"
 
+	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/clientcmd"
@@ -200,10 +202,13 @@ func Run(ctx context.Context, input RunInput) error {
 		CommandArgs:     args,
 		Entrypoint:      []string{"/usr/local/bin/ginkgo"},
 		// We don't want the conformance test container to restart once ginkgo exits.
-		RestartPolicy: "no",
+		RestartPolicy: dockercontainer.RestartPolicyDisabled,
 	}, ginkgo.GinkgoWriter)
 	if err != nil {
-		return errors.Wrap(err, "Unable to run conformance tests")
+		return kerrors.NewAggregate([]error{
+			errors.Wrap(err, "Unable to run conformance tests"),
+			framework.GatherJUnitReports(reportDir, input.ArtifactsDirectory),
+		})
 	}
 	return framework.GatherJUnitReports(reportDir, input.ArtifactsDirectory)
 }
@@ -227,7 +232,7 @@ func parseKubetestConfig(kubetestConfigFile string) (kubetestConfig, error) {
 }
 
 func isUsingCIArtifactsVersion(k8sVersion string) bool {
-	return strings.Contains(k8sVersion, "-")
+	return strings.Contains(k8sVersion, "+")
 }
 
 func discoverClusterKubernetesVersion(proxy framework.ClusterProxy) (string, error) {

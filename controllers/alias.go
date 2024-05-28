@@ -93,15 +93,19 @@ type MachineSetReconciler struct {
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
+
+	// Deprecated: DeprecatedInfraMachineNaming. Name the InfraStructureMachines after the InfraMachineTemplate.
+	DeprecatedInfraMachineNaming bool
 }
 
 func (r *MachineSetReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	return (&machinesetcontroller.Reconciler{
-		Client:                    r.Client,
-		UnstructuredCachingClient: r.UnstructuredCachingClient,
-		APIReader:                 r.APIReader,
-		Tracker:                   r.Tracker,
-		WatchFilterValue:          r.WatchFilterValue,
+		Client:                       r.Client,
+		UnstructuredCachingClient:    r.UnstructuredCachingClient,
+		APIReader:                    r.APIReader,
+		Tracker:                      r.Tracker,
+		WatchFilterValue:             r.WatchFilterValue,
+		DeprecatedInfraMachineNaming: r.DeprecatedInfraMachineNaming,
 	}).SetupWithManager(ctx, mgr, options)
 }
 
@@ -212,8 +216,11 @@ func (r *MachineSetTopologyReconciler) SetupWithManager(ctx context.Context, mgr
 
 // ClusterClassReconciler reconciles the ClusterClass object.
 type ClusterClassReconciler struct {
-	Client    client.Client
-	APIReader client.Reader
+	// internalReconciler is used to store the reconciler after SetupWithManager
+	// so that the Reconcile function can work.
+	internalReconciler *clusterclasscontroller.Reconciler
+
+	Client client.Client
 
 	// RuntimeClient is a client for calling runtime extensions.
 	RuntimeClient runtimeclient.Client
@@ -227,11 +234,20 @@ type ClusterClassReconciler struct {
 }
 
 func (r *ClusterClassReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
-	return (&clusterclasscontroller.Reconciler{
+	r.internalReconciler = &clusterclasscontroller.Reconciler{
 		Client:                    r.Client,
-		APIReader:                 r.APIReader,
 		RuntimeClient:             r.RuntimeClient,
 		UnstructuredCachingClient: r.UnstructuredCachingClient,
 		WatchFilterValue:          r.WatchFilterValue,
-	}).SetupWithManager(ctx, mgr, options)
+	}
+	return r.internalReconciler.SetupWithManager(ctx, mgr, options)
+}
+
+// Reconcile can be used to reconcile a ClusterClass.
+// Before it can be used, all fields of the ClusterClassReconciler have to be set
+// and SetupWithManager has to be called.
+// This method can be used when testing the behavior of the desired state computation of
+// the Cluster topology controller (because that requires a reconciled ClusterClass).
+func (r *ClusterClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	return r.internalReconciler.Reconcile(ctx, req)
 }

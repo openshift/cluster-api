@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -52,9 +52,9 @@ func TestGetConfigOwner(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					ClusterName: "my-cluster",
 					Bootstrap: clusterv1.Bootstrap{
-						DataSecretName: pointer.String("my-data-secret"),
+						DataSecretName: ptr.To("my-data-secret"),
 					},
-					Version: pointer.String("v1.19.6"),
+					Version: ptr.To("v1.19.6"),
 				},
 				Status: clusterv1.MachineStatus{
 					InfrastructureReady: true,
@@ -102,7 +102,7 @@ func TestGetConfigOwner(t *testing.T) {
 					ClusterName: "my-cluster",
 					Template: clusterv1.MachineTemplateSpec{
 						Spec: clusterv1.MachineSpec{
-							Version: pointer.String("v1.19.6"),
+							Version: ptr.To("v1.19.6"),
 						},
 					},
 				},
@@ -184,7 +184,8 @@ func TestHasNodeRefs(t *testing.T) {
 		g := NewWithT(t)
 		machine := &clusterv1.Machine{
 			TypeMeta: metav1.TypeMeta{
-				Kind: "Machine",
+				APIVersion: clusterv1.GroupVersion.String(),
+				Kind:       "Machine",
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "machine-name",
@@ -205,7 +206,8 @@ func TestHasNodeRefs(t *testing.T) {
 		g := NewWithT(t)
 		machine := &clusterv1.Machine{
 			TypeMeta: metav1.TypeMeta{
-				Kind: "Machine",
+				APIVersion: clusterv1.GroupVersion.String(),
+				Kind:       "Machine",
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "machine-name",
@@ -237,7 +239,8 @@ func TestHasNodeRefs(t *testing.T) {
 			{
 				// No replicas specified (default is 1). No nodeRefs either.
 				TypeMeta: metav1.TypeMeta{
-					Kind: "MachinePool",
+					APIVersion: expv1.GroupVersion.String(),
+					Kind:       "MachinePool",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: metav1.NamespaceDefault,
@@ -247,27 +250,29 @@ func TestHasNodeRefs(t *testing.T) {
 			{
 				// 1 replica but no nodeRefs
 				TypeMeta: metav1.TypeMeta{
-					Kind: "MachinePool",
+					APIVersion: expv1.GroupVersion.String(),
+					Kind:       "MachinePool",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: metav1.NamespaceDefault,
 					Name:      "machine-pool-name",
 				},
 				Spec: expv1.MachinePoolSpec{
-					Replicas: pointer.Int32(1),
+					Replicas: ptr.To[int32](1),
 				},
 			},
 			{
 				// 2 replicas but only 1 nodeRef
 				TypeMeta: metav1.TypeMeta{
-					Kind: "MachinePool",
+					APIVersion: expv1.GroupVersion.String(),
+					Kind:       "MachinePool",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: metav1.NamespaceDefault,
 					Name:      "machine-pool-name",
 				},
 				Spec: expv1.MachinePoolSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: expv1.MachinePoolStatus{
 					NodeRefs: []corev1.ObjectReference{
@@ -300,7 +305,8 @@ func TestHasNodeRefs(t *testing.T) {
 			{
 				// 1 replica (default) and 1 nodeRef
 				TypeMeta: metav1.TypeMeta{
-					Kind: "MachinePool",
+					APIVersion: expv1.GroupVersion.String(),
+					Kind:       "MachinePool",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: metav1.NamespaceDefault,
@@ -319,14 +325,15 @@ func TestHasNodeRefs(t *testing.T) {
 			{
 				// 2 replicas and nodeRefs
 				TypeMeta: metav1.TypeMeta{
-					Kind: "MachinePool",
+					APIVersion: expv1.GroupVersion.String(),
+					Kind:       "MachinePool",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: metav1.NamespaceDefault,
 					Name:      "machine-pool-name",
 				},
 				Spec: expv1.MachinePoolSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: expv1.MachinePoolStatus{
 					NodeRefs: []corev1.ObjectReference{
@@ -346,14 +353,15 @@ func TestHasNodeRefs(t *testing.T) {
 			{
 				// 0 replicas and 0 nodeRef
 				TypeMeta: metav1.TypeMeta{
-					Kind: "MachinePool",
+					APIVersion: expv1.GroupVersion.String(),
+					Kind:       "MachinePool",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: metav1.NamespaceDefault,
 					Name:      "machine-pool-name",
 				},
 				Spec: expv1.MachinePoolSpec{
-					Replicas: pointer.Int32(0),
+					Replicas: ptr.To[int32](0),
 				},
 			},
 		}

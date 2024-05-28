@@ -48,13 +48,14 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	controlplanev1alpha4 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha4"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	kubeadmcontrolplanecontrollers "sigs.k8s.io/cluster-api/controlplane/kubeadm/controllers"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	kcpwebhooks "sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	controlplanev1alpha3 "sigs.k8s.io/cluster-api/internal/apis/controlplane/kubeadm/v1alpha3"
+	controlplanev1alpha4 "sigs.k8s.io/cluster-api/internal/apis/controlplane/kubeadm/v1alpha4"
 	"sigs.k8s.io/cluster-api/util/flags"
 	"sigs.k8s.io/cluster-api/version"
 )
@@ -78,20 +79,24 @@ var (
 	restConfigBurst             int
 	webhookPort                 int
 	webhookCertDir              string
+	webhookCertName             string
+	webhookKeyName              string
 	healthAddr                  string
 	tlsOptions                  = flags.TLSOptions{}
 	diagnosticsOptions          = flags.DiagnosticsOptions{}
 	logOptions                  = logs.NewOptions()
 	// KCP specific flags.
-	kubeadmControlPlaneConcurrency int
-	clusterCacheTrackerConcurrency int
-	etcdDialTimeout                time.Duration
-	etcdCallTimeout                time.Duration
+	kubeadmControlPlaneConcurrency  int
+	clusterCacheTrackerConcurrency  int
+	etcdDialTimeout                 time.Duration
+	etcdCallTimeout                 time.Duration
+	useDeprecatedInfraMachineNaming bool
 )
 
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
+	_ = expv1.AddToScheme(scheme)
 	_ = controlplanev1alpha3.AddToScheme(scheme)
 	_ = controlplanev1alpha4.AddToScheme(scheme)
 	_ = controlplanev1.AddToScheme(scheme)
@@ -146,7 +151,13 @@ func InitFlags(fs *pflag.FlagSet) {
 		"Webhook Server port")
 
 	fs.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs/",
-		"Webhook cert dir, only used when webhook-port is specified.")
+		"Webhook cert dir.")
+
+	fs.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt",
+		"Webhook cert name.")
+
+	fs.StringVar(&webhookKeyName, "webhook-key-name", "tls.key",
+		"Webhook key name.")
 
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
@@ -156,6 +167,10 @@ func InitFlags(fs *pflag.FlagSet) {
 
 	fs.DurationVar(&etcdCallTimeout, "etcd-call-timeout-duration", etcd.DefaultCallTimeout,
 		"Duration that the etcd client waits at most for read and write operations to etcd.")
+
+	fs.BoolVar(&useDeprecatedInfraMachineNaming, "use-deprecated-infra-machine-naming", false,
+		"Use the deprecated naming convention for infra machines where they are named after the InfraMachineTemplate.")
+	_ = fs.MarkDeprecated("use-deprecated-infra-machine-naming", "This flag will be removed in v1.9.")
 
 	flags.AddDiagnosticsOptions(fs, &diagnosticsOptions)
 	flags.AddTLSOptions(fs, &tlsOptions)
@@ -173,7 +188,7 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "failed to set log level: %v")
+		setupLog.Error(err, "failed to set default log level")
 		os.Exit(1)
 	}
 	pflag.Parse()
@@ -251,9 +266,11 @@ func main() {
 		},
 		WebhookServer: webhook.NewServer(
 			webhook.Options{
-				Port:    webhookPort,
-				CertDir: webhookCertDir,
-				TLSOpts: tlsOptionOverrides,
+				Port:     webhookPort,
+				CertDir:  webhookCertDir,
+				CertName: webhookCertName,
+				KeyName:  webhookKeyName,
+				TLSOpts:  tlsOptionOverrides,
 			},
 		),
 	}
@@ -330,12 +347,13 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	}
 
 	if err := (&kubeadmcontrolplanecontrollers.KubeadmControlPlaneReconciler{
-		Client:              mgr.GetClient(),
-		SecretCachingClient: secretCachingClient,
-		Tracker:             tracker,
-		WatchFilterValue:    watchFilterValue,
-		EtcdDialTimeout:     etcdDialTimeout,
-		EtcdCallTimeout:     etcdCallTimeout,
+		Client:                       mgr.GetClient(),
+		SecretCachingClient:          secretCachingClient,
+		Tracker:                      tracker,
+		WatchFilterValue:             watchFilterValue,
+		EtcdDialTimeout:              etcdDialTimeout,
+		EtcdCallTimeout:              etcdCallTimeout,
+		DeprecatedInfraMachineNaming: useDeprecatedInfraMachineNaming,
 	}).SetupWithManager(ctx, mgr, concurrency(kubeadmControlPlaneConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KubeadmControlPlane")
 		os.Exit(1)

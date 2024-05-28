@@ -136,6 +136,7 @@ in-memory               InfrastructureProvider   https://github.com/kubernetes-s
 k0sproject-k0smotron    InfrastructureProvider   https://github.com/k0sproject/k0smotron/releases/latest/                                    infrastructure-components.yaml
 kubekey                 InfrastructureProvider   https://github.com/kubesphere/kubekey/releases/latest/                                      infrastructure-components.yaml
 kubevirt                InfrastructureProvider   https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/releases/latest/           infrastructure-components.yaml
+linode-linode           InfrastructureProvider   https://github.com/linode/cluster-api-provider-linode/releases/latest/                      infrastructure-components.yaml
 maas                    InfrastructureProvider   https://github.com/spectrocloud/cluster-api-provider-maas/releases/latest/                  infrastructure-components.yaml
 metal3                  InfrastructureProvider   https://github.com/metal3-io/cluster-api-provider-metal3/releases/latest/                   infrastructure-components.yaml
 my-infra-provider       InfrastructureProvider   /home/.config/cluster-api/overrides/infrastructure-docker/latest/                           infrastructure-components.yaml
@@ -147,10 +148,12 @@ outscale                InfrastructureProvider   https://github.com/outscale/clu
 packet                  InfrastructureProvider   https://github.com/kubernetes-sigs/cluster-api-provider-packet/releases/latest/             infrastructure-components.yaml
 proxmox                 InfrastructureProvider   https://github.com/ionos-cloud/cluster-api-provider-proxmox/releases/latest/                infrastructure-components.yaml
 sidero                  InfrastructureProvider   https://github.com/siderolabs/sidero/releases/latest/                                       infrastructure-components.yaml
+tinkerbell-tinkerbell   InfrastructureProvider   https://github.com/tinkerbell/cluster-api-provider-tinkerbell/releases/latest/              infrastructure-components.yaml
 vcd                     InfrastructureProvider   https://github.com/vmware/cluster-api-provider-cloud-director/releases/latest/              infrastructure-components.yaml
 vcluster                InfrastructureProvider   https://github.com/loft-sh/cluster-api-provider-vcluster/releases/latest/                   infrastructure-components.yaml
 virtink                 InfrastructureProvider   https://github.com/smartxworks/cluster-api-provider-virtink/releases/latest/                infrastructure-components.yaml
 vsphere                 InfrastructureProvider   https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/latest/            infrastructure-components.yaml
+in-cluster              IPAMProvider             https://github.com/kubernetes-sigs/cluster-api-ipam-provider-in-cluster/releases/latest/    ipam-components.yaml
 helm                    AddonProvider            https://github.com/kubernetes-sigs/cluster-api-addon-provider-helm/releases/latest/         addon-components.yaml
 `
 
@@ -287,6 +290,10 @@ var expectedOutputYaml = `- File: core_components.yaml
   ProviderType: InfrastructureProvider
   URL: https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/releases/latest/
 - File: infrastructure-components.yaml
+  Name: linode-linode
+  ProviderType: InfrastructureProvider
+  URL: https://github.com/linode/cluster-api-provider-linode/releases/latest/
+- File: infrastructure-components.yaml
   Name: maas
   ProviderType: InfrastructureProvider
   URL: https://github.com/spectrocloud/cluster-api-provider-maas/releases/latest/
@@ -331,6 +338,10 @@ var expectedOutputYaml = `- File: core_components.yaml
   ProviderType: InfrastructureProvider
   URL: https://github.com/siderolabs/sidero/releases/latest/
 - File: infrastructure-components.yaml
+  Name: tinkerbell-tinkerbell
+  ProviderType: InfrastructureProvider
+  URL: https://github.com/tinkerbell/cluster-api-provider-tinkerbell/releases/latest/
+- File: infrastructure-components.yaml
   Name: vcd
   ProviderType: InfrastructureProvider
   URL: https://github.com/vmware/cluster-api-provider-cloud-director/releases/latest/
@@ -346,6 +357,10 @@ var expectedOutputYaml = `- File: core_components.yaml
   Name: vsphere
   ProviderType: InfrastructureProvider
   URL: https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/latest/
+- File: ipam-components.yaml
+  Name: in-cluster
+  ProviderType: IPAMProvider
+  URL: https://github.com/kubernetes-sigs/cluster-api-ipam-provider-in-cluster/releases/latest/
 - File: addon-components.yaml
   Name: helm
   ProviderType: AddonProvider

@@ -45,16 +45,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	clusterv1alpha4 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/controllers"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	addonsv1alpha4 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha4"
 	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
 	addonscontrollers "sigs.k8s.io/cluster-api/exp/addons/controllers"
 	addonswebhooks "sigs.k8s.io/cluster-api/exp/addons/webhooks"
-	expv1alpha4 "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	expcontrollers "sigs.k8s.io/cluster-api/exp/controllers"
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
@@ -66,8 +63,11 @@ import (
 	expwebhooks "sigs.k8s.io/cluster-api/exp/webhooks"
 	"sigs.k8s.io/cluster-api/feature"
 	addonsv1alpha3 "sigs.k8s.io/cluster-api/internal/apis/core/exp/addons/v1alpha3"
+	addonsv1alpha4 "sigs.k8s.io/cluster-api/internal/apis/core/exp/addons/v1alpha4"
 	expv1alpha3 "sigs.k8s.io/cluster-api/internal/apis/core/exp/v1alpha3"
+	expv1alpha4 "sigs.k8s.io/cluster-api/internal/apis/core/exp/v1alpha4"
 	clusterv1alpha3 "sigs.k8s.io/cluster-api/internal/apis/core/v1alpha3"
+	clusterv1alpha4 "sigs.k8s.io/cluster-api/internal/apis/core/v1alpha4"
 	runtimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
 	runtimeregistry "sigs.k8s.io/cluster-api/internal/runtime/registry"
 	runtimewebhooks "sigs.k8s.io/cluster-api/internal/webhooks/runtime"
@@ -96,23 +96,26 @@ var (
 	restConfigBurst             int
 	webhookPort                 int
 	webhookCertDir              string
+	webhookCertName             string
+	webhookKeyName              string
 	healthAddr                  string
 	tlsOptions                  = flags.TLSOptions{}
 	diagnosticsOptions          = flags.DiagnosticsOptions{}
 	logOptions                  = logs.NewOptions()
 	// core Cluster API specific flags.
-	clusterTopologyConcurrency     int
-	clusterCacheTrackerConcurrency int
-	clusterClassConcurrency        int
-	clusterConcurrency             int
-	extensionConfigConcurrency     int
-	machineConcurrency             int
-	machineSetConcurrency          int
-	machineDeploymentConcurrency   int
-	machinePoolConcurrency         int
-	clusterResourceSetConcurrency  int
-	machineHealthCheckConcurrency  int
-	nodeDrainClientTimeout         time.Duration
+	clusterTopologyConcurrency      int
+	clusterCacheTrackerConcurrency  int
+	clusterClassConcurrency         int
+	clusterConcurrency              int
+	extensionConfigConcurrency      int
+	machineConcurrency              int
+	machineSetConcurrency           int
+	machineDeploymentConcurrency    int
+	machinePoolConcurrency          int
+	clusterResourceSetConcurrency   int
+	machineHealthCheckConcurrency   int
+	nodeDrainClientTimeout          time.Duration
+	useDeprecatedInfraMachineNaming bool
 )
 
 func init() {
@@ -216,10 +219,20 @@ func InitFlags(fs *pflag.FlagSet) {
 		"Webhook Server port")
 
 	fs.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs/",
-		"Webhook cert dir, only used when webhook-port is specified.")
+		"Webhook cert dir.")
+
+	fs.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt",
+		"Webhook cert name.")
+
+	fs.StringVar(&webhookKeyName, "webhook-key-name", "tls.key",
+		"Webhook key name.")
 
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
+
+	fs.BoolVar(&useDeprecatedInfraMachineNaming, "use-deprecated-infra-machine-naming", false,
+		"Use deprecated infrastructure machine naming")
+	_ = fs.MarkDeprecated("use-deprecated-infra-machine-naming", "This flag will be removed in v1.9.")
 
 	flags.AddDiagnosticsOptions(fs, &diagnosticsOptions)
 	flags.AddTLSOptions(fs, &tlsOptions)
@@ -237,7 +250,7 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "failed to set log level: %v")
+		setupLog.Error(err, "failed to set default log level")
 		os.Exit(1)
 	}
 	pflag.Parse()
@@ -325,9 +338,11 @@ func main() {
 		},
 		WebhookServer: webhook.NewServer(
 			webhook.Options{
-				Port:    webhookPort,
-				CertDir: webhookCertDir,
-				TLSOpts: tlsOptionOverrides,
+				Port:     webhookPort,
+				CertDir:  webhookCertDir,
+				CertName: webhookCertName,
+				KeyName:  webhookKeyName,
+				TLSOpts:  tlsOptionOverrides,
 			},
 		),
 	}
@@ -434,7 +449,6 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) webhooks.ClusterCac
 	if feature.Gates.Enabled(feature.ClusterTopology) {
 		if err := (&controllers.ClusterClassReconciler{
 			Client:                    mgr.GetClient(),
-			APIReader:                 mgr.GetAPIReader(),
 			RuntimeClient:             runtimeClient,
 			UnstructuredCachingClient: unstructuredCachingClient,
 			WatchFilterValue:          watchFilterValue,
@@ -507,11 +521,12 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) webhooks.ClusterCac
 		os.Exit(1)
 	}
 	if err := (&controllers.MachineSetReconciler{
-		Client:                    mgr.GetClient(),
-		UnstructuredCachingClient: unstructuredCachingClient,
-		APIReader:                 mgr.GetAPIReader(),
-		Tracker:                   tracker,
-		WatchFilterValue:          watchFilterValue,
+		Client:                       mgr.GetClient(),
+		UnstructuredCachingClient:    unstructuredCachingClient,
+		APIReader:                    mgr.GetAPIReader(),
+		Tracker:                      tracker,
+		WatchFilterValue:             watchFilterValue,
+		DeprecatedInfraMachineNaming: useDeprecatedInfraMachineNaming,
 	}).SetupWithManager(ctx, mgr, concurrency(machineSetConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MachineSet")
 		os.Exit(1)

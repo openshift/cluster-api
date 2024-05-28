@@ -24,7 +24,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
@@ -1468,6 +1467,36 @@ func (c *TestControlPlaneBuilder) Build() *unstructured.Unstructured {
 	return c.obj
 }
 
+// NodeBuilder holds the variables required to build a Node.
+type NodeBuilder struct {
+	name   string
+	status corev1.NodeStatus
+}
+
+// Node returns a NodeBuilder.
+func Node(name string) *NodeBuilder {
+	return &NodeBuilder{
+		name: name,
+	}
+}
+
+// WithStatus adds Status to the NodeBuilder.
+func (n *NodeBuilder) WithStatus(status corev1.NodeStatus) *NodeBuilder {
+	n.status = status
+	return n
+}
+
+// Build produces a new Node from the information passed to the NodeBuilder.
+func (n *NodeBuilder) Build() *corev1.Node {
+	obj := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: n.name,
+		},
+		Status: n.status,
+	}
+	return obj
+}
+
 // MachinePoolBuilder holds the variables and objects needed to build a generic MachinePool.
 type MachinePoolBuilder struct {
 	namespace       string
@@ -1777,6 +1806,7 @@ func (m *MachineSetBuilder) Build() *clusterv1.MachineSet {
 		},
 	}
 	obj.Spec.ClusterName = m.clusterName
+	obj.Spec.Template.Spec.ClusterName = m.clusterName
 	obj.Spec.Replicas = m.replicas
 	if m.bootstrapTemplate != nil {
 		obj.Spec.Template.Spec.Bootstrap.ConfigRef = objToRef(m.bootstrapTemplate)
@@ -1859,7 +1889,9 @@ func (m *MachineBuilder) Build() *clusterv1.Machine {
 }
 
 // objToRef returns a reference to the given object.
-func objToRef(obj client.Object) *corev1.ObjectReference {
+// Note: This function only operates on Unstructured instead of client.Object
+// because it is only safe to assume for Unstructured that the GVK is set.
+func objToRef(obj *unstructured.Unstructured) *corev1.ObjectReference {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	return &corev1.ObjectReference{
 		Kind:       gvk.Kind,

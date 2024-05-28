@@ -23,23 +23,17 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilfeature "k8s.io/component-base/featuregate/testing"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
-	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/webhooks/util"
 )
 
 var ctx = ctrl.SetupSignalHandler()
 
 func TestMachinePoolDefault(t *testing.T) {
-	// NOTE: MachinePool feature flag is disabled by default, thus preventing to create or update MachinePool.
-	// Enabling the feature flag temporarily for this test.
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
-
 	g := NewWithT(t)
 
 	mp := &expv1.MachinePool{
@@ -50,7 +44,7 @@ func TestMachinePoolDefault(t *testing.T) {
 			Template: clusterv1.MachineTemplateSpec{
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{ConfigRef: &corev1.ObjectReference{}},
-					Version:   pointer.String("1.20.0"),
+					Version:   ptr.To("1.20.0"),
 				},
 			},
 		},
@@ -60,17 +54,14 @@ func TestMachinePoolDefault(t *testing.T) {
 	g.Expect(webhook.Default(ctx, mp)).To(Succeed())
 
 	g.Expect(mp.Labels[clusterv1.ClusterNameLabel]).To(Equal(mp.Spec.ClusterName))
-	g.Expect(mp.Spec.Replicas).To(Equal(pointer.Int32(1)))
-	g.Expect(mp.Spec.MinReadySeconds).To(Equal(pointer.Int32(0)))
+	g.Expect(mp.Spec.Replicas).To(Equal(ptr.To[int32](1)))
+	g.Expect(mp.Spec.MinReadySeconds).To(Equal(ptr.To[int32](0)))
 	g.Expect(mp.Spec.Template.Spec.Bootstrap.ConfigRef.Namespace).To(Equal(mp.Namespace))
 	g.Expect(mp.Spec.Template.Spec.InfrastructureRef.Namespace).To(Equal(mp.Namespace))
-	g.Expect(mp.Spec.Template.Spec.Version).To(Equal(pointer.String("v1.20.0")))
+	g.Expect(mp.Spec.Template.Spec.Version).To(Equal(ptr.To("v1.20.0")))
 }
 
 func TestMachinePoolBootstrapValidation(t *testing.T) {
-	// NOTE: MachinePool feature flag is disabled by default, thus preventing to create or update MachinePool.
-	// Enabling the feature flag temporarily for this test.
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	tests := []struct {
 		name      string
 		bootstrap clusterv1.Bootstrap
@@ -83,7 +74,7 @@ func TestMachinePoolBootstrapValidation(t *testing.T) {
 		},
 		{
 			name:      "should not return error if dataSecretName is set",
-			bootstrap: clusterv1.Bootstrap{ConfigRef: nil, DataSecretName: pointer.String("test")},
+			bootstrap: clusterv1.Bootstrap{ConfigRef: nil, DataSecretName: ptr.To("test")},
 			expectErr: false,
 		},
 		{
@@ -127,9 +118,6 @@ func TestMachinePoolBootstrapValidation(t *testing.T) {
 }
 
 func TestMachinePoolNamespaceValidation(t *testing.T) {
-	// NOTE: MachinePool feature flag is disabled by default, thus preventing to create or update MachinePool.
-	// Enabling the feature flag temporarily for this test.
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	tests := []struct {
 		name      string
 		expectErr bool
@@ -204,9 +192,6 @@ func TestMachinePoolNamespaceValidation(t *testing.T) {
 }
 
 func TestMachinePoolClusterNameImmutable(t *testing.T) {
-	// NOTE: MachinePool feature flag is disabled by default, thus preventing to create or update MachinePool.
-	// Enabling the feature flag temporarily for this test.
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	tests := []struct {
 		name           string
 		oldClusterName string
@@ -266,9 +251,6 @@ func TestMachinePoolClusterNameImmutable(t *testing.T) {
 }
 
 func TestMachinePoolVersionValidation(t *testing.T) {
-	// NOTE: MachinePool feature flag is disabled by default, thus preventing to create or update MachinePool.
-	// Enabling the feature flag temporarily for this test.
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	tests := []struct {
 		name      string
 		expectErr bool

@@ -28,6 +28,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -44,7 +46,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/kustomize/api/types"
 
@@ -69,28 +71,28 @@ const (
 
 var (
 	// Defines the default version to be used for the provider CR if no version is specified in the tilt-provider.yaml|json file.
-	defaultProviderVersion = "v1.6.99"
+	defaultProviderVersion = "v1.7.99"
 
 	// This data struct mirrors a subset of info from the providers struct in the tilt file
 	// which is containing "hard-coded" tilt-provider.yaml files for the providers managed in the Cluster API repository.
 	providers = map[string]tiltProviderConfig{
 		"core": {
-			Context: pointer.String("."),
+			Context: ptr.To("."),
 		},
 		"kubeadm-bootstrap": {
-			Context: pointer.String("bootstrap/kubeadm"),
+			Context: ptr.To("bootstrap/kubeadm"),
 		},
 		"kubeadm-control-plane": {
-			Context: pointer.String("controlplane/kubeadm"),
+			Context: ptr.To("controlplane/kubeadm"),
 		},
 		"docker": {
-			Context: pointer.String("test/infrastructure/docker"),
+			Context: ptr.To("test/infrastructure/docker"),
 		},
 		"in-memory": {
-			Context: pointer.String("test/infrastructure/inmemory"),
+			Context: ptr.To("test/infrastructure/inmemory"),
 		},
 		"test-extension": {
-			Context: pointer.String("test/extension"),
+			Context: ptr.To("test/extension"),
 		},
 	}
 
@@ -129,8 +131,12 @@ type tiltProvider struct {
 }
 
 type tiltProviderConfig struct {
-	Context *string `json:"context,omitempty"`
-	Version *string `json:"version,omitempty"`
+	Context           *string  `json:"context,omitempty"`
+	Version           *string  `json:"version,omitempty"`
+	LiveReloadDeps    []string `json:"live_reload_deps,omitempty"`
+	ApplyProviderYaml *bool    `json:"apply_provider_yaml,omitempty"`
+	KustomizeFolder   *string  `json:"kustomize_folder,omitempty"`
+	KustomizeOptions  []string `json:"kustomize_options,omitempty"`
 }
 
 func init() {
@@ -152,7 +158,7 @@ func init() {
 func main() {
 	// Set clusterctl logger with a log level of 5.
 	// This makes it easier to see what clusterctl is doing and to debug it.
-	logf.SetLogger(logf.NewLogger(logf.WithThreshold(pointer.Int(5))))
+	logf.SetLogger(logf.NewLogger(logf.WithThreshold(ptr.To(5))))
 
 	// Set controller-runtime logger as well.
 	ctrl.SetLogger(klog.Background())
@@ -212,19 +218,19 @@ func readTiltSettings(path string) (*tiltSettings, error) {
 // setTiltSettingsDefaults sets default values for tiltSettings info.
 func setTiltSettingsDefaults(ts *tiltSettings) {
 	if ts.DeployCertManager == nil {
-		ts.DeployCertManager = pointer.Bool(true)
+		ts.DeployCertManager = ptr.To(true)
 	}
 
 	for k := range ts.Debug {
 		p := ts.Debug[k]
 		if p.Continue == nil {
-			p.Continue = pointer.Bool(true)
+			p.Continue = ptr.To(true)
 		}
 		if p.Port == nil {
-			p.Port = pointer.Int(0)
+			p.Port = ptr.To(0)
 		}
 		if p.ProfilerPort == nil {
-			p.ProfilerPort = pointer.Int(0)
+			p.ProfilerPort = ptr.To(0)
 		}
 
 		ts.Debug[k] = p
@@ -339,7 +345,17 @@ func tiltResources(ctx context.Context, ts *tiltSettings) error {
 		if !ok {
 			return errors.Errorf("failed to obtain config for the provider %s, please add the providers path to the provider_repos list in tilt-settings.yaml/json file", providerName)
 		}
-		tasks[providerName] = workloadTask(providerName, "provider", "manager", "manager", ts, fmt.Sprintf("%s/config/default", *config.Context), getProviderObj(config.Version))
+		if ptr.Deref(config.ApplyProviderYaml, true) {
+			kustomizeFolder := path.Join(*config.Context, ptr.Deref(config.KustomizeFolder, "config/default"))
+			kustomizeOptions := config.KustomizeOptions
+			liveReloadDeps := config.LiveReloadDeps
+			var debugConfig *tiltSettingsDebugConfig
+			if d, ok := ts.Debug[providerName]; ok {
+				debugConfig = &d
+			}
+			extraArgs := ts.ExtraArgs[providerName]
+			tasks[providerName] = workloadTask(providerName, "provider", "manager", "manager", liveReloadDeps, debugConfig, extraArgs, kustomizeFolder, kustomizeOptions, getProviderObj(config.Version))
+		}
 	}
 
 	return runTaskGroup(ctx, "resources", tasks)
@@ -358,11 +374,14 @@ func loadTiltProvider(providerRepository string) (map[string]tiltProviderConfig,
 		}
 
 		// Resolving context, that is a relative path to the repository where the tilt-provider is defined
-		contextPath := filepath.Join(providerRepository, pointer.StringDeref(p.Config.Context, "."))
+		contextPath := filepath.Join(providerRepository, ptr.Deref(p.Config.Context, "."))
 
 		ret[p.Name] = tiltProviderConfig{
-			Context: &contextPath,
-			Version: p.Config.Version,
+			Context:           &contextPath,
+			Version:           p.Config.Version,
+			ApplyProviderYaml: p.Config.ApplyProviderYaml,
+			KustomizeFolder:   p.Config.KustomizeFolder,
+			KustomizeOptions:  p.Config.KustomizeOptions,
 		}
 	}
 	return ret, nil
@@ -573,8 +592,8 @@ type chartFile struct {
 // outdated charts below the given path. This is necessary because kustomize just
 // uses a local Chart if it exists, no matter if it matches the required version or not.
 func cleanupChartTask(path string) taskFunction {
-	return func(ctx context.Context, prefix string, errCh chan error) {
-		err := filepath.WalkDir(path, func(path string, d fs.DirEntry, _ error) error {
+	return func(_ context.Context, prefix string, errCh chan error) {
+		err := filepath.WalkDir(path, func(path string, _ fs.DirEntry, _ error) error {
 			if !strings.HasSuffix(path, "kustomization.yaml") {
 				return nil
 			}
@@ -674,9 +693,12 @@ func kustomizeTask(path, out string) taskFunction {
 // workloadTask generates a task for creating the component yaml for a workload and saving the output on a file.
 // NOTE: This task has several sub steps including running kustomize, envsubst, fixing components for debugging,
 // and adding the workload resource mimicking what clusterctl init does.
-func workloadTask(name, workloadType, binaryName, containerName string, ts *tiltSettings, path string, getAdditionalObject func(string, []unstructured.Unstructured) (*unstructured.Unstructured, error)) taskFunction {
+func workloadTask(name, workloadType, binaryName, containerName string, liveReloadDeps []string, debugConfig *tiltSettingsDebugConfig, extraArgs tiltSettingsExtraArgs, path string, options []string, getAdditionalObject func(string, []unstructured.Unstructured) (*unstructured.Unstructured, error)) taskFunction {
 	return func(ctx context.Context, prefix string, errCh chan error) {
-		kustomizeCmd := exec.CommandContext(ctx, kustomizePath, "build", path)
+		args := []string{"build"}
+		args = append(args, options...)
+		args = append(args, path)
+		kustomizeCmd := exec.CommandContext(ctx, kustomizePath, args...)
 		var stdout1, stderr1 bytes.Buffer
 		kustomizeCmd.Dir = rootPath
 		kustomizeCmd.Stdout = &stdout1
@@ -703,7 +725,7 @@ func workloadTask(name, workloadType, binaryName, containerName string, ts *tilt
 			return
 		}
 
-		if err := prepareWorkload(name, prefix, binaryName, containerName, objs, ts); err != nil {
+		if err := prepareWorkload(prefix, binaryName, containerName, objs, liveReloadDeps, debugConfig, extraArgs); err != nil {
 			errCh <- err
 			return
 		}
@@ -772,14 +794,21 @@ func writeIfChanged(prefix string, path string, yaml []byte) error {
 // If there are extra_args given for the workload, we append those to the ones that already exist in the deployment.
 // This has the affect that the appended ones will take precedence, as those are read last.
 // Finally, we modify the deployment to enable prometheus metrics scraping.
-func prepareWorkload(name, prefix, binaryName, containerName string, objs []unstructured.Unstructured, ts *tiltSettings) error {
+func prepareWorkload(prefix, binaryName, containerName string, objs []unstructured.Unstructured, liveReloadDeps []string, debugConfig *tiltSettingsDebugConfig, extraArgs tiltSettingsExtraArgs) error {
+	// Update provider namespaces to have the pod security standard enforce label set to privileged.
+	// This is required because we remove the SecurityContext from provider deployments below to make tilt work.
+	updateNamespacePodSecurityStandard(objs)
 	return updateDeployment(prefix, objs, func(deployment *appsv1.Deployment) {
 		for j, container := range deployment.Spec.Template.Spec.Containers {
 			if container.Name != containerName {
 				continue
 			}
-			cmd := []string{"sh", "/start.sh", "/" + binaryName}
-			args := append(container.Args, []string(ts.ExtraArgs[name])...)
+
+			cmd := []string{"/" + binaryName}
+			if len(liveReloadDeps) > 0 || debugConfig != nil {
+				cmd = []string{"sh", "/start.sh", "/" + binaryName}
+			}
+			args := append(container.Args, []string(extraArgs)...)
 
 			// remove securityContext for tilt live_update, see https://github.com/tilt-dev/tilt/issues/3060
 			container.SecurityContext = nil
@@ -790,19 +819,19 @@ func prepareWorkload(name, prefix, binaryName, containerName string, objs []unst
 			// alter deployment for working nicely with delve debugger;
 			// most specifically, configuring delve, starting the manager with profiling enabled, dropping liveness and
 			// readiness probes and disabling leader election.
-			if d, ok := ts.Debug[name]; ok {
+			if debugConfig != nil {
 				cmd = []string{"sh", "/start.sh", "/dlv", "--accept-multiclient", "--api-version=2", "--headless=true", "exec"}
 
-				if d.Port != nil && *d.Port > 0 {
+				if debugConfig.Port != nil && *debugConfig.Port > 0 {
 					cmd = append(cmd, "--listen=:30000")
 				}
-				if d.Continue != nil && *d.Continue {
+				if debugConfig.Continue != nil && *debugConfig.Continue {
 					cmd = append(cmd, "--continue")
 				}
 
 				cmd = append(cmd, []string{"--", "/" + binaryName}...)
 
-				if d.ProfilerPort != nil && *d.ProfilerPort > 0 {
+				if debugConfig.ProfilerPort != nil && *debugConfig.ProfilerPort > 0 {
 					args = append(args, []string{"--profiler-address=:6060"}...)
 				}
 
@@ -823,11 +852,14 @@ func prepareWorkload(name, prefix, binaryName, containerName string, objs []unst
 
 				container.LivenessProbe = nil
 				container.ReadinessProbe = nil
+
+				container.Resources = corev1.ResourceRequirements{}
 			}
 
 			container.Command = cmd
 			container.Args = args
 			deployment.Spec.Template.Spec.Containers[j] = container
+			deployment.Spec.Replicas = ptr.To[int32](1)
 		}
 	})
 }
@@ -929,7 +961,7 @@ func getProviderObj(version *string) func(prefix string, objs []unstructured.Uns
 			},
 			ProviderName: providerName,
 			Type:         providerType,
-			Version:      pointer.StringDeref(version, defaultProviderVersion),
+			Version:      ptr.Deref(version, defaultProviderVersion),
 		}
 
 		providerObj := &unstructured.Unstructured{}
@@ -937,5 +969,21 @@ func getProviderObj(version *string) func(prefix string, objs []unstructured.Uns
 			return nil, errors.Wrapf(err, "[%s] failed to convert Provider to unstructured", prefix)
 		}
 		return providerObj, nil
+	}
+}
+
+func updateNamespacePodSecurityStandard(objs []unstructured.Unstructured) {
+	for i, obj := range objs {
+		if obj.GetKind() != "Namespace" {
+			continue
+		}
+		// Ignore Deployments that are not part of the provider, eg. ASO in CAPZ.
+		if _, exists := obj.GetLabels()[clusterv1.ProviderNameLabel]; !exists {
+			continue
+		}
+		labels := obj.GetLabels()
+		labels["pod-security.kubernetes.io/enforce"] = "privileged"
+		obj.SetLabels(labels)
+		objs[i] = obj
 	}
 }
