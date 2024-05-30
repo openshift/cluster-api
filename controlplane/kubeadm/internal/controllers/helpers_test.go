@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -386,12 +386,12 @@ func TestCloneConfigsAndGenerateMachine(t *testing.T) {
 		g.Expect(infraObj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.TemplateClonedFromGroupKindAnnotation, genericInfrastructureMachineTemplate.GroupVersionKind().GroupKind().String()))
 
 		g.Expect(m.Spec.InfrastructureRef.Namespace).To(Equal(cluster.Namespace))
-		g.Expect(m.Spec.InfrastructureRef.Name).To(HavePrefix(genericInfrastructureMachineTemplate.GetName()))
+		g.Expect(m.Spec.InfrastructureRef.Name).To(Equal(m.Name))
 		g.Expect(m.Spec.InfrastructureRef.APIVersion).To(Equal(genericInfrastructureMachineTemplate.GetAPIVersion()))
 		g.Expect(m.Spec.InfrastructureRef.Kind).To(Equal("GenericInfrastructureMachine"))
 
 		g.Expect(m.Spec.Bootstrap.ConfigRef.Namespace).To(Equal(cluster.Namespace))
-		g.Expect(m.Spec.Bootstrap.ConfigRef.Name).To(HavePrefix(kcp.Name))
+		g.Expect(m.Spec.Bootstrap.ConfigRef.Name).To(Equal(m.Name))
 		g.Expect(m.Spec.Bootstrap.ConfigRef.APIVersion).To(Equal(bootstrapv1.GroupVersion.String()))
 		g.Expect(m.Spec.Bootstrap.ConfigRef.Kind).To(Equal("KubeadmConfig"))
 	}
@@ -525,21 +525,16 @@ func TestKubeadmControlPlaneReconciler_computeDesiredMachine(t *testing.T) {
 	t.Run("should return the correct Machine object when creating a new Machine", func(t *testing.T) {
 		g := NewWithT(t)
 
-		failureDomain := pointer.String("fd1")
+		failureDomain := ptr.To("fd1")
 		createdMachine, err := (&KubeadmControlPlaneReconciler{}).computeDesiredMachine(
 			kcp, cluster,
-			infraRef, bootstrapRef,
 			failureDomain, nil,
 		)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		expectedMachineSpec := clusterv1.MachineSpec{
-			ClusterName: cluster.Name,
-			Version:     pointer.String(kcp.Spec.Version),
-			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: bootstrapRef,
-			},
-			InfrastructureRef:       *infraRef,
+			ClusterName:             cluster.Name,
+			Version:                 ptr.To(kcp.Spec.Version),
 			FailureDomain:           failureDomain,
 			NodeDrainTimeout:        kcp.Spec.MachineTemplate.NodeDrainTimeout,
 			NodeDeletionTimeout:     kcp.Spec.MachineTemplate.NodeDeletionTimeout,
@@ -583,8 +578,8 @@ func TestKubeadmControlPlaneReconciler_computeDesiredMachine(t *testing.T) {
 		// to verify that for an existing machine we do not override this information.
 		existingClusterConfigurationString := "existing-cluster-configuration-information"
 		remediationData := "remediation-data"
-		failureDomain := pointer.String("fd-1")
-		machineVersion := pointer.String("v1.25.3")
+		failureDomain := ptr.To("fd-1")
+		machineVersion := ptr.To("v1.25.3")
 		existingMachine := &clusterv1.Machine{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: machineName,
@@ -600,12 +595,15 @@ func TestKubeadmControlPlaneReconciler_computeDesiredMachine(t *testing.T) {
 				NodeDrainTimeout:        duration10s,
 				NodeDeletionTimeout:     duration10s,
 				NodeVolumeDetachTimeout: duration10s,
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: bootstrapRef,
+				},
+				InfrastructureRef: *infraRef,
 			},
 		}
 
 		updatedMachine, err := (&KubeadmControlPlaneReconciler{}).computeDesiredMachine(
 			kcp, cluster,
-			infraRef, bootstrapRef,
 			existingMachine.Spec.FailureDomain, existingMachine,
 		)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -689,10 +687,10 @@ func TestKubeadmControlPlaneReconciler_generateKubeadmConfig(t *testing.T) {
 		recorder:            record.NewFakeRecorder(32),
 	}
 
-	got, err := r.generateKubeadmConfig(ctx, kcp, cluster, spec.DeepCopy())
+	got, err := r.generateKubeadmConfig(ctx, kcp, cluster, spec.DeepCopy(), "kubeadmconfig-name")
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(got).NotTo(BeNil())
-	g.Expect(got.Name).To(HavePrefix(kcp.Name))
+	g.Expect(got.Name).To(Equal("kubeadmconfig-name"))
 	g.Expect(got.Namespace).To(Equal(kcp.Namespace))
 	g.Expect(got.Kind).To(Equal(expectedReferenceKind))
 	g.Expect(got.APIVersion).To(Equal(expectedReferenceAPIVersion))
@@ -712,8 +710,8 @@ func TestKubeadmControlPlaneReconciler_adoptKubeconfigSecret(t *testing.T) {
 		UID:                "5",
 		Kind:               "OtherController",
 		APIVersion:         clusterv1.GroupVersion.String(),
-		Controller:         pointer.Bool(true),
-		BlockOwnerDeletion: pointer.Bool(true),
+		Controller:         ptr.To(true),
+		BlockOwnerDeletion: ptr.To(true),
 	}
 
 	// A KubeadmConfig secret created by CAPI controllers with no owner references.
@@ -761,8 +759,8 @@ func TestKubeadmControlPlaneReconciler_adoptKubeconfigSecret(t *testing.T) {
 				UID:                kcp.UID,
 				Kind:               kcp.Kind,
 				APIVersion:         kcp.APIVersion,
-				Controller:         pointer.Bool(true),
-				BlockOwnerDeletion: pointer.Bool(true),
+				Controller:         ptr.To(true),
+				BlockOwnerDeletion: ptr.To(true),
 			},
 		},
 		{
@@ -773,8 +771,8 @@ func TestKubeadmControlPlaneReconciler_adoptKubeconfigSecret(t *testing.T) {
 				UID:                kcp.UID,
 				Kind:               kcp.Kind,
 				APIVersion:         kcp.APIVersion,
-				Controller:         pointer.Bool(true),
-				BlockOwnerDeletion: pointer.Bool(true),
+				Controller:         ptr.To(true),
+				BlockOwnerDeletion: ptr.To(true),
 			},
 		},
 		{
@@ -789,7 +787,7 @@ func TestKubeadmControlPlaneReconciler_adoptKubeconfigSecret(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(*testing.T) {
 			fakeClient := newFakeClient(kcp, tt.configSecret)
 			r := &KubeadmControlPlaneReconciler{
 				Client:              fakeClient,

@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -42,7 +42,7 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type:    "integer",
-							Minimum: pointer.Int64(1),
+							Minimum: ptr.To[int64](1),
 						},
 					},
 				},
@@ -51,7 +51,7 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type:    "integer",
-							Minimum: pointer.Int64(1),
+							Minimum: ptr.To[int64](1),
 						},
 					},
 				},
@@ -66,7 +66,7 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type:    "integer",
-							Minimum: pointer.Int64(1),
+							Minimum: ptr.To[int64](1),
 						},
 					},
 				},
@@ -75,7 +75,7 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type:    "number",
-							Maximum: pointer.Int64(1),
+							Maximum: ptr.To[int64](1),
 						},
 					},
 				},
@@ -85,7 +85,7 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type:      "string",
-							MinLength: pointer.Int64(1),
+							MinLength: ptr.To[int64](1),
 						},
 					},
 				},
@@ -94,7 +94,7 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type:      "string",
-							MinLength: pointer.Int64(1),
+							MinLength: ptr.To[int64](1),
 						},
 					},
 				},
@@ -132,7 +132,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:    "integer",
-						Minimum: pointer.Int64(1),
+						Minimum: ptr.To[int64](1),
 					},
 				},
 			},
@@ -144,7 +144,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -156,7 +156,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -168,7 +168,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -181,7 +181,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -194,7 +194,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -215,7 +215,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -232,7 +232,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -250,7 +250,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MinLength: pointer.Int64(1),
+						MinLength: ptr.To[int64](1),
 					},
 				},
 			},
@@ -570,7 +570,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MaxLength: pointer.Int64(6),
+						MaxLength: ptr.To[int64](6),
 						Default:   &apiextensionsv1.JSON{Raw: []byte(`"short"`)},
 					},
 				},
@@ -583,7 +583,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MaxLength: pointer.Int64(6),
+						MaxLength: ptr.To[int64](6),
 						Default:   &apiextensionsv1.JSON{Raw: []byte(`"veryLongValueIsInvalid"`)},
 					},
 				},
@@ -604,7 +604,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 									"replicas": {
 										Type:    "integer",
 										Default: &apiextensionsv1.JSON{Raw: []byte(`100`)},
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -627,7 +627,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 									"replicas": {
 										Type:    "integer",
 										Default: &apiextensionsv1.JSON{Raw: []byte(`-100`)},
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -653,7 +653,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -679,7 +679,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -707,12 +707,12 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 									"replicas": {
 										Type:    "integer",
 										Default: &apiextensionsv1.JSON{Raw: []byte(`100`)},
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 									"value": {
 										Type:    "integer",
 										Default: &apiextensionsv1.JSON{Raw: []byte(`100`)},
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -741,7 +741,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 									"replicas": {
 										Type:    "integer",
 										Default: &apiextensionsv1.JSON{Raw: []byte(`100`)},
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -758,7 +758,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MaxLength: pointer.Int64(6),
+						MaxLength: ptr.To[int64](6),
 						Example:   &apiextensionsv1.JSON{Raw: []byte(`"short"`)},
 					},
 				},
@@ -771,7 +771,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MaxLength: pointer.Int64(6),
+						MaxLength: ptr.To[int64](6),
 						Example:   &apiextensionsv1.JSON{Raw: []byte(`"veryLongValueIsInvalid"`)},
 					},
 				},
@@ -791,7 +791,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(0),
+										Minimum: ptr.To[int64](0),
 										Example: &apiextensionsv1.JSON{Raw: []byte(`100`)},
 									},
 								},
@@ -814,7 +814,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(0),
+										Minimum: ptr.To[int64](0),
 										Example: &apiextensionsv1.JSON{Raw: []byte(`-100`)},
 									},
 								},
@@ -841,7 +841,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -867,7 +867,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -883,7 +883,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MaxLength: pointer.Int64(6),
+						MaxLength: ptr.To[int64](6),
 						Enum: []apiextensionsv1.JSON{
 							{Raw: []byte(`"short1"`)},
 							{Raw: []byte(`"short2"`)},
@@ -899,7 +899,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type:      "string",
-						MaxLength: pointer.Int64(6),
+						MaxLength: ptr.To[int64](6),
 						Enum: []apiextensionsv1.JSON{
 							{Raw: []byte(`"veryLongValueIsInvalid"`)},
 							{Raw: []byte(`"short"`)},
@@ -922,7 +922,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(0),
+										Minimum: ptr.To[int64](0),
 										Enum: []apiextensionsv1.JSON{
 											{Raw: []byte(`100`)},
 											{Raw: []byte(`5`)},
@@ -948,7 +948,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(0),
+										Minimum: ptr.To[int64](0),
 										Enum: []apiextensionsv1.JSON{
 											{Raw: []byte(`100`)},
 											{Raw: []byte(`-100`)},
@@ -983,7 +983,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},
@@ -1014,7 +1014,7 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 								Properties: map[string]clusterv1.JSONSchemaProps{
 									"replicas": {
 										Type:    "integer",
-										Minimum: pointer.Int64(1),
+										Minimum: ptr.To[int64](1),
 									},
 								},
 							},

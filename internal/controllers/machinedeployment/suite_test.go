@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -191,13 +191,13 @@ func fakeMachineNodeRef(m *clusterv1.Machine, pid string, g *WithT) {
 
 	// Patch the Machine.
 	patchMachine := client.MergeFrom(m.DeepCopy())
-	m.Spec.ProviderID = pointer.String(pid)
+	m.Spec.ProviderID = ptr.To(pid)
 	g.Expect(env.Patch(ctx, m, patchMachine)).To(Succeed())
 
 	patchMachine = client.MergeFrom(m.DeepCopy())
 	m.Status.NodeRef = &corev1.ObjectReference{
-		APIVersion: node.APIVersion,
-		Kind:       node.Kind,
+		APIVersion: corev1.SchemeGroupVersion.String(),
+		Kind:       "Node",
 		Name:       node.Name,
 	}
 	g.Expect(env.Status().Patch(ctx, m, patchMachine)).To(Succeed())

@@ -496,7 +496,8 @@ data:
             - --leader-elect
             - --diagnostics-address=${CAPI_DIAGNOSTICS_ADDRESS:=:8443}
             - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
-            - --feature-gates=MachinePool=${EXP_MACHINE_POOL:=false},ClusterResourceSet=${EXP_CLUSTER_RESOURCE_SET:=false},ClusterTopology=${CLUSTER_TOPOLOGY:=false},RuntimeSDK=${EXP_RUNTIME_SDK:=false},MachineSetPreflightChecks=${EXP_MACHINE_SET_PREFLIGHT_CHECKS:=false}
+            - --use-deprecated-infra-machine-naming=${CAPI_USE_DEPRECATED_INFRA_MACHINE_NAMING:=false}
+            - --feature-gates=MachinePool=${EXP_MACHINE_POOL:=true},ClusterResourceSet=${EXP_CLUSTER_RESOURCE_SET:=true},ClusterTopology=${CLUSTER_TOPOLOGY:=false},RuntimeSDK=${EXP_RUNTIME_SDK:=false},MachineSetPreflightChecks=${EXP_MACHINE_SET_PREFLIGHT_CHECKS:=false}
             command:
             - /manager
             env:
@@ -966,7 +967,7 @@ data:
         targetPort: webhook-server
       selector:
         cluster.x-k8s.io/provider: cluster-api
-  metadata: |-
+  metadata: |
     # maps release series of major.minor to cluster-api contract version
     # the contract version may change between minor or major versions, but *not*
     # between patch versions.
@@ -975,6 +976,9 @@ data:
     apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3
     kind: Metadata
     releaseSeries:
+      - major: 1
+        minor: 7
+        contract: v1beta1
       - major: 1
         minor: 6
         contract: v1beta1
@@ -996,9 +1000,6 @@ data:
       - major: 1
         minor: 0
         contract: v1beta1
-      - major: 0
-        minor: 4
-        contract: v1alpha4
 kind: ConfigMap
 metadata:
   annotations:
@@ -1010,6 +1011,6 @@ metadata:
   labels:
     provider.cluster.x-k8s.io/name: cluster-api
     provider.cluster.x-k8s.io/type: core
-    provider.cluster.x-k8s.io/version: v1.6.4
+    provider.cluster.x-k8s.io/version: v1.7.2
   name: cluster-api
   namespace: openshift-cluster-api

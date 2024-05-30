@@ -40,9 +40,9 @@ import (
 	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
+	"sigs.k8s.io/cluster-api/exp/topology/scope"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
-	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/scope"
 	"sigs.k8s.io/cluster-api/internal/hooks"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/test/builder"
@@ -64,7 +64,6 @@ var (
 
 func TestClusterReconciler_reconcileNewlyCreatedCluster(t *testing.T) {
 	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	g := NewWithT(t)
 	timeout := 5 * time.Second
 
@@ -113,7 +112,6 @@ func TestClusterReconciler_reconcileNewlyCreatedCluster(t *testing.T) {
 
 func TestClusterReconciler_reconcileMultipleClustersFromOneClass(t *testing.T) {
 	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 
 	g := NewWithT(t)
 	timeout := 5 * time.Second
@@ -166,7 +164,6 @@ func TestClusterReconciler_reconcileMultipleClustersFromOneClass(t *testing.T) {
 
 func TestClusterReconciler_reconcileUpdateOnClusterTopology(t *testing.T) {
 	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	g := NewWithT(t)
 	timeout := 300 * time.Second
 
@@ -258,7 +255,6 @@ func TestClusterReconciler_reconcileUpdateOnClusterTopology(t *testing.T) {
 
 func TestClusterReconciler_reconcileUpdatesOnClusterClass(t *testing.T) {
 	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	g := NewWithT(t)
 	timeout := 5 * time.Second
 
@@ -359,7 +355,6 @@ func TestClusterReconciler_reconcileUpdatesOnClusterClass(t *testing.T) {
 
 func TestClusterReconciler_reconcileClusterClassRebase(t *testing.T) {
 	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	g := NewWithT(t)
 	timeout := 30 * time.Second
 
@@ -441,7 +436,6 @@ func TestClusterReconciler_reconcileClusterClassRebase(t *testing.T) {
 
 func TestClusterReconciler_reconcileDelete(t *testing.T) {
 	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 
 	catalog := runtimecatalog.New()
 	_ = runtimehooksv1.AddToCatalog(catalog)
@@ -595,7 +589,6 @@ func TestClusterReconciler_reconcileDelete(t *testing.T) {
 // In this case deletion of the ClusterClass should be blocked by the webhook.
 func TestClusterReconciler_deleteClusterClass(t *testing.T) {
 	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachinePool, true)()
 	g := NewWithT(t)
 	timeout := 5 * time.Second
 
@@ -1420,7 +1413,7 @@ func TestReconciler_DefaultCluster(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(*testing.T) {
 			initObjects := []client.Object{tt.initialCluster, tt.clusterClass}
 			fakeClient := fake.NewClientBuilder().WithScheme(fakeScheme).WithObjects(initObjects...).Build()
 			r := &Reconciler{
@@ -1513,7 +1506,7 @@ func TestReconciler_ValidateCluster(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(*testing.T) {
 			initObjects := []client.Object{tt.cluster, tt.clusterClass}
 			fakeClient := fake.NewClientBuilder().WithScheme(fakeScheme).WithObjects(initObjects...).Build()
 			r := &Reconciler{

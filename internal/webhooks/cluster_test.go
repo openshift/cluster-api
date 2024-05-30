@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/component-base/featuregate/testing"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -208,6 +208,9 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 				WithWorkerMachineDeploymentClasses(
 					*builder.MachineDeploymentClass("default-worker").Build(),
 				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("default-worker").Build(),
+				).
 				WithStatusVariables(clusterv1.ClusterClassStatusVariable{
 					Name: "location",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
@@ -232,6 +235,12 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							Name:  "md-1",
 						},
 					},
+					MachinePools: []clusterv1.MachinePoolTopology{
+						{
+							Class: "default-worker",
+							Name:  "mp-1",
+						},
+					},
 				},
 			},
 			expect: &clusterv1.Topology{
@@ -240,6 +249,13 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						{
 							Class: "default-worker",
 							Name:  "md-1",
+							// "location" has not been added to .variables.overrides.
+						},
+					},
+					MachinePools: []clusterv1.MachinePoolTopology{
+						{
+							Class: "default-worker",
+							Name:  "mp-1",
 							// "location" has not been added to .variables.overrides.
 						},
 					},
@@ -259,6 +275,9 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithWorkerMachineDeploymentClasses(
 					*builder.MachineDeploymentClass("default-worker").Build(),
+				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("default-worker").Build(),
 				).
 				WithStatusVariables(clusterv1.ClusterClassStatusVariable{
 					Name: "httpProxy",
@@ -300,6 +319,20 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 					},
+					MachinePools: []clusterv1.MachinePoolTopology{
+						{
+							Class: "default-worker",
+							Name:  "md-1",
+							Variables: &clusterv1.MachinePoolVariables{
+								Overrides: []clusterv1.ClusterVariable{
+									{
+										Name:  "httpProxy",
+										Value: apiextensionsv1.JSON{Raw: []byte(`{"enabled":true}`)},
+									},
+								},
+							},
+						},
+					},
 				},
 				Variables: []clusterv1.ClusterVariable{
 					{
@@ -315,6 +348,21 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							Class: "default-worker",
 							Name:  "md-1",
 							Variables: &clusterv1.MachineDeploymentVariables{
+								Overrides: []clusterv1.ClusterVariable{
+									{
+										Name: "httpProxy",
+										// url has been added by defaulting.
+										Value: apiextensionsv1.JSON{Raw: []byte(`{"enabled":true,"url":"http://localhost:3128"}`)},
+									},
+								},
+							},
+						},
+					},
+					MachinePools: []clusterv1.MachinePoolTopology{
+						{
+							Class: "default-worker",
+							Name:  "md-1",
+							Variables: &clusterv1.MachinePoolVariables{
 								Overrides: []clusterv1.ClusterVariable{
 									{
 										Name: "httpProxy",
@@ -610,6 +658,13 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						Value: apiextensionsv1.JSON{Raw: []byte(`"text"`)},
 					}).
 					Build()).
+				WithMachinePool(builder.MachinePoolTopology("workers1").
+					WithClass("aa").
+					WithVariables(clusterv1.ClusterVariable{
+						Name:  "cpu",
+						Value: apiextensionsv1.JSON{Raw: []byte(`"text"`)},
+					}).
+					Build()).
 				Build(),
 			expect:  builder.ClusterTopology().Build(),
 			wantErr: true,
@@ -637,7 +692,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name:  "cpu",
 					Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
 				}).
-				// Variable is not required in MachineDeployment topologies.
+				// Variable is not required in MachineDeployment or MachinePool topologies.
 				Build(),
 			expect: builder.ClusterTopology().
 				WithClass("foo").
@@ -646,13 +701,14 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name:  "cpu",
 					Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
 				}).
-				// Variable is not required in MachineDeployment topologies.
+				// Variable is not required in MachineDeployment or MachinePool topologies.
 				Build(),
 		},
 		{
 			name: "should pass when top-level variable and override are valid",
 			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithWorkerMachineDeploymentClasses(*builder.MachineDeploymentClass("md1").Build()).
+				WithWorkerMachinePoolClasses(*builder.MachinePoolClass("mp1").Build()).
 				WithStatusVariables(clusterv1.ClusterClassStatusVariable{
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
@@ -680,6 +736,13 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
 					}).
 					Build()).
+				WithMachinePool(builder.MachinePoolTopology("workers1").
+					WithClass("mp1").
+					WithVariables(clusterv1.ClusterVariable{
+						Name:  "cpu",
+						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
+					}).
+					Build()).
 				Build(),
 			expect: builder.ClusterTopology().
 				WithClass("foo").
@@ -695,12 +758,20 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
 					}).
 					Build()).
+				WithMachinePool(builder.MachinePoolTopology("workers1").
+					WithClass("mp1").
+					WithVariables(clusterv1.ClusterVariable{
+						Name:  "cpu",
+						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
+					}).
+					Build()).
 				Build(),
 		},
 		{
 			name: "should pass even when variable override is missing the corresponding top-level variable",
 			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithWorkerMachineDeploymentClasses(*builder.MachineDeploymentClass("md1").Build()).
+				WithWorkerMachinePoolClasses(*builder.MachinePoolClass("mp1").Build()).
 				WithStatusVariables(clusterv1.ClusterClassStatusVariable{
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
@@ -724,6 +795,13 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
 					}).
 					Build()).
+				WithMachinePool(builder.MachinePoolTopology("workers1").
+					WithClass("mp1").
+					WithVariables(clusterv1.ClusterVariable{
+						Name:  "cpu",
+						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
+					}).
+					Build()).
 				Build(),
 			expect: builder.ClusterTopology().
 				WithClass("foo").
@@ -731,6 +809,13 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 				WithVariables([]clusterv1.ClusterVariable{}...).
 				WithMachineDeployment(builder.MachineDeploymentTopology("workers1").
 					WithClass("md1").
+					WithVariables(clusterv1.ClusterVariable{
+						Name:  "cpu",
+						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
+					}).
+					Build()).
+				WithMachinePool(builder.MachinePoolTopology("workers1").
+					WithClass("mp1").
 					WithVariables(clusterv1.ClusterVariable{
 						Name:  "cpu",
 						Value: apiextensionsv1.JSON{Raw: []byte(`2`)},
@@ -1167,6 +1252,24 @@ func TestClusterTopologyValidation(t *testing.T) {
 				Build(),
 		},
 		{
+			name:      "should return error when duplicated MachinePools names exists in a Topology",
+			expectErr: true,
+			in: builder.Cluster("fooboo", "cluster1").
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.19.1").
+					WithMachinePool(
+						builder.MachinePoolTopology("workers1").
+							WithClass("aa").
+							Build()).
+					WithMachinePool(
+						builder.MachinePoolTopology("workers1").
+							WithClass("bb").
+							Build()).
+					Build()).
+				Build(),
+		},
+		{
 			name:      "should pass when MachineDeployments names in a Topology are unique",
 			expectErr: false,
 			in: builder.Cluster("fooboo", "cluster1").
@@ -1179,6 +1282,24 @@ func TestClusterTopologyValidation(t *testing.T) {
 							Build()).
 					WithMachineDeployment(
 						builder.MachineDeploymentTopology("workers2").
+							WithClass("bb").
+							Build()).
+					Build()).
+				Build(),
+		},
+		{
+			name:      "should pass when MachinePools names in a Topology are unique",
+			expectErr: false,
+			in: builder.Cluster("fooboo", "cluster1").
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.19.1").
+					WithMachinePool(
+						builder.MachinePoolTopology("workers1").
+							WithClass("aa").
+							Build()).
+					WithMachinePool(
+						builder.MachinePoolTopology("workers2").
 							WithClass("bb").
 							Build()).
 					Build()).
@@ -1199,6 +1320,14 @@ func TestClusterTopologyValidation(t *testing.T) {
 						builder.MachineDeploymentTopology("workers2").
 							WithClass("bb").
 							Build()).
+					WithMachinePool(
+						builder.MachinePoolTopology("workers1").
+							WithClass("aa").
+							Build()).
+					WithMachinePool(
+						builder.MachinePoolTopology("workers2").
+							WithClass("bb").
+							Build()).
 					Build()).
 				Build(),
 			in: builder.Cluster("fooboo", "cluster1").
@@ -1211,6 +1340,14 @@ func TestClusterTopologyValidation(t *testing.T) {
 							Build()).
 					WithMachineDeployment(
 						builder.MachineDeploymentTopology("workers2").
+							WithClass("bb").
+							Build()).
+					WithMachinePool(
+						builder.MachinePoolTopology("workers1").
+							WithClass("aa").
+							Build()).
+					WithMachinePool(
+						builder.MachinePoolTopology("workers2").
 							WithClass("bb").
 							Build()).
 					Build()).
@@ -1263,6 +1400,14 @@ func TestClusterTopologyValidation(t *testing.T) {
 				WithTopology(builder.ClusterTopology().
 					WithClass("foo").
 					WithVersion("v1.19.1").
+					WithMachineDeployment(
+						builder.MachineDeploymentTopology("workers1").
+							WithClass("aa").
+							Build()).
+					WithMachinePool(
+						builder.MachinePoolTopology("pool1").
+							WithClass("aa").
+							Build()).
 					Build()).
 				Build(),
 			in: builder.Cluster("fooboo", "cluster1").
@@ -1319,14 +1464,6 @@ func TestClusterTopologyValidation(t *testing.T) {
 				WithTopology(builder.ClusterTopology().
 					WithClass("foo").
 					WithVersion("v1.19.1").
-					WithMachineDeployment(
-						builder.MachineDeploymentTopology("workers1").
-							WithClass("aa").
-							Build()).
-					WithMachinePool(
-						builder.MachinePoolTopology("pool1").
-							WithClass("aa").
-							Build()).
 					Build()).
 				Build(),
 			in: builder.Cluster("fooboo", "cluster1").
@@ -1412,6 +1549,10 @@ func TestClusterTopologyValidation(t *testing.T) {
 				WithWorkerMachineDeploymentClasses(
 					*builder.MachineDeploymentClass("bb").Build(),
 					*builder.MachineDeploymentClass("aa").Build(),
+				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("bb").Build(),
+					*builder.MachinePoolClass("aa").Build(),
 				).
 				WithStatusVariables(tt.clusterClassStatusVariables...).
 				Build()
@@ -1517,7 +1658,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
 						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							Enable: pointer.Bool(true),
+							Enable: ptr.To(true),
 						}).
 						Build()).
 				Build(),
@@ -1580,7 +1721,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
 						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							Enable: pointer.Bool(true),
+							Enable: ptr.To(true),
 						}).
 						Build()).
 				Build(),
@@ -1599,7 +1740,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
 						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							Enable: pointer.Bool(true),
+							Enable: ptr.To(true),
 							MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
 								UnhealthyConditions: []clusterv1.UnhealthyCondition{
 									{
@@ -1629,7 +1770,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 							builder.MachineDeploymentTopology("md1").
 								WithClass("worker-class").
 								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-									Enable: pointer.Bool(true),
+									Enable: ptr.To(true),
 								}).
 								Build(),
 						).
@@ -1683,7 +1824,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 							builder.MachineDeploymentTopology("md1").
 								WithClass("worker-class").
 								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-									Enable: pointer.Bool(true),
+									Enable: ptr.To(true),
 								}).
 								Build(),
 						).
@@ -1711,7 +1852,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 							builder.MachineDeploymentTopology("md1").
 								WithClass("worker-class").
 								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-									Enable: pointer.Bool(true),
+									Enable: ptr.To(true),
 									MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
 										UnhealthyConditions: []clusterv1.UnhealthyCondition{
 											{
@@ -1735,7 +1876,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(*testing.T) {
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
 			if tt.classReconciled {
 				conditions.MarkTrue(tt.class, clusterv1.ClusterClassVariablesReconciledCondition)
@@ -1991,15 +2132,21 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 			wantErr: true,
 		},
 
-		// MachineDeploymentClass changes
+		// MachineDeploymentClass & MachinePoolClass changes
 		{
-			name: "Accept cluster.topology.class change with a compatible MachineDeploymentClass InfrastructureTemplate",
+			name: "Accept cluster.topology.class change with a compatible MachineDeploymentClass and MachinePoolClass InfrastructureTemplate",
 			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
 				WithControlPlaneTemplate(refToUnstructured(ref)).
 				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
 				WithWorkerMachineDeploymentClasses(
 					*builder.MachineDeploymentClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
 						WithInfrastructureTemplate(refToUnstructured(ref)).
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
@@ -2015,17 +2162,29 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
 				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(compatibleNameChangeRef)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
 				Build(),
 			wantErr: false,
 		},
 		{
-			name: "Accept cluster.topology.class change with an incompatible MachineDeploymentClass BootstrapTemplate",
+			name: "Accept cluster.topology.class change with an incompatible MachineDeploymentClass and MachinePoolClass BootstrapTemplate",
 			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
 				WithControlPlaneTemplate(refToUnstructured(ref)).
 				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
 				WithWorkerMachineDeploymentClasses(
 					*builder.MachineDeploymentClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
 						WithInfrastructureTemplate(refToUnstructured(ref)).
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
@@ -2041,11 +2200,17 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 						WithBootstrapTemplate(refToUnstructured(incompatibleKindRef)).
 						Build(),
 				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(compatibleNameChangeRef)).
+						WithBootstrapTemplate(refToUnstructured(incompatibleKindRef)).
+						Build(),
+				).
 				Build(),
 			wantErr: false,
 		},
 		{
-			name: "Accept cluster.topology.class change with a deleted MachineDeploymentClass",
+			name: "Accept cluster.topology.class change with a deleted MachineDeploymentClass and MachinePoolClass",
 			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
 				WithControlPlaneTemplate(refToUnstructured(ref)).
@@ -2056,6 +2221,16 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
 					*builder.MachineDeploymentClass("bb").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+					*builder.MachinePoolClass("bb").
 						WithInfrastructureTemplate(refToUnstructured(ref)).
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
@@ -2071,17 +2246,29 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
 				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
 				Build(),
 			wantErr: false,
 		},
 		{
-			name: "Accept cluster.topology.class change with an added MachineDeploymentClass",
+			name: "Accept cluster.topology.class change with an added MachineDeploymentClass and MachinePoolClass",
 			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
 				WithControlPlaneTemplate(refToUnstructured(ref)).
 				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
 				WithWorkerMachineDeploymentClasses(
 					*builder.MachineDeploymentClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
 						WithInfrastructureTemplate(refToUnstructured(ref)).
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
@@ -2097,6 +2284,16 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
 					*builder.MachineDeploymentClass("bb").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+					*builder.MachinePoolClass("bb").
 						WithInfrastructureTemplate(refToUnstructured(ref)).
 						WithBootstrapTemplate(refToUnstructured(ref)).
 						Build(),
@@ -2156,9 +2353,63 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 				Build(),
 			wantErr: true,
 		},
+
+		// MachinePoolClass reject changes
+		{
+			name: "Reject cluster.topology.class change with an incompatible Kind change to MachinePoolClass InfrastructureTemplate",
+			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				Build(),
+			secondClass: builder.ClusterClass(metav1.NamespaceDefault, "class2").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(incompatibleKindRef)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "Reject cluster.topology.class change with an incompatible APIGroup change to MachinePoolClass InfrastructureTemplate",
+			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(ref)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				Build(),
+			secondClass: builder.ClusterClass(metav1.NamespaceDefault, "class2").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				WithWorkerMachinePoolClasses(
+					*builder.MachinePoolClass("aa").
+						WithInfrastructureTemplate(refToUnstructured(incompatibleAPIGroupRef)).
+						WithBootstrapTemplate(refToUnstructured(ref)).
+						Build(),
+				).
+				Build(),
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(*testing.T) {
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
 			conditions.MarkTrue(tt.firstClass, clusterv1.ClusterClassVariablesReconciledCondition)
 			conditions.MarkTrue(tt.secondClass, clusterv1.ClusterClassVariablesReconciledCondition)
@@ -2283,7 +2534,7 @@ func TestMovingBetweenManagedAndUnmanaged(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(*testing.T) {
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
 			conditions.MarkTrue(tt.clusterClass, clusterv1.ClusterClassVariablesReconciledCondition)
 			// Sets up the fakeClient for the test case.
@@ -2423,7 +2674,7 @@ func TestClusterClassPollingErrors(t *testing.T) {
 			oldCluster:     builder.Cluster(metav1.NamespaceDefault, "cluster1").WithTopology(topology).Build(),
 			clusterClasses: []*clusterv1.ClusterClass{ccFullyReconciled, secondFullyReconciled},
 			injectedErr: interceptor.Funcs{
-				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					// Throw an error if the second ClusterClass `class2` used as the new ClusterClass is being retrieved.
 					if key.Name == secondTopology.Class {
 						return errors.New("connection error")
@@ -2440,7 +2691,7 @@ func TestClusterClassPollingErrors(t *testing.T) {
 			oldCluster:     builder.Cluster(metav1.NamespaceDefault, "cluster1").WithTopology(topology).Build(),
 			clusterClasses: []*clusterv1.ClusterClass{ccFullyReconciled, secondFullyReconciled},
 			injectedErr: interceptor.Funcs{
-				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					// Throw an error if the ClusterClass `class1` used as the old ClusterClass is being retrieved.
 					if key.Name == topology.Class {
 						return errors.New("connection error")
@@ -2454,7 +2705,7 @@ func TestClusterClassPollingErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(*testing.T) {
 			// Sets up a reconcile with a fakeClient for the test case.
 			objs := []client.Object{}
 			for _, cc := range tt.clusterClasses {

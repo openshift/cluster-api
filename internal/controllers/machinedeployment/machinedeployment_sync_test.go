@@ -30,8 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	apirand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/klog/v2/klogr"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -53,7 +52,7 @@ func TestCalculateStatus(t *testing.T) {
 		"all machines are running": {
 			machineSets: []*clusterv1.MachineSet{{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -65,7 +64,7 @@ func TestCalculateStatus(t *testing.T) {
 			}},
 			newMachineSet: &clusterv1.MachineSet{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -80,7 +79,7 @@ func TestCalculateStatus(t *testing.T) {
 					Generation: 2,
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			expectedStatus: clusterv1.MachineDeploymentStatus{
@@ -96,7 +95,7 @@ func TestCalculateStatus(t *testing.T) {
 		"scaling up": {
 			machineSets: []*clusterv1.MachineSet{{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -108,7 +107,7 @@ func TestCalculateStatus(t *testing.T) {
 			}},
 			newMachineSet: &clusterv1.MachineSet{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -123,7 +122,7 @@ func TestCalculateStatus(t *testing.T) {
 					Generation: 2,
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			expectedStatus: clusterv1.MachineDeploymentStatus{
@@ -139,7 +138,7 @@ func TestCalculateStatus(t *testing.T) {
 		"scaling down": {
 			machineSets: []*clusterv1.MachineSet{{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -151,7 +150,7 @@ func TestCalculateStatus(t *testing.T) {
 			}},
 			newMachineSet: &clusterv1.MachineSet{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -166,7 +165,7 @@ func TestCalculateStatus(t *testing.T) {
 					Generation: 2,
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			expectedStatus: clusterv1.MachineDeploymentStatus{
@@ -182,7 +181,7 @@ func TestCalculateStatus(t *testing.T) {
 		"MachineSet failed": {
 			machineSets: []*clusterv1.MachineSet{{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -195,7 +194,7 @@ func TestCalculateStatus(t *testing.T) {
 			}},
 			newMachineSet: &clusterv1.MachineSet{
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 				Status: clusterv1.MachineSetStatus{
 					Selector:           "",
@@ -210,7 +209,7 @@ func TestCalculateStatus(t *testing.T) {
 					Generation: 2,
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			expectedStatus: clusterv1.MachineDeploymentStatus{
@@ -247,7 +246,7 @@ func TestScaleMachineSet(t *testing.T) {
 			name: "It fails when new MachineSet has no replicas",
 			machineDeployment: &clusterv1.MachineDeployment{
 				Spec: clusterv1.MachineDeploymentSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			machineSet: &clusterv1.MachineSet{
@@ -273,7 +272,7 @@ func TestScaleMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			error: errors.Errorf("spec.replicas for MachineDeployment foo/bar is nil, this is unexpected"),
@@ -293,7 +292,7 @@ func TestScaleMachineSet(t *testing.T) {
 							MaxSurge:       intOrStrPtr(2),
 						},
 					},
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			machineSet: &clusterv1.MachineSet{
@@ -302,7 +301,7 @@ func TestScaleMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(0),
+					Replicas: ptr.To[int32](0),
 				},
 			},
 			newScale: 2,
@@ -322,7 +321,7 @@ func TestScaleMachineSet(t *testing.T) {
 							MaxSurge:       intOrStrPtr(2),
 						},
 					},
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			machineSet: &clusterv1.MachineSet{
@@ -331,7 +330,7 @@ func TestScaleMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(4),
+					Replicas: ptr.To[int32](4),
 				},
 			},
 			newScale: 2,
@@ -351,7 +350,7 @@ func TestScaleMachineSet(t *testing.T) {
 							MaxSurge:       intOrStrPtr(2),
 						},
 					},
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			machineSet: &clusterv1.MachineSet{
@@ -360,7 +359,7 @@ func TestScaleMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineSetSpec{
-					Replicas: pointer.Int32(2),
+					Replicas: ptr.To[int32](2),
 				},
 			},
 			newScale: 2,
@@ -416,7 +415,7 @@ func newTestMachineDeployment(pds *int32, replicas, statusReplicas, updatedRepli
 				RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
 					MaxUnavailable: intOrStrPtr(0),
 					MaxSurge:       intOrStrPtr(1),
-					DeletePolicy:   pointer.String("Oldest"),
+					DeletePolicy:   ptr.To("Oldest"),
 				},
 			},
 		},
@@ -431,7 +430,7 @@ func newTestMachineDeployment(pds *int32, replicas, statusReplicas, updatedRepli
 }
 
 // helper to create MS with given availableReplicas.
-func newTestMachinesetWithReplicas(name string, specReplicas, statusReplicas, availableReplicas int32) *clusterv1.MachineSet {
+func newTestMachinesetWithReplicas(name string, specReplicas, statusReplicas, availableReplicas int32, conditions clusterv1.Conditions) *clusterv1.MachineSet {
 	return &clusterv1.MachineSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
@@ -439,11 +438,12 @@ func newTestMachinesetWithReplicas(name string, specReplicas, statusReplicas, av
 			Namespace:         metav1.NamespaceDefault,
 		},
 		Spec: clusterv1.MachineSetSpec{
-			Replicas: pointer.Int32(specReplicas),
+			Replicas: ptr.To[int32](specReplicas),
 		},
 		Status: clusterv1.MachineSetStatus{
 			AvailableReplicas: availableReplicas,
 			Replicas:          statusReplicas,
+			Conditions:        conditions,
 		},
 	}
 }
@@ -461,7 +461,7 @@ func TestSyncDeploymentStatus(t *testing.T) {
 			name:           "Deployment not available: MachineDeploymentAvailableCondition should exist and be false",
 			d:              newTestMachineDeployment(&pds, 3, 2, 2, 2, clusterv1.Conditions{}),
 			oldMachineSets: []*clusterv1.MachineSet{},
-			newMachineSet:  newTestMachinesetWithReplicas("foo", 3, 2, 2),
+			newMachineSet:  newTestMachinesetWithReplicas("foo", 3, 2, 2, clusterv1.Conditions{}),
 			expectedConditions: []*clusterv1.Condition{
 				{
 					Type:     clusterv1.MachineDeploymentAvailableCondition,
@@ -475,11 +475,46 @@ func TestSyncDeploymentStatus(t *testing.T) {
 			name:           "Deployment Available: MachineDeploymentAvailableCondition should exist and be true",
 			d:              newTestMachineDeployment(&pds, 3, 3, 3, 3, clusterv1.Conditions{}),
 			oldMachineSets: []*clusterv1.MachineSet{},
-			newMachineSet:  newTestMachinesetWithReplicas("foo", 3, 3, 3),
+			newMachineSet:  newTestMachinesetWithReplicas("foo", 3, 3, 3, clusterv1.Conditions{}),
 			expectedConditions: []*clusterv1.Condition{
 				{
 					Type:   clusterv1.MachineDeploymentAvailableCondition,
 					Status: corev1.ConditionTrue,
+				},
+			},
+		},
+		{
+			name:           "MachineSet exist: MachineSetReadyCondition should exist and mirror MachineSet Ready condition",
+			d:              newTestMachineDeployment(&pds, 3, 3, 3, 3, clusterv1.Conditions{}),
+			oldMachineSets: []*clusterv1.MachineSet{},
+			newMachineSet: newTestMachinesetWithReplicas("foo", 3, 3, 3, clusterv1.Conditions{
+				{
+					Type:    clusterv1.ReadyCondition,
+					Status:  corev1.ConditionFalse,
+					Reason:  "TestErrorResaon",
+					Message: "test error messsage",
+				},
+			}),
+			expectedConditions: []*clusterv1.Condition{
+				{
+					Type:    clusterv1.MachineSetReadyCondition,
+					Status:  corev1.ConditionFalse,
+					Reason:  "TestErrorResaon",
+					Message: "test error messsage",
+				},
+			},
+		},
+		{
+			name:           "MachineSet doesn't exist: MachineSetReadyCondition should exist and be false",
+			d:              newTestMachineDeployment(&pds, 3, 3, 3, 3, clusterv1.Conditions{}),
+			oldMachineSets: []*clusterv1.MachineSet{},
+			newMachineSet:  nil,
+			expectedConditions: []*clusterv1.Condition{
+				{
+					Type:     clusterv1.MachineSetReadyCondition,
+					Status:   corev1.ConditionFalse,
+					Severity: clusterv1.ConditionSeverityInfo,
+					Reason:   clusterv1.WaitingForMachineSetFallbackReason,
 				},
 			},
 		},
@@ -523,13 +558,13 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		},
 		Spec: clusterv1.MachineDeploymentSpec{
 			ClusterName:     "test-cluster",
-			Replicas:        pointer.Int32(3),
-			MinReadySeconds: pointer.Int32(10),
+			Replicas:        ptr.To[int32](3),
+			MinReadySeconds: ptr.To[int32](10),
 			Strategy: &clusterv1.MachineDeploymentStrategy{
 				Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
 				RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
 					MaxSurge:       intOrStrPtr(1),
-					DeletePolicy:   pointer.String("Random"),
+					DeletePolicy:   ptr.To("Random"),
 					MaxUnavailable: intOrStrPtr(0),
 				},
 			},
@@ -542,7 +577,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 					Annotations: map[string]string{"machine-annotation1": "machine-value1"},
 				},
 				Spec: clusterv1.MachineSpec{
-					Version:           pointer.String("v1.25.3"),
+					Version:           ptr.To("v1.25.3"),
 					InfrastructureRef: infraRef,
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &bootstrapRef,
@@ -555,8 +590,6 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		},
 	}
 
-	log := klogr.New()
-
 	skeletonMSBasedOnMD := &clusterv1.MachineSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:   "default",
@@ -565,7 +598,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSetSpec{
 			ClusterName:     "test-cluster",
-			Replicas:        pointer.Int32(3),
+			Replicas:        ptr.To[int32](3),
 			MinReadySeconds: 10,
 			DeletePolicy:    string(clusterv1.RandomMachineSetDeletePolicy),
 			Selector:        metav1.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
@@ -577,20 +610,20 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		expectedMS := skeletonMSBasedOnMD.DeepCopy()
 
 		g := NewWithT(t)
-		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, nil, nil, log)
+		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(ctx, deployment, nil, nil)
 		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
 
 	t.Run("should compute a new MachineSet when old MachineSets exist", func(t *testing.T) {
 		oldMS := skeletonMSBasedOnMD.DeepCopy()
-		oldMS.Spec.Replicas = pointer.Int32(2)
+		oldMS.Spec.Replicas = ptr.To[int32](2)
 
 		expectedMS := skeletonMSBasedOnMD.DeepCopy()
-		expectedMS.Spec.Replicas = pointer.Int32(2) // 4 (maxsurge+replicas) - 2 (replicas of old ms) = 2
+		expectedMS.Spec.Replicas = ptr.To[int32](2) // 4 (maxsurge+replicas) - 2 (replicas of old ms) = 2
 
 		g := NewWithT(t)
-		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, nil, []*clusterv1.MachineSet{oldMS}, log)
+		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(ctx, deployment, nil, []*clusterv1.MachineSet{oldMS})
 		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
@@ -627,7 +660,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		expectedMS.Spec.Template.Labels[clusterv1.MachineDeploymentUniqueLabel] = uniqueID
 
 		g := NewWithT(t)
-		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, existingMS, nil, log)
+		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(ctx, deployment, existingMS, nil)
 		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
@@ -655,7 +688,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		existingMS.Spec.MinReadySeconds = 0
 
 		oldMS := skeletonMSBasedOnMD.DeepCopy()
-		oldMS.Spec.Replicas = pointer.Int32(2)
+		oldMS.Spec.Replicas = ptr.To[int32](2)
 
 		// Note: computeDesiredMachineSet does not modify the replicas on the updated MachineSet.
 		// Therefore, even though we have the old machineset with replicas 2 the updatedMS does not
@@ -668,7 +701,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		expectedMS.Spec.Template.Labels[clusterv1.MachineDeploymentUniqueLabel] = uniqueID
 
 		g := NewWithT(t)
-		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, existingMS, []*clusterv1.MachineSet{oldMS}, log)
+		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(ctx, deployment, existingMS, []*clusterv1.MachineSet{oldMS})
 		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})
@@ -714,7 +747,7 @@ func TestComputeDesiredMachineSet(t *testing.T) {
 		expectedMS.Spec.DeletePolicy = ""
 
 		g := NewWithT(t)
-		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(deployment, existingMS, nil, log)
+		actualMS, err := (&Reconciler{}).computeDesiredMachineSet(ctx, deployment, existingMS, nil)
 		g.Expect(err).ToNot(HaveOccurred())
 		assertMachineSet(g, actualMS, expectedMS)
 	})

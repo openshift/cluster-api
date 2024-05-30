@@ -44,7 +44,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1alpha4 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	kubeadmbootstrapcontrollers "sigs.k8s.io/cluster-api/bootstrap/kubeadm/controllers"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/internal/webhooks"
@@ -52,6 +51,7 @@ import (
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	bootstrapv1alpha3 "sigs.k8s.io/cluster-api/internal/apis/bootstrap/kubeadm/v1alpha3"
+	bootstrapv1alpha4 "sigs.k8s.io/cluster-api/internal/apis/bootstrap/kubeadm/v1alpha4"
 	"sigs.k8s.io/cluster-api/util/flags"
 	"sigs.k8s.io/cluster-api/version"
 )
@@ -75,6 +75,8 @@ var (
 	restConfigBurst             int
 	webhookPort                 int
 	webhookCertDir              string
+	webhookCertName             string
+	webhookKeyName              string
 	healthAddr                  string
 	tlsOptions                  = flags.TLSOptions{}
 	diagnosticsOptions          = flags.DiagnosticsOptions{}
@@ -149,7 +151,13 @@ func InitFlags(fs *pflag.FlagSet) {
 		"Webhook Server port")
 
 	fs.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs/",
-		"Webhook cert dir, only used when webhook-port is specified.")
+		"Webhook cert dir.")
+
+	fs.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt",
+		"Webhook cert name.")
+
+	fs.StringVar(&webhookKeyName, "webhook-key-name", "tls.key",
+		"Webhook key name.")
 
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
@@ -170,7 +178,7 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "failed to set log level: %v")
+		setupLog.Error(err, "failed to set default log level")
 		os.Exit(1)
 	}
 	pflag.Parse()
@@ -243,9 +251,11 @@ func main() {
 		},
 		WebhookServer: webhook.NewServer(
 			webhook.Options{
-				Port:    webhookPort,
-				CertDir: webhookCertDir,
-				TLSOpts: tlsOptionOverrides,
+				Port:     webhookPort,
+				CertDir:  webhookCertDir,
+				CertName: webhookCertName,
+				KeyName:  webhookKeyName,
+				TLSOpts:  tlsOptionOverrides,
 			},
 		),
 	}

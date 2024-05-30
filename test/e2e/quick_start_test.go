@@ -22,8 +22,9 @@ package e2e
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
+	clusterctlcluster "sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/kubetest"
 )
@@ -36,10 +37,10 @@ var _ = Describe("When following the Cluster API quick-start", func() {
 			BootstrapClusterProxy:  bootstrapClusterProxy,
 			ArtifactFolder:         artifactFolder,
 			SkipCleanup:            skipCleanup,
-			InfrastructureProvider: pointer.String("docker"),
+			InfrastructureProvider: ptr.To("docker"),
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				// This check ensures that owner references are resilient - i.e. correctly re-reconciled - when removed.
-				framework.ValidateOwnerReferencesResilience(ctx, proxy, namespace, clusterName,
+				framework.ValidateOwnerReferencesResilience(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
 					framework.CoreOwnerReferenceAssertion,
 					framework.ExpOwnerReferenceAssertions,
 					framework.DockerInfraOwnerReferenceAssertions,
@@ -48,7 +49,7 @@ var _ = Describe("When following the Cluster API quick-start", func() {
 					framework.KubernetesReferenceAssertions,
 				)
 				// This check ensures that owner references are correctly updated to the correct apiVersion.
-				framework.ValidateOwnerReferencesOnUpdate(ctx, proxy, namespace, clusterName,
+				framework.ValidateOwnerReferencesOnUpdate(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
 					framework.CoreOwnerReferenceAssertion,
 					framework.ExpOwnerReferenceAssertions,
 					framework.DockerInfraOwnerReferenceAssertions,
@@ -56,6 +57,16 @@ var _ = Describe("When following the Cluster API quick-start", func() {
 					framework.KubeadmControlPlaneOwnerReferenceAssertions,
 					framework.KubernetesReferenceAssertions,
 				)
+				// This check ensures that finalizers are resilient - i.e. correctly re-reconciled - when removed.
+				framework.ValidateFinalizersResilience(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
+					framework.CoreFinalizersAssertion,
+					framework.KubeadmControlPlaneFinalizersAssertion,
+					framework.ExpFinalizersAssertion,
+					framework.DockerInfraFinalizersAssertion,
+				)
+				// This check ensures that the resourceVersions are stable, i.e. it verifies there are no
+				// continuous reconciles when everything should be stable.
+				framework.ValidateResourceVersionStable(ctx, proxy, namespace, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName))
 			},
 		}
 	})
@@ -69,11 +80,11 @@ var _ = Describe("When following the Cluster API quick-start with ClusterClass [
 			BootstrapClusterProxy:  bootstrapClusterProxy,
 			ArtifactFolder:         artifactFolder,
 			SkipCleanup:            skipCleanup,
-			Flavor:                 pointer.String("topology"),
-			InfrastructureProvider: pointer.String("docker"),
+			Flavor:                 ptr.To("topology"),
+			InfrastructureProvider: ptr.To("docker"),
 			// This check ensures that owner references are resilient - i.e. correctly re-reconciled - when removed.
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
-				framework.ValidateOwnerReferencesResilience(ctx, proxy, namespace, clusterName,
+				framework.ValidateOwnerReferencesResilience(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
 					framework.CoreOwnerReferenceAssertion,
 					framework.ExpOwnerReferenceAssertions,
 					framework.DockerInfraOwnerReferenceAssertions,
@@ -82,7 +93,7 @@ var _ = Describe("When following the Cluster API quick-start with ClusterClass [
 					framework.KubernetesReferenceAssertions,
 				)
 				// This check ensures that owner references are correctly updated to the correct apiVersion.
-				framework.ValidateOwnerReferencesOnUpdate(ctx, proxy, namespace, clusterName,
+				framework.ValidateOwnerReferencesOnUpdate(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
 					framework.CoreOwnerReferenceAssertion,
 					framework.ExpOwnerReferenceAssertions,
 					framework.DockerInfraOwnerReferenceAssertions,
@@ -90,6 +101,16 @@ var _ = Describe("When following the Cluster API quick-start with ClusterClass [
 					framework.KubeadmControlPlaneOwnerReferenceAssertions,
 					framework.KubernetesReferenceAssertions,
 				)
+				// This check ensures that finalizers are resilient - i.e. correctly re-reconciled - when removed.
+				framework.ValidateFinalizersResilience(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
+					framework.CoreFinalizersAssertion,
+					framework.KubeadmControlPlaneFinalizersAssertion,
+					framework.ExpFinalizersAssertion,
+					framework.DockerInfraFinalizersAssertion,
+				)
+				// This check ensures that the resourceVersions are stable, i.e. it verifies there are no
+				// continuous reconciles when everything should be stable.
+				framework.ValidateResourceVersionStable(ctx, proxy, namespace, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName))
 			},
 		}
 	})
@@ -104,8 +125,8 @@ var _ = Describe("When following the Cluster API quick-start with IPv6 [IPv6]", 
 			BootstrapClusterProxy:  bootstrapClusterProxy,
 			ArtifactFolder:         artifactFolder,
 			SkipCleanup:            skipCleanup,
-			Flavor:                 pointer.String("ipv6"),
-			InfrastructureProvider: pointer.String("docker"),
+			Flavor:                 ptr.To("ipv6"),
+			InfrastructureProvider: ptr.To("docker"),
 		}
 	})
 })
@@ -118,8 +139,8 @@ var _ = Describe("When following the Cluster API quick-start with Ignition", fun
 			BootstrapClusterProxy:  bootstrapClusterProxy,
 			ArtifactFolder:         artifactFolder,
 			SkipCleanup:            skipCleanup,
-			Flavor:                 pointer.String("ignition"),
-			InfrastructureProvider: pointer.String("docker"),
+			Flavor:                 ptr.To("ignition"),
+			InfrastructureProvider: ptr.To("docker"),
 		}
 	})
 })
@@ -132,8 +153,8 @@ var _ = Describe("When following the Cluster API quick-start with dualstack and 
 			BootstrapClusterProxy:  bootstrapClusterProxy,
 			ArtifactFolder:         artifactFolder,
 			SkipCleanup:            skipCleanup,
-			Flavor:                 pointer.String("topology-dualstack-ipv4-primary"),
-			InfrastructureProvider: pointer.String("docker"),
+			Flavor:                 ptr.To("topology-dualstack-ipv4-primary"),
+			InfrastructureProvider: ptr.To("docker"),
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				By("Running kubetest dualstack tests")
 				// Start running the dualstack test suite from kubetest.
@@ -159,8 +180,8 @@ var _ = Describe("When following the Cluster API quick-start with dualstack and 
 			BootstrapClusterProxy:  bootstrapClusterProxy,
 			ArtifactFolder:         artifactFolder,
 			SkipCleanup:            skipCleanup,
-			Flavor:                 pointer.String("topology-dualstack-ipv6-primary"),
-			InfrastructureProvider: pointer.String("docker"),
+			Flavor:                 ptr.To("topology-dualstack-ipv6-primary"),
+			InfrastructureProvider: ptr.To("docker"),
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				By("Running kubetest dualstack tests")
 				// Start running the dualstack test suite from kubetest.
@@ -173,51 +194,6 @@ var _ = Describe("When following the Cluster API quick-start with dualstack and 
 						ClusterName:        clusterName,
 					},
 				)).To(Succeed())
-			},
-		}
-	})
-})
-
-var _ = Describe("When following the Cluster API quick-start check finalizers resilience after deletion", func() {
-	QuickStartSpec(ctx, func() QuickStartSpecInput {
-		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			InfrastructureProvider: pointer.String("docker"),
-			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
-				// This check ensures that finalizers are resilient - i.e. correctly re-reconciled - when removed.
-				framework.ValidateFinalizersResilience(ctx, proxy, namespace, clusterName,
-					framework.CoreFinalizersAssertion,
-					framework.KubeadmControlPlaneFinalizersAssertion,
-					framework.ExpFinalizersAssertion,
-					framework.DockerInfraFinalizersAssertion,
-				)
-			},
-		}
-	})
-})
-
-var _ = Describe("When following the Cluster API quick-start with ClusterClass check finalizers resilience after deletion [ClusterClass]", func() {
-	QuickStartSpec(ctx, func() QuickStartSpecInput {
-		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			Flavor:                 pointer.String("topology"),
-			InfrastructureProvider: pointer.String("docker"),
-			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
-				// This check ensures that finalizers are resilient - i.e. correctly re-reconciled - when removed.
-				framework.ValidateFinalizersResilience(ctx, proxy, namespace, clusterName,
-					framework.CoreFinalizersAssertion,
-					framework.KubeadmControlPlaneFinalizersAssertion,
-					framework.ExpFinalizersAssertion,
-					framework.DockerInfraFinalizersAssertion,
-				)
 			},
 		}
 	})

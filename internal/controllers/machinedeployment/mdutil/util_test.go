@@ -30,10 +30,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apiserver/pkg/storage/names"
-	"k8s.io/klog/v2/klogr"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+)
+
+var (
+	ctx = ctrl.SetupSignalHandler()
 )
 
 func newDControllerRef(md *clusterv1.MachineDeployment) *metav1.OwnerReference {
@@ -78,7 +82,7 @@ func generateDeployment(image string) clusterv1.MachineDeployment {
 			Annotations: make(map[string]string),
 		},
 		Spec: clusterv1.MachineDeploymentSpec{
-			Replicas: pointer.Int32(3),
+			Replicas: ptr.To[int32](3),
 			Selector: metav1.LabelSelector{MatchLabels: machineLabels},
 			Template: clusterv1.MachineTemplateSpec{
 				ObjectMeta: clusterv1.ObjectMeta{
@@ -101,7 +105,7 @@ func TestMachineSetsByDecreasingReplicas(t *testing.T) {
 			Name:              "ms-a",
 		},
 		Spec: clusterv1.MachineSetSpec{
-			Replicas: pointer.Int32(1),
+			Replicas: ptr.To[int32](1),
 		},
 	}
 
@@ -111,7 +115,7 @@ func TestMachineSetsByDecreasingReplicas(t *testing.T) {
 			Name:              "ms-aa",
 		},
 		Spec: clusterv1.MachineSetSpec{
-			Replicas: pointer.Int32(3),
+			Replicas: ptr.To[int32](3),
 		},
 	}
 
@@ -121,7 +125,7 @@ func TestMachineSetsByDecreasingReplicas(t *testing.T) {
 			Name:              "ms-b",
 		},
 		Spec: clusterv1.MachineSetSpec{
-			Replicas: pointer.Int32(1),
+			Replicas: ptr.To[int32](1),
 		},
 	}
 
@@ -131,7 +135,7 @@ func TestMachineSetsByDecreasingReplicas(t *testing.T) {
 			Name:              "ms-a",
 		},
 		Spec: clusterv1.MachineSetSpec{
-			Replicas: pointer.Int32(1),
+			Replicas: ptr.To[int32](1),
 		},
 	}
 
@@ -316,7 +320,7 @@ func TestFindNewMachineSet(t *testing.T) {
 	matchingMS := generateMS(deployment)
 
 	matchingMSHigherReplicas := generateMS(deployment)
-	matchingMSHigherReplicas.Spec.Replicas = pointer.Int32(2)
+	matchingMSHigherReplicas.Spec.Replicas = ptr.To[int32](2)
 
 	matchingMSDiffersInPlaceMutableFields := generateMS(deployment)
 	matchingMSDiffersInPlaceMutableFields.Spec.Template.Spec.NodeDrainTimeout = &metav1.Duration{Duration: 20 * time.Second}
@@ -407,13 +411,13 @@ func TestFindOldMachineSets(t *testing.T) {
 
 	newMS := generateMS(deployment)
 	newMS.Name = "aa"
-	newMS.Spec.Replicas = pointer.Int32(1)
+	newMS.Spec.Replicas = ptr.To[int32](1)
 
 	newMSHigherReplicas := generateMS(deployment)
-	newMSHigherReplicas.Spec.Replicas = pointer.Int32(2)
+	newMSHigherReplicas.Spec.Replicas = ptr.To[int32](2)
 
 	newMSHigherName := generateMS(deployment)
-	newMSHigherName.Spec.Replicas = pointer.Int32(1)
+	newMSHigherName.Spec.Replicas = ptr.To[int32](1)
 	newMSHigherName.Name = "ab"
 
 	oldDeployment := generateDeployment("nginx")
@@ -798,7 +802,7 @@ func TestMaxUnavailable(t *testing.T) {
 func TestAnnotationUtils(t *testing.T) {
 	// Setup
 	tDeployment := generateDeployment("nginx")
-	tDeployment.Spec.Replicas = pointer.Int32(1)
+	tDeployment.Spec.Replicas = ptr.To[int32](1)
 	tMS := generateMS(tDeployment)
 
 	// Test Case 1:  Check if annotations are set properly
@@ -825,7 +829,7 @@ func TestAnnotationUtils(t *testing.T) {
 
 func TestComputeMachineSetAnnotations(t *testing.T) {
 	deployment := generateDeployment("nginx")
-	deployment.Spec.Replicas = pointer.Int32(3)
+	deployment.Spec.Replicas = ptr.To[int32](3)
 	maxSurge := intstr.FromInt(1)
 	maxUnavailable := intstr.FromInt(0)
 	deployment.Spec.Strategy = &clusterv1.MachineDeploymentStrategy{
@@ -939,11 +943,10 @@ func TestComputeMachineSetAnnotations(t *testing.T) {
 		},
 	}
 
-	log := klogr.New()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			got, err := ComputeMachineSetAnnotations(log, tt.deployment, tt.oldMSs, tt.ms)
+			got, err := ComputeMachineSetAnnotations(ctx, tt.deployment, tt.oldMSs, tt.ms)
 			if tt.wantErr {
 				g.Expect(err).ShouldNot(HaveOccurred())
 			} else {

@@ -30,7 +30,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,6 +67,7 @@ const (
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io;bootstrap.cluster.x-k8s.io;controlplane.cluster.x-k8s.io,resources=*,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools,verbs=list
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 
 // KubeadmControlPlaneReconciler reconciles a KubeadmControlPlane object.
@@ -82,6 +83,9 @@ type KubeadmControlPlaneReconciler struct {
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
+
+	// Deprecated: DeprecatedInfraMachineNaming. Name the InfraStructureMachines after the InfraMachineTemplate.
+	DeprecatedInfraMachineNaming bool
 
 	managementCluster         internal.ManagementCluster
 	managementClusterUncached internal.ManagementCluster
@@ -109,7 +113,7 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mg
 	}
 
 	r.controller = c
-	r.recorder = mgr.GetEventRecorderFor("kubeadm-control-plane-controller")
+	r.recorder = mgr.GetEventRecorderFor("kubeadmcontrolplane-controller")
 	r.ssaCache = ssa.NewCache()
 
 	if r.managementCluster == nil {
@@ -179,8 +183,7 @@ func (r *KubeadmControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.
 		// Patch ObservedGeneration only if the reconciliation completed successfully
 		patchOpts := []patch.Option{patch.WithStatusObservedGeneration{}}
 		if err := patchHelper.Patch(ctx, kcp, patchOpts...); err != nil {
-			log.Error(err, "Failed to patch KubeadmControlPlane to add finalizer")
-			return ctrl.Result{}, err
+			return ctrl.Result{}, errors.Wrapf(err, "failed to add finalizer")
 		}
 
 		return ctrl.Result{}, nil
@@ -243,7 +246,7 @@ func (r *KubeadmControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.
 		// the current cluster because of concurrent access.
 		if errors.Is(err, remote.ErrClusterLocked) {
 			log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Minute}, nil
 		}
 		return res, err
 	}
@@ -254,7 +257,7 @@ func (r *KubeadmControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.
 	// the current cluster because of concurrent access.
 	if errors.Is(err, remote.ErrClusterLocked) {
 		log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 	return res, err
 }
@@ -375,7 +378,7 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, controlPl
 
 	// Aggregate the operational state of all the machines; while aggregating we are adding the
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.
-	conditions.SetAggregate(controlPlane.KCP, controlplanev1.MachinesReadyCondition, controlPlane.Machines.ConditionGetters(), conditions.AddSourceRef(), conditions.WithStepCounterIf(false))
+	conditions.SetAggregate(controlPlane.KCP, controlplanev1.MachinesReadyCondition, controlPlane.Machines.ConditionGetters(), conditions.AddSourceRef())
 
 	// Updates conditions reporting the status of static pods and the status of the etcd cluster.
 	// NOTE: Conditions reporting KCP operation progress like e.g. Resized or SpecUpToDate are inlined with the rest of the execution.
@@ -528,7 +531,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileDelete(ctx context.Context, con
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.
 	// However, during delete we are hiding the counter (1 of x) because it does not make sense given that
 	// all the machines are deleted in parallel.
-	conditions.SetAggregate(controlPlane.KCP, controlplanev1.MachinesReadyCondition, controlPlane.Machines.ConditionGetters(), conditions.AddSourceRef(), conditions.WithStepCounterIf(false))
+	conditions.SetAggregate(controlPlane.KCP, controlplanev1.MachinesReadyCondition, controlPlane.Machines.ConditionGetters(), conditions.AddSourceRef())
 
 	// Gets all machines, not just control plane machines.
 	allMachines, err := r.managementCluster.GetMachinesForCluster(ctx, controlPlane.Cluster)
@@ -627,7 +630,7 @@ func (r *KubeadmControlPlaneReconciler) syncMachines(ctx context.Context, contro
 		// TODO: This should be cleaned-up to have a more streamline way of constructing and using patchHelpers.
 		patchHelper, err := patch.NewHelper(updatedMachine, r.Client)
 		if err != nil {
-			return errors.Wrapf(err, "failed to create patch helper for Machine %s", klog.KObj(updatedMachine))
+			return err
 		}
 		patchHelpers[machineName] = patchHelper
 
@@ -812,7 +815,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileCertificateExpiries(ctx context
 		log.V(2).Info(fmt.Sprintf("Setting certificate expiry to %s", expiry))
 		patchHelper, err := patch.NewHelper(kubeadmConfig, r.Client)
 		if err != nil {
-			return errors.Wrapf(err, "failed to reconcile certificate expiry for Machine/%s: failed to create PatchHelper for KubeadmConfig/%s", m.Name, kubeadmConfig.Name)
+			return errors.Wrapf(err, "failed to reconcile certificate expiry for Machine/%s", m.Name)
 		}
 
 		if annotations == nil {
@@ -822,7 +825,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileCertificateExpiries(ctx context
 		kubeadmConfig.SetAnnotations(annotations)
 
 		if err := patchHelper.Patch(ctx, kubeadmConfig); err != nil {
-			return errors.Wrapf(err, "failed to reconcile certificate expiry for Machine/%s: failed to patch KubeadmConfig/%s", m.Name, kubeadmConfig.Name)
+			return errors.Wrapf(err, "failed to reconcile certificate expiry for Machine/%s", m.Name)
 		}
 	}
 
@@ -929,8 +932,8 @@ func (r *KubeadmControlPlaneReconciler) adoptOwnedSecrets(ctx context.Context, k
 			Kind:               "KubeadmControlPlane",
 			Name:               kcp.Name,
 			UID:                kcp.UID,
-			Controller:         pointer.Bool(true),
-			BlockOwnerDeletion: pointer.Bool(true),
+			Controller:         ptr.To(true),
+			BlockOwnerDeletion: ptr.To(true),
 		}))
 
 		if err := r.Client.Update(ctx, ss); err != nil {
@@ -950,7 +953,7 @@ func (r *KubeadmControlPlaneReconciler) ensureCertificatesOwnerRef(ctx context.C
 
 		patchHelper, err := patch.NewHelper(c.Secret, r.Client)
 		if err != nil {
-			return errors.Wrapf(err, "failed to create patchHelper for Secret %s", klog.KObj(c.Secret))
+			return err
 		}
 
 		controller := metav1.GetControllerOf(c.Secret)
@@ -971,7 +974,7 @@ func (r *KubeadmControlPlaneReconciler) ensureCertificatesOwnerRef(ctx context.C
 			c.Secret.SetOwnerReferences(util.EnsureOwnerRef(c.Secret.GetOwnerReferences(), owner))
 		}
 		if err := patchHelper.Patch(ctx, c.Secret); err != nil {
-			return errors.Wrapf(err, "failed to patch Secret %s with ownerReference %s", klog.KObj(c.Secret), owner.String())
+			return errors.Wrapf(err, "failed to set ownerReference")
 		}
 	}
 	return nil

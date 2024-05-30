@@ -72,6 +72,12 @@ Cluster API Provider Hivelocity
 ### CAPIBM
 Cluster API Provider IBM Cloud
 
+### CAPIO
+Cluster API Operator
+
+### CAPL
+Cluster API Provider Akamai (Linode)
+
 ### CAPM3
 Cluster API Provider Metal3
 
@@ -96,6 +102,9 @@ Cluster API Provider Outscale
 ### CAPOCI
 Cluster API Provider Oracle Cloud Infrastructure (OCI)
 
+### CAPT
+Cluster API Provider Tinkerbell
+
 ### CAPV
 Cluster API Provider vSphere
 
@@ -107,6 +116,9 @@ Cluster API Provider VMware Cloud Director
 
 ### CAPZ
 Cluster API Provider Azure
+
+### CAIPAMIC
+Cluster API IPAM Provider In Cluster
 
 ### Cloud provider
 

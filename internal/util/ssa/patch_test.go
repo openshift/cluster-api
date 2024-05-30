@@ -24,7 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -38,7 +38,7 @@ func TestPatch(t *testing.T) {
 	ns, err := env.CreateNamespace(ctx, "ssa")
 	g.Expect(err).ToNot(HaveOccurred())
 
-	t.Run("Test patch with unstructured", func(t *testing.T) {
+	t.Run("Test patch with unstructured", func(*testing.T) {
 		// Build the test object to work with.
 		initialObject := builder.TestInfrastructureCluster(ns.Name, "obj1").WithSpecFields(map[string]interface{}{
 			"spec.controlPlaneEndpoint.host": "1.2.3.4",
@@ -88,7 +88,7 @@ func TestPatch(t *testing.T) {
 		g.Expect(ssaCache.Has(requestIdentifier)).To(BeTrue())
 	})
 
-	t.Run("Test patch with Machine", func(t *testing.T) {
+	t.Run("Test patch with Machine", func(*testing.T) {
 		// Build the test object to work with.
 		initialObject := &clusterv1.Machine{
 			TypeMeta: metav1.TypeMeta{
@@ -107,10 +107,10 @@ func TestPatch(t *testing.T) {
 			},
 			Spec: clusterv1.MachineSpec{
 				ClusterName:      "cluster-1",
-				Version:          pointer.String("v1.25.0"),
+				Version:          ptr.To("v1.25.0"),
 				NodeDrainTimeout: &metav1.Duration{Duration: 10 * time.Second},
 				Bootstrap: clusterv1.Bootstrap{
-					DataSecretName: pointer.String("data-secret"),
+					DataSecretName: ptr.To("data-secret"),
 				},
 				InfrastructureRef: corev1.ObjectReference{
 					// The namespace needs to get set here. Otherwise the defaulting webhook always sets this field again
@@ -125,6 +125,8 @@ func TestPatch(t *testing.T) {
 		// 1. Create the object
 		createObject := initialObject.DeepCopy()
 		g.Expect(Patch(ctx, env.GetClient(), fieldManager, createObject)).To(Succeed())
+		// Verify that gvk is still set
+		g.Expect(createObject.GroupVersionKind()).To(Equal(initialObject.GroupVersionKind()))
 		// Note: We have to patch the status here to explicitly set these two status fields.
 		// If we don't do it the Machine defaulting webhook will try to set the two fields to false.
 		// For an unknown reason this will happen with the 2nd update call (3.) below and not before.
@@ -154,6 +156,8 @@ func TestPatch(t *testing.T) {
 		g.Expect(err).ToNot(HaveOccurred())
 		// Update the object
 		g.Expect(Patch(ctx, env.GetClient(), fieldManager, modifiedObject, WithCachingProxy{Cache: ssaCache, Original: originalObject})).To(Succeed())
+		// Verify that gvk is still set
+		g.Expect(modifiedObject.GroupVersionKind()).To(Equal(initialObject.GroupVersionKind()))
 		// Verify that request was not cached (as it changed the object)
 		g.Expect(ssaCache.Has(requestIdentifier)).To(BeFalse())
 
@@ -173,5 +177,7 @@ func TestPatch(t *testing.T) {
 		g.Expect(Patch(ctx, env.GetClient(), fieldManager, modifiedObject, WithCachingProxy{Cache: ssaCache, Original: originalObject})).To(Succeed())
 		// Verify that request was cached (as it did not change the object)
 		g.Expect(ssaCache.Has(requestIdentifier)).To(BeTrue())
+		// Verify that gvk is still set
+		g.Expect(modifiedObject.GroupVersionKind()).To(Equal(initialObject.GroupVersionKind()))
 	})
 }

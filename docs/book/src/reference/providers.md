@@ -12,6 +12,7 @@ updated info about which API version they are supporting.
 - [Oracle Cloud Native Environment (OCNE)](https://github.com/verrazzano/cluster-api-provider-ocne)
 - [Talos](https://github.com/siderolabs/cluster-api-bootstrap-provider-talos)
 - [K3s](https://github.com/cluster-api-provider-k3s/cluster-api-k3s)
+- [k0smotron/k0s](https://github.com/k0sproject/k0smotron)
 
 ## Control Plane
 - [Kubeadm](https://github.com/kubernetes-sigs/cluster-api/tree/main/controlplane/kubeadm)
@@ -21,8 +22,10 @@ updated info about which API version they are supporting.
 - [Talos](https://github.com/siderolabs/cluster-api-control-plane-provider-talos)
 - [Kamaji](https://github.com/clastix/cluster-api-control-plane-provider-kamaji)
 - [K3s](https://github.com/cluster-api-provider-k3s/cluster-api-k3s)
+- [k0smotron/k0s](https://github.com/k0sproject/k0smotron)
 
 ## Infrastructure
+- [Akamai (Linode)](https://linode.github.io/cluster-api-provider-linode/)
 - [AWS](https://cluster-api-aws.sigs.k8s.io/)
 - [Azure](https://github.com/kubernetes-sigs/cluster-api-provider-azure)
 - [Azure Stack HCI](https://github.com/microsoft/cluster-api-provider-azurestackhci)
@@ -31,7 +34,7 @@ updated info about which API version they are supporting.
 - [CoxEdge](https://github.com/coxedge/cluster-api-provider-coxedge)
 - [DigitalOcean](https://github.com/kubernetes-sigs/cluster-api-provider-digitalocean)
 - [Equinix Metal (formerly Packet)](https://github.com/kubernetes-sigs/cluster-api-provider-packet)
-- [Google Cloud Platform (GCP)](https://github.com/kubernetes-sigs/cluster-api-provider-gcp)
+- [Google Cloud Platform (GCP)](https://cluster-api-gcp.sigs.k8s.io/)
 - [Hetzner](https://github.com/syself/cluster-api-provider-hetzner)
 - [Hivelocity](https://github.com/hivelocity/cluster-api-provider-hivelocity)
 - [IBM Cloud](https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud)
@@ -52,6 +55,7 @@ updated info about which API version they are supporting.
 - [Virtink](https://github.com/smartxworks/cluster-api-provider-virtink)
 - [VMware Cloud Director](https://github.com/vmware/cluster-api-provider-cloud-director)  
 - [vSphere](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere)
+- [k0smotron RemoteMachine (SSH)](https://github.com/k0sproject/k0smotron)
 
 ## IP Address Management (IPAM)
 - [In Cluster](https://github.com/kubernetes-sigs/cluster-api-ipam-provider-in-cluster)

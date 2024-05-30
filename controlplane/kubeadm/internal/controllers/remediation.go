@@ -34,6 +34,7 @@ import (
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 )
@@ -54,7 +55,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileUnhealthyMachines(ctx context.C
 			m.DeletionTimestamp.IsZero() {
 			patchHelper, err := patch.NewHelper(m, r.Client)
 			if err != nil {
-				errList = append(errList, errors.Wrapf(err, "failed to get PatchHelper for machine %s", m.Name))
+				errList = append(errList, err)
 				continue
 			}
 
@@ -63,7 +64,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileUnhealthyMachines(ctx context.C
 			if err := patchHelper.Patch(ctx, m, patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
 				clusterv1.MachineOwnerRemediatedCondition,
 			}}); err != nil {
-				errList = append(errList, errors.Wrapf(err, "failed to patch machine %s", m.Name))
+				errList = append(errList, err)
 			}
 		}
 	}
@@ -80,12 +81,13 @@ func (r *KubeadmControlPlaneReconciler) reconcileUnhealthyMachines(ctx context.C
 		return ctrl.Result{}, nil
 	}
 
-	// Select the machine to be remediated, which is the oldest machine marked as unhealthy.
+	// Select the machine to be remediated, which is the oldest machine marked as unhealthy not yet provisioned (if any)
+	// or the oldest machine marked as unhealthy.
 	//
 	// NOTE: The current solution is considered acceptable for the most frequent use case (only one unhealthy machine),
 	// however, in the future this could potentially be improved for the scenario where more than one unhealthy machine exists
 	// by considering which machine has lower impact on etcd quorum.
-	machineToBeRemediated := unhealthyMachines.Oldest()
+	machineToBeRemediated := getMachineToBeRemediated(unhealthyMachines)
 
 	// Returns if the machine is in the process of being deleted.
 	if !machineToBeRemediated.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -143,6 +145,13 @@ func (r *KubeadmControlPlaneReconciler) reconcileUnhealthyMachines(ctx context.C
 		if controlPlane.Machines.Len() <= 1 {
 			log.Info("A control plane machine needs remediation, but the number of current replicas is less or equal to 1. Skipping remediation", "Replicas", controlPlane.Machines.Len())
 			conditions.MarkFalse(machineToBeRemediated, clusterv1.MachineOwnerRemediatedCondition, clusterv1.WaitingForRemediationReason, clusterv1.ConditionSeverityWarning, "KCP can't remediate if current replicas are less or equal to 1")
+			return ctrl.Result{}, nil
+		}
+
+		// The cluster MUST NOT have healthy machines still being provisioned. This rule prevents KCP taking actions while the cluster is in a transitional state.
+		if controlPlane.HasHealthyMachineStillProvisioning() {
+			log.Info("A control plane machine needs remediation, but there are other control-plane machines being provisioned. Skipping remediation")
+			conditions.MarkFalse(machineToBeRemediated, clusterv1.MachineOwnerRemediatedCondition, clusterv1.WaitingForRemediationReason, clusterv1.ConditionSeverityWarning, "KCP waiting for control plane machine provisioning to complete before triggering remediation")
 			return ctrl.Result{}, nil
 		}
 
@@ -238,6 +247,16 @@ func (r *KubeadmControlPlaneReconciler) reconcileUnhealthyMachines(ctx context.C
 	return ctrl.Result{Requeue: true}, nil
 }
 
+// Gets the machine to be remediated, which is the oldest machine marked as unhealthy not yet provisioned (if any)
+// or the oldest machine marked as unhealthy.
+func getMachineToBeRemediated(unhealthyMachines collections.Machines) *clusterv1.Machine {
+	machineToBeRemediated := unhealthyMachines.Filter(collections.Not(collections.HasNode())).Oldest()
+	if machineToBeRemediated == nil {
+		machineToBeRemediated = unhealthyMachines.Oldest()
+	}
+	return machineToBeRemediated
+}
+
 // checkRetryLimits checks if KCP is allowed to remediate considering retry limits:
 // - Remediation cannot happen because retryPeriod is not yet expired.
 // - KCP already reached the maximum number of retries for a machine.
@@ -325,14 +344,6 @@ func (r *KubeadmControlPlaneReconciler) checkRetryLimits(log logr.Logger, machin
 	remediationInProgressData.RetryCount++
 
 	return remediationInProgressData, true, nil
-}
-
-// max calculates the maximum duration.
-func max(x, y time.Duration) time.Duration {
-	if x < y {
-		return y
-	}
-	return x
 }
 
 // canSafelyRemoveEtcdMember assess if it is possible to remove the member hosted on the machine to be remediated

@@ -8,14 +8,14 @@ workflow that offers easy deployments and rapid iterative builds.
 ## Prerequisites
 
 1. [Docker](https://docs.docker.com/install/): v19.03 or newer
-1. [kind](https://kind.sigs.k8s.io): v0.20.0 or newer
-1. [Tilt](https://docs.tilt.dev/install.html): v0.30.8 or newer
-1. [kustomize](https://github.com/kubernetes-sigs/kustomize): provided via `make kustomize`
-1. [envsubst](https://github.com/drone/envsubst): provided via `make envsubst`
-1. [helm](https://github.com/helm/helm): v3.7.1 or newer
-1. Clone the [Cluster API](https://github.com/kubernetes-sigs/cluster-api) repository
+2. [kind](https://kind.sigs.k8s.io): v0.22.0 or newer
+3. [Tilt](https://docs.tilt.dev/install.html): v0.30.8 or newer
+4. [kustomize](https://github.com/kubernetes-sigs/kustomize): provided via `make kustomize`
+5. [envsubst](https://github.com/drone/envsubst): provided via `make envsubst`
+6. [helm](https://github.com/helm/helm): v3.7.1 or newer
+7. Clone the [Cluster API](https://github.com/kubernetes-sigs/cluster-api) repository
    locally
-1. Clone the provider(s) you want to deploy locally as well
+8. Clone the provider(s) you want to deploy locally as well
 
 ## Getting started
 
@@ -108,8 +108,6 @@ provider's yaml. These substitutions are also used when deploying cluster templa
 ```yaml
 kustomize_substitutions:
   CLUSTER_TOPOLOGY: "true"
-  EXP_MACHINE_POOL: "true"
-  EXP_CLUSTER_RESOURCE_SET: "true"
   EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION: "true"
   EXP_RUNTIME_SDK: "true"
   EXP_MACHINE_SET_PREFLIGHT_CHECKS: "true"
@@ -337,7 +335,7 @@ Custom values for variable substitutions can be set using `kustomize_substitutio
 ```yaml
 kustomize_substitutions:
   NAMESPACE: "default"
-  KUBERNETES_VERSION: "v1.29.0"
+  KUBERNETES_VERSION: "v1.29.2"
   CONTROL_PLANE_MACHINE_COUNT: "1"
   WORKER_MACHINE_COUNT: "3"
 # Note: kustomize substitutions expects the values to be strings. This can be achieved by wrapping the values in quotation marks.
@@ -429,7 +427,13 @@ COPY --from=tilt-helper /usr/bin/docker /usr/bin/docker
 COPY --from=tilt-helper /go/kubernetes/client/bin/kubectl /usr/bin/kubectl
 ```
 
-**kustomize_config** (Bool, default=true): Whether or not running kustomize on the ./config folder of the provider.
+**kustomize_folder** (String, default=config/default): The folder where the kustomize file for a provider
+is defined; the path is relative to the provider root folder.
+
+**kustomize_options** ([]String, default=[]): Options to be applied when running kustomize for generating the
+yaml manifest for a provider. e.g. `"kustomize_options": [ "--load-restrictor=LoadRestrictionsNone" ]`
+
+**apply_provider_yaml** (Bool, default=true): Whether to apply the provider yaml.
 Set to `false` if your provider does not have a ./config folder or you do not want it to be applied in the cluster.
 
 **go_main** (String, default="main.go"): The go main file if not located at the root of the folder

@@ -128,6 +128,9 @@ const (
 	// MachineSkipRemediationAnnotation is the annotation used to mark the machines that should not be considered for remediation by MachineHealthCheck reconciler.
 	MachineSkipRemediationAnnotation = "cluster.x-k8s.io/skip-remediation"
 
+	// RemediateMachineAnnotation is the annotation used to mark machines that should be remediated by MachineHealthCheck reconciler.
+	RemediateMachineAnnotation = "cluster.x-k8s.io/remediate-machine"
+
 	// MachineSetSkipPreflightChecksAnnotation is the annotation used to provide a comma-separated list of
 	// preflight checks that should be skipped during the MachineSet reconciliation.
 	// Supported items are:
@@ -227,6 +230,14 @@ const (
 	// and the ControlPlane has a version.
 	MachineSetPreflightCheckControlPlaneIsStable MachineSetPreflightCheck = "ControlPlaneIsStable"
 )
+
+// NodeOutdatedRevisionTaint can be added to Nodes at rolling updates in general triggered by updating MachineDeployment
+// This taint is used to prevent unnecessary pod churn, i.e., as the first node is drained, pods previously running on
+// that node are scheduled onto nodes who have yet to be replaced, but will be torn down soon.
+var NodeOutdatedRevisionTaint = corev1.Taint{
+	Key:    "node.cluster.x-k8s.io/outdated-revision",
+	Effect: corev1.TaintEffectPreferNoSchedule,
+}
 
 // NodeUninitializedTaint can be added to Nodes at creation by the bootstrap provider, e.g. the
 // KubeadmBootstrap provider will add the taint.
