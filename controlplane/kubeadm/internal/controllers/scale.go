@@ -33,13 +33,27 @@ import (
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
+	"sigs.k8s.io/cluster-api/util/version"
 )
 
 func (r *KubeadmControlPlaneReconciler) initializeControlPlane(ctx context.Context, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
 	bootstrapSpec := controlPlane.InitialControlPlaneConfig()
-	fd := controlPlane.NextFailureDomainForScaleUp(ctx)
+
+	// We intentionally only parse major/minor/patch so that the subsequent code
+	// also already applies to beta versions of new releases.
+	parsedVersionTolerant, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
+	}
+	internal.DefaultFeatureGates(bootstrapSpec, parsedVersionTolerant)
+
+	fd, err := controlPlane.NextFailureDomainForScaleUp(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if err := r.cloneConfigsAndGenerateMachine(ctx, controlPlane.Cluster, controlPlane.KCP, bootstrapSpec, fd); err != nil {
 		logger.Error(err, "Failed to create initial control plane Machine")
 		r.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "FailedInitialization", "Failed to create initial control plane Machine for cluster %s control plane: %v", klog.KObj(controlPlane.Cluster), err)
@@ -60,7 +74,20 @@ func (r *KubeadmControlPlaneReconciler) scaleUpControlPlane(ctx context.Context,
 
 	// Create the bootstrap configuration
 	bootstrapSpec := controlPlane.JoinControlPlaneConfig()
-	fd := controlPlane.NextFailureDomainForScaleUp(ctx)
+
+	// We intentionally only parse major/minor/patch so that the subsequent code
+	// also already applies to beta versions of new releases.
+	parsedVersionTolerant, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
+	}
+	internal.DefaultFeatureGates(bootstrapSpec, parsedVersionTolerant)
+
+	fd, err := controlPlane.NextFailureDomainForScaleUp(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if err := r.cloneConfigsAndGenerateMachine(ctx, controlPlane.Cluster, controlPlane.KCP, bootstrapSpec, fd); err != nil {
 		logger.Error(err, "Failed to create additional control plane Machine")
 		r.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "FailedScaleUp", "Failed to create additional control plane Machine for cluster % control plane: %v", klog.KObj(controlPlane.Cluster), err)
@@ -108,10 +135,8 @@ func (r *KubeadmControlPlaneReconciler) scaleDownControlPlane(
 			logger.Error(err, "Failed to move leadership to candidate machine", "candidate", etcdLeaderCandidate.Name)
 			return ctrl.Result{}, err
 		}
-		if err := workloadCluster.RemoveEtcdMemberForMachine(ctx, machineToDelete); err != nil {
-			logger.Error(err, "Failed to remove etcd member for machine")
-			return ctrl.Result{}, err
-		}
+
+		// NOTE: etcd member removal will be performed by the kcp-cleanup hook after machine completes drain & all volumes are detached.
 	}
 
 	parsedVersion, err := semver.ParseTolerant(controlPlane.KCP.Spec.Version)
@@ -155,7 +180,7 @@ func (r *KubeadmControlPlaneReconciler) preflightChecks(ctx context.Context, con
 
 	// If there are deleting machines, wait for the operation to complete.
 	if controlPlane.HasDeletingMachine() {
-		logger.Info("Waiting for machines to be deleted", "Machines", strings.Join(controlPlane.Machines.Filter(collections.HasDeletionTimestamp).Names(), ", "))
+		logger.Info("Waiting for machines to be deleted", "machines", strings.Join(controlPlane.Machines.Filter(collections.HasDeletionTimestamp).Names(), ", "))
 		return ctrl.Result{RequeueAfter: deleteRequeueAfter}, nil
 	}
 

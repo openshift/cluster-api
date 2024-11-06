@@ -26,8 +26,6 @@ source "${REPO_ROOT}/scripts/ci-e2e-lib.sh"
 
 # shellcheck source=./hack/ensure-go.sh
 source "${REPO_ROOT}/hack/ensure-go.sh"
-# shellcheck source=./hack/ensure-kubectl.sh
-source "${REPO_ROOT}/hack/ensure-kubectl.sh"
 # shellcheck source=./hack/ensure-kind.sh
 source "${REPO_ROOT}/hack/ensure-kind.sh"
 
@@ -54,6 +52,7 @@ export USE_EXISTING_CLUSTER=false
 # - KUBERNETES_VERSION_UPGRADE_TO
 # - KUBERNETES_VERSION_UPGRADE_FROM
 # - KUBERNETES_VERSION_LATEST_CI
+# - KUBERNETES_VERSION_MANAGEMENT
 k8s::prepareKindestImagesVariables
 k8s::prepareKindestImages
 
@@ -94,9 +93,9 @@ cleanup() {
 
   for PID in $(ps -eo pid=); do
     echo "> PID=$PID"
-    echo ">> /proc/${PID}/status" 
+    echo ">> /proc/${PID}/status"
     cat "/proc/${PID}/status" || true
-    echo ">> /proc/${PID}/stack" 
+    echo ">> /proc/${PID}/stack"
     cat "/proc/${PID}/stack" || true
   done >> "${ARTIFACTS_LOCAL}/processes-proc-information.txt"
 

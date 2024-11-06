@@ -85,8 +85,7 @@ var (
 	webhookCertName             string
 	webhookKeyName              string
 	healthAddr                  string
-	tlsOptions                  = flags.TLSOptions{}
-	diagnosticsOptions          = flags.DiagnosticsOptions{}
+	managerOptions              = flags.ManagerOptions{}
 	logOptions                  = logs.NewOptions()
 )
 
@@ -133,10 +132,10 @@ func InitFlags(fs *pflag.FlagSet) {
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 
 	fs.Float32Var(&restConfigQPS, "kube-api-qps", 20,
-		"Maximum queries per second from the controller client to the Kubernetes API server. Defaults to 20")
+		"Maximum queries per second from the controller client to the Kubernetes API server.")
 
 	fs.IntVar(&restConfigBurst, "kube-api-burst", 30,
-		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server. Default 30")
+		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server.")
 
 	fs.IntVar(&webhookPort, "webhook-port", 9443,
 		"Webhook Server port")
@@ -153,8 +152,7 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
 
-	flags.AddDiagnosticsOptions(fs, &diagnosticsOptions)
-	flags.AddTLSOptions(fs, &tlsOptions)
+	flags.AddManagerOptions(fs, &managerOptions)
 
 	// Add test-extension specific flags
 	// NOTE: it is not mandatory to use the same flag names in all RuntimeExtension, but it is recommended when
@@ -173,7 +171,7 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "failed to set default log level")
+		setupLog.Error(err, "Failed to set default log level")
 		os.Exit(1)
 	}
 	pflag.Parse()
@@ -182,7 +180,7 @@ func main() {
 	// so klog will automatically use the right logger.
 	// NOTE: klog is the log of choice of component-base machinery.
 	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
-		setupLog.Error(err, "unable to start extension")
+		setupLog.Error(err, "Unable to start extension")
 		os.Exit(1)
 	}
 
@@ -197,13 +195,11 @@ func main() {
 	restConfig.Burst = restConfigBurst
 	restConfig.UserAgent = remote.DefaultClusterAPIUserAgent(controllerName)
 
-	tlsOptionOverrides, err := flags.GetTLSOptionOverrideFuncs(tlsOptions)
+	tlsOptions, metricsOptions, err := flags.GetManagerOptions(managerOptions)
 	if err != nil {
-		setupLog.Error(err, "unable to add TLS settings to the webhook server")
+		setupLog.Error(err, "Unable to start manager: invalid flags")
 		os.Exit(1)
 	}
-
-	diagnosticsOpts := flags.GetDiagnosticsOptions(diagnosticsOptions)
 
 	if enableContentionProfiling {
 		goruntime.SetBlockProfileRate(1)
@@ -215,11 +211,11 @@ func main() {
 		CertDir:  webhookCertDir,
 		CertName: webhookCertName,
 		KeyName:  webhookKeyName,
-		TLSOpts:  tlsOptionOverrides,
+		TLSOpts:  tlsOptions,
 		Catalog:  catalog,
 	})
 	if err != nil {
-		setupLog.Error(err, "error creating runtime extension webhook server")
+		setupLog.Error(err, "Error creating runtime extension webhook server")
 		os.Exit(1)
 	}
 
@@ -233,7 +229,7 @@ func main() {
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
 		HealthProbeBindAddress:     healthAddr,
 		PprofBindAddress:           profilerAddress,
-		Metrics:                    diagnosticsOpts,
+		Metrics:                    *metricsOptions,
 		Cache: cache.Options{
 			SyncPeriod: &syncPeriod,
 		},
@@ -243,6 +239,8 @@ func main() {
 					&corev1.ConfigMap{},
 					&corev1.Secret{},
 				},
+				// Use the cache for all Unstructured get/list calls.
+				Unstructured: true,
 			},
 		},
 		WebhookServer: runtimeExtensionWebhookServer,
@@ -251,7 +249,7 @@ func main() {
 	// Start the manager
 	mgr, err := ctrl.NewManager(restConfig, ctrlOptions)
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
+		setupLog.Error(err, "Unable to start manager")
 		os.Exit(1)
 	}
 
@@ -270,7 +268,7 @@ func main() {
 
 	setupLog.Info("Starting manager", "version", version.Get().String())
 	if err := mgr.Start(ctx); err != nil {
-		setupLog.Error(err, "problem running manager")
+		setupLog.Error(err, "Problem running manager")
 		os.Exit(1)
 	}
 }
@@ -287,7 +285,7 @@ func setupTopologyMutationHookHandlers(runtimeExtensionWebhookServer *server.Ser
 		Name:        "generate-patches",
 		HandlerFunc: topologyMutationExtensionHandlers.GeneratePatches,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 
@@ -296,7 +294,7 @@ func setupTopologyMutationHookHandlers(runtimeExtensionWebhookServer *server.Ser
 		Name:        "validate-topology",
 		HandlerFunc: topologyMutationExtensionHandlers.ValidateTopology,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 
@@ -305,7 +303,7 @@ func setupTopologyMutationHookHandlers(runtimeExtensionWebhookServer *server.Ser
 		Name:        "discover-variables",
 		HandlerFunc: topologyMutationExtensionHandlers.DiscoverVariables,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 }
@@ -322,7 +320,7 @@ func setupLifecycleHookHandlers(mgr ctrl.Manager, runtimeExtensionWebhookServer 
 		Name:        "before-cluster-create",
 		HandlerFunc: lifecycleExtensionHandlers.DoBeforeClusterCreate,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 
@@ -331,7 +329,7 @@ func setupLifecycleHookHandlers(mgr ctrl.Manager, runtimeExtensionWebhookServer 
 		Name:        "after-control-plane-initialized",
 		HandlerFunc: lifecycleExtensionHandlers.DoAfterControlPlaneInitialized,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 
@@ -340,7 +338,7 @@ func setupLifecycleHookHandlers(mgr ctrl.Manager, runtimeExtensionWebhookServer 
 		Name:        "before-cluster-upgrade",
 		HandlerFunc: lifecycleExtensionHandlers.DoBeforeClusterUpgrade,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 
@@ -349,7 +347,7 @@ func setupLifecycleHookHandlers(mgr ctrl.Manager, runtimeExtensionWebhookServer 
 		Name:        "after-control-plane-upgrade",
 		HandlerFunc: lifecycleExtensionHandlers.DoAfterControlPlaneUpgrade,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 
@@ -358,7 +356,7 @@ func setupLifecycleHookHandlers(mgr ctrl.Manager, runtimeExtensionWebhookServer 
 		Name:        "after-cluster-upgrade",
 		HandlerFunc: lifecycleExtensionHandlers.DoAfterClusterUpgrade,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 
@@ -367,19 +365,19 @@ func setupLifecycleHookHandlers(mgr ctrl.Manager, runtimeExtensionWebhookServer 
 		Name:        "before-cluster-delete",
 		HandlerFunc: lifecycleExtensionHandlers.DoBeforeClusterDelete,
 	}); err != nil {
-		setupLog.Error(err, "error adding handler")
+		setupLog.Error(err, "Error adding handler")
 		os.Exit(1)
 	}
 }
 
 func setupChecks(mgr ctrl.Manager) {
 	if err := mgr.AddReadyzCheck("webhook", mgr.GetWebhookServer().StartedChecker()); err != nil {
-		setupLog.Error(err, "unable to create ready check")
+		setupLog.Error(err, "Unable to create ready check")
 		os.Exit(1)
 	}
 
 	if err := mgr.AddHealthzCheck("webhook", mgr.GetWebhookServer().StartedChecker()); err != nil {
-		setupLog.Error(err, "unable to create health check")
+		setupLog.Error(err, "Unable to create health check")
 		os.Exit(1)
 	}
 }

@@ -20,7 +20,7 @@ A MachineHealthCheck is a resource within the Cluster API which allows users to 
 A MachineHealthCheck is defined on a management cluster and scoped to a particular workload cluster.
 
 When defining a MachineHealthCheck, users specify a timeout for each of the conditions that they define to check on the Machine's Node.
-If any of these conditions are met for the duration of the timeout, the Machine will be remediated.
+If any of these conditions are met for the duration of the timeout, the Machine will be remediated. Also, Machines with `failureMessage` or `failureMessage` (terminal failures) are automatically remediated.
 By default, the action of remediating a Machine should trigger a new Machine to be created to replace the failed one, but providers are allowed to plug in more sophisticated external remediation solutions.
 
 ## Creating a MachineHealthCheck
@@ -209,15 +209,12 @@ This is useful for dynamically scaling clusters where the number of machines kee
 
 ## Skipping Remediation
 
-There are scenarios where remediation for a machine may be undesirable (eg. during cluster migration using `clusterctl move`). For such cases, MachineHealthCheck provides 2 mechanisms to skip machines for remediation.
+There are scenarios where remediation for a machine may be undesirable (eg. during cluster migration using `clusterctl move`). For such cases, MachineHealthCheck skips marking a Machine for remediation if:
 
-Implicit skipping when the resource is paused (using `cluster.x-k8s.io/paused` annotation):
-- When a cluster is paused, none of the machines in that cluster are considered for remediation.
-- When a machine is paused, only that machine is not considered for remediation.
-- A cluster or a machine is usually paused automatically by Cluster API when it detects a migration.
-
-Explicit skipping using `cluster.x-k8s.io/skip-remediation` annotation:
-- Users can also skip any machine for remediation by setting the `cluster.x-k8s.io/skip-remediation` for that machine.
+- the Machine has the `cluster.x-k8s.io/skip-remediation` annotation
+- the Machine has the `cluster.x-k8s.io/paused` annotation
+- the MachineHealthCheck has the `cluster.x-k8s.io/paused` annotation
+- the Cluster has `.spec.paused` set to `true`
 
 ## Limitations and Caveats of a MachineHealthCheck
 
@@ -235,6 +232,9 @@ Before deploying a MachineHealthCheck, please familiarise yourself with the foll
 - If the Node for a Machine is removed from the cluster, a MachineHealthCheck will consider this Machine unhealthy and remediate it immediately
 - If no Node joins the cluster for a Machine after the `NodeStartupTimeout`, the Machine will be remediated
 - If a Machine fails for any reason (if the FailureReason is set), the Machine will be remediated immediately
+- Important: if the kubelet on the node hosting the etcd leader member is not working, this prevents KCP from doing some checks it is expecting to do on the leader - and specifically on the leader -.
+  This prevents remediation to happen. There are ongoing discussions about how to overcome this limitation in https://github.com/kubernetes-sigs/cluster-api/issues/8465; as of today users facing this situation
+  are recommended to manually forward leadership to another etcd member and manually delete the corresponding machine.
 
 <!-- links -->
 [management cluster]: ../../reference/glossary.md#management-cluster

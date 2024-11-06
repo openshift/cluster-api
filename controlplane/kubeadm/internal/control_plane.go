@@ -131,11 +131,15 @@ func (c *ControlPlane) FailureDomainWithMostMachines(ctx context.Context, machin
 }
 
 // NextFailureDomainForScaleUp returns the failure domain with the fewest number of up-to-date machines.
-func (c *ControlPlane) NextFailureDomainForScaleUp(ctx context.Context) *string {
+func (c *ControlPlane) NextFailureDomainForScaleUp(ctx context.Context) (*string, error) {
 	if len(c.Cluster.Status.FailureDomains.FilterControlPlane()) == 0 {
-		return nil
+		return nil, nil
 	}
-	return failuredomains.PickFewest(ctx, c.FailureDomains().FilterControlPlane(), c.UpToDateMachines())
+	upToDateMachines, err := c.UpToDateMachines()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to determine next failure domain for scale up")
+	}
+	return failuredomains.PickFewest(ctx, c.FailureDomains().FilterControlPlane(), upToDateMachines), nil
 }
 
 // InitialControlPlaneConfig returns a new KubeadmConfigSpec that is to be used for an initializing control plane.
@@ -160,6 +164,11 @@ func (c *ControlPlane) HasDeletingMachine() bool {
 	return len(c.Machines.Filter(collections.HasDeletionTimestamp)) > 0
 }
 
+// DeletingMachines returns machines in the control plane that are in the process of being deleted.
+func (c *ControlPlane) DeletingMachines() collections.Machines {
+	return c.Machines.Filter(collections.HasDeletionTimestamp)
+}
+
 // GetKubeadmConfig returns the KubeadmConfig of a given machine.
 func (c *ControlPlane) GetKubeadmConfig(machineName string) (*bootstrapv1.KubeadmConfig, bool) {
 	kubeadmConfig, ok := c.KubeadmConfigs[machineName]
@@ -167,7 +176,7 @@ func (c *ControlPlane) GetKubeadmConfig(machineName string) (*bootstrapv1.Kubead
 }
 
 // MachinesNeedingRollout return a list of machines that need to be rolled out.
-func (c *ControlPlane) MachinesNeedingRollout() (collections.Machines, map[string]string) {
+func (c *ControlPlane) MachinesNeedingRollout() (collections.Machines, map[string]string, error) {
 	// Ignore machines to be deleted.
 	machines := c.Machines.Filter(collections.Not(collections.HasDeletionTimestamp))
 
@@ -175,26 +184,32 @@ func (c *ControlPlane) MachinesNeedingRollout() (collections.Machines, map[strin
 	machinesNeedingRollout := make(collections.Machines, len(machines))
 	rolloutReasons := map[string]string{}
 	for _, m := range machines {
-		reason, needsRollout := NeedsRollout(&c.reconciliationTime, c.KCP.Spec.RolloutAfter, c.KCP.Spec.RolloutBefore, c.InfraResources, c.KubeadmConfigs, c.KCP, m)
+		reason, needsRollout, err := NeedsRollout(&c.reconciliationTime, c.KCP.Spec.RolloutAfter, c.KCP.Spec.RolloutBefore, c.InfraResources, c.KubeadmConfigs, c.KCP, m)
+		if err != nil {
+			return nil, nil, err
+		}
 		if needsRollout {
 			machinesNeedingRollout.Insert(m)
 			rolloutReasons[m.Name] = reason
 		}
 	}
-	return machinesNeedingRollout, rolloutReasons
+	return machinesNeedingRollout, rolloutReasons, nil
 }
 
 // UpToDateMachines returns the machines that are up to date with the control
 // plane's configuration and therefore do not require rollout.
-func (c *ControlPlane) UpToDateMachines() collections.Machines {
+func (c *ControlPlane) UpToDateMachines() (collections.Machines, error) {
 	upToDateMachines := make(collections.Machines, len(c.Machines))
 	for _, m := range c.Machines {
-		_, needsRollout := NeedsRollout(&c.reconciliationTime, c.KCP.Spec.RolloutAfter, c.KCP.Spec.RolloutBefore, c.InfraResources, c.KubeadmConfigs, c.KCP, m)
+		_, needsRollout, err := NeedsRollout(&c.reconciliationTime, c.KCP.Spec.RolloutAfter, c.KCP.Spec.RolloutBefore, c.InfraResources, c.KubeadmConfigs, c.KCP, m)
+		if err != nil {
+			return nil, err
+		}
 		if !needsRollout {
 			upToDateMachines.Insert(m)
 		}
 	}
-	return upToDateMachines
+	return upToDateMachines, nil
 }
 
 // getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.

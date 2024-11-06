@@ -20,9 +20,12 @@ import (
 	apiconversion "k8s.io/apimachinery/pkg/conversion"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
 
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	bootstrapv1alpha4 "sigs.k8s.io/cluster-api/internal/apis/bootstrap/kubeadm/v1alpha4"
+	clusterv1alpha4 "sigs.k8s.io/cluster-api/internal/apis/core/v1alpha4"
+	corev1alpha4 "sigs.k8s.io/cluster-api/internal/apis/core/v1alpha4"
 	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
 )
 
@@ -39,50 +42,9 @@ func (src *KubeadmControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 		return err
 	}
 
-	dst.Spec.KubeadmConfigSpec.Files = restored.Spec.KubeadmConfigSpec.Files
-
-	dst.Spec.KubeadmConfigSpec.Users = restored.Spec.KubeadmConfigSpec.Users
-	if restored.Spec.KubeadmConfigSpec.Users != nil {
-		for i := range restored.Spec.KubeadmConfigSpec.Users {
-			if restored.Spec.KubeadmConfigSpec.Users[i].PasswdFrom != nil {
-				dst.Spec.KubeadmConfigSpec.Users[i].PasswdFrom = restored.Spec.KubeadmConfigSpec.Users[i].PasswdFrom
-			}
-		}
-	}
-
-	dst.Spec.KubeadmConfigSpec.Ignition = restored.Spec.KubeadmConfigSpec.Ignition
-	if restored.Spec.KubeadmConfigSpec.InitConfiguration != nil {
-		if dst.Spec.KubeadmConfigSpec.InitConfiguration == nil {
-			dst.Spec.KubeadmConfigSpec.InitConfiguration = &bootstrapv1.InitConfiguration{}
-		}
-		dst.Spec.KubeadmConfigSpec.InitConfiguration.Patches = restored.Spec.KubeadmConfigSpec.InitConfiguration.Patches
-		dst.Spec.KubeadmConfigSpec.InitConfiguration.SkipPhases = restored.Spec.KubeadmConfigSpec.InitConfiguration.SkipPhases
-	}
-	if restored.Spec.KubeadmConfigSpec.JoinConfiguration != nil {
-		if dst.Spec.KubeadmConfigSpec.JoinConfiguration == nil {
-			dst.Spec.KubeadmConfigSpec.JoinConfiguration = &bootstrapv1.JoinConfiguration{}
-		}
-		dst.Spec.KubeadmConfigSpec.JoinConfiguration.Patches = restored.Spec.KubeadmConfigSpec.JoinConfiguration.Patches
-		dst.Spec.KubeadmConfigSpec.JoinConfiguration.SkipPhases = restored.Spec.KubeadmConfigSpec.JoinConfiguration.SkipPhases
-	}
-
 	dst.Spec.MachineTemplate.NodeDeletionTimeout = restored.Spec.MachineTemplate.NodeDeletionTimeout
-	dst.Spec.RolloutBefore = restored.Spec.RolloutBefore
 	dst.Spec.MachineTemplate.NodeVolumeDetachTimeout = restored.Spec.MachineTemplate.NodeVolumeDetachTimeout
-
-	if restored.Spec.KubeadmConfigSpec.JoinConfiguration != nil && restored.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy != "" {
-		if dst.Spec.KubeadmConfigSpec.JoinConfiguration == nil {
-			dst.Spec.KubeadmConfigSpec.JoinConfiguration = &bootstrapv1.JoinConfiguration{}
-		}
-		dst.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy
-	}
-
-	if restored.Spec.KubeadmConfigSpec.InitConfiguration != nil && restored.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy != "" {
-		if dst.Spec.KubeadmConfigSpec.InitConfiguration == nil {
-			dst.Spec.KubeadmConfigSpec.InitConfiguration = &bootstrapv1.InitConfiguration{}
-		}
-		dst.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy
-	}
+	dst.Spec.RolloutBefore = restored.Spec.RolloutBefore
 
 	if restored.Spec.RemediationStrategy != nil {
 		dst.Spec.RemediationStrategy = restored.Spec.RemediationStrategy
@@ -90,6 +52,8 @@ func (src *KubeadmControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 	if restored.Status.LastRemediation != nil {
 		dst.Status.LastRemediation = restored.Status.LastRemediation
 	}
+
+	bootstrapv1alpha4.MergeRestoredKubeadmConfigSpec(&dst.Spec.KubeadmConfigSpec, &restored.Spec.KubeadmConfigSpec)
 
 	return nil
 }
@@ -130,38 +94,13 @@ func (src *KubeadmControlPlaneTemplate) ConvertTo(dstRaw conversion.Hub) error {
 		return err
 	}
 
-	dst.Spec.Template.Spec.KubeadmConfigSpec.Files = restored.Spec.Template.Spec.KubeadmConfigSpec.Files
-	dst.Spec.Template.Spec.KubeadmConfigSpec.Users = restored.Spec.Template.Spec.KubeadmConfigSpec.Users
-	dst.Spec.Template.Spec.KubeadmConfigSpec.Ignition = restored.Spec.Template.Spec.KubeadmConfigSpec.Ignition
 	dst.Spec.Template.Spec.MachineTemplate = restored.Spec.Template.Spec.MachineTemplate
-
-	if restored.Spec.Template.Spec.KubeadmConfigSpec.Users != nil {
-		for i := range restored.Spec.Template.Spec.KubeadmConfigSpec.Users {
-			if restored.Spec.Template.Spec.KubeadmConfigSpec.Users[i].PasswdFrom != nil {
-				dst.Spec.Template.Spec.KubeadmConfigSpec.Users[i].PasswdFrom = restored.Spec.Template.Spec.KubeadmConfigSpec.Users[i].PasswdFrom
-			}
-		}
-	}
 
 	dst.Spec.Template.ObjectMeta = restored.Spec.Template.ObjectMeta
 	if restored.Spec.Template.Spec.MachineTemplate != nil {
 		dst.Spec.Template.Spec.MachineTemplate.ObjectMeta = restored.Spec.Template.Spec.MachineTemplate.ObjectMeta
 	}
 
-	if restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration != nil {
-		if dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration == nil {
-			dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration = &bootstrapv1.InitConfiguration{}
-		}
-		dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.Patches = restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.Patches
-		dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.SkipPhases = restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.SkipPhases
-	}
-	if restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration != nil {
-		if dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration == nil {
-			dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration = &bootstrapv1.JoinConfiguration{}
-		}
-		dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.Patches = restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.Patches
-		dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.SkipPhases = restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.SkipPhases
-	}
 	if dst.Spec.Template.Spec.MachineTemplate == nil {
 		dst.Spec.Template.Spec.MachineTemplate = restored.Spec.Template.Spec.MachineTemplate
 	} else if restored.Spec.Template.Spec.MachineTemplate != nil {
@@ -171,23 +110,11 @@ func (src *KubeadmControlPlaneTemplate) ConvertTo(dstRaw conversion.Hub) error {
 
 	dst.Spec.Template.Spec.RolloutBefore = restored.Spec.Template.Spec.RolloutBefore
 
-	if restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration != nil && restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy != "" {
-		if dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration == nil {
-			dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration = &bootstrapv1.JoinConfiguration{}
-		}
-		dst.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.Template.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration.ImagePullPolicy
-	}
-
-	if restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration != nil && restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy != "" {
-		if dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration == nil {
-			dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration = &bootstrapv1.InitConfiguration{}
-		}
-		dst.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy = restored.Spec.Template.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration.ImagePullPolicy
-	}
-
 	if restored.Spec.Template.Spec.RemediationStrategy != nil {
 		dst.Spec.Template.Spec.RemediationStrategy = restored.Spec.Template.Spec.RemediationStrategy
 	}
+
+	bootstrapv1alpha4.MergeRestoredKubeadmConfigSpec(&dst.Spec.Template.Spec.KubeadmConfigSpec, &restored.Spec.Template.Spec.KubeadmConfigSpec)
 
 	return nil
 }
@@ -290,4 +217,20 @@ func Convert_v1beta1_KubeadmControlPlaneStatus_To_v1alpha4_KubeadmControlPlaneSt
 func Convert_v1beta1_KubeadmControlPlaneTemplateResource_To_v1alpha4_KubeadmControlPlaneTemplateResource(in *controlplanev1.KubeadmControlPlaneTemplateResource, out *KubeadmControlPlaneTemplateResource, scope apiconversion.Scope) error {
 	// .metadata and .spec.machineTemplate.metadata was added in v1beta1.
 	return autoConvert_v1beta1_KubeadmControlPlaneTemplateResource_To_v1alpha4_KubeadmControlPlaneTemplateResource(in, out, scope)
+}
+
+func Convert_v1beta1_KubeadmConfigSpec_To_v1alpha4_KubeadmConfigSpec(in *bootstrapv1.KubeadmConfigSpec, out *bootstrapv1alpha4.KubeadmConfigSpec, s apiconversion.Scope) error {
+	return bootstrapv1alpha4.Convert_v1beta1_KubeadmConfigSpec_To_v1alpha4_KubeadmConfigSpec(in, out, s)
+}
+
+func Convert_v1alpha4_KubeadmConfigSpec_To_v1beta1_KubeadmConfigSpec(in *bootstrapv1alpha4.KubeadmConfigSpec, out *bootstrapv1.KubeadmConfigSpec, s apiconversion.Scope) error {
+	return bootstrapv1alpha4.Convert_v1alpha4_KubeadmConfigSpec_To_v1beta1_KubeadmConfigSpec(in, out, s)
+}
+
+func Convert_v1alpha4_ObjectMeta_To_v1beta1_ObjectMeta(in *clusterv1alpha4.ObjectMeta, out *clusterv1.ObjectMeta, s apiconversion.Scope) error {
+	return corev1alpha4.Convert_v1alpha4_ObjectMeta_To_v1beta1_ObjectMeta(in, out, s)
+}
+
+func Convert_v1beta1_ObjectMeta_To_v1alpha4_ObjectMeta(in *clusterv1.ObjectMeta, out *clusterv1alpha4.ObjectMeta, s apiconversion.Scope) error {
+	return corev1alpha4.Convert_v1beta1_ObjectMeta_To_v1alpha4_ObjectMeta(in, out, s)
 }

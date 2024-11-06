@@ -83,13 +83,13 @@ Cluster API only tests a subset of possible clusterctl upgrade paths as otherwis
 Untested upgrade paths are not blocked by clusterctl and should work in general, they are just not tested. Users
 intending to use an upgrade path not tested by us should do their own validation to ensure the operation works correctly.
 
-The following is an example of the tested upgrade paths for v1.5:
+The following is an example of the tested upgrade paths for v1.7:
 
 | From | To   | Note                                                 |
 |------|------|------------------------------------------------------|
-| v1.0 | v1.5 | v1.0 is the first release with the v1beta1 contract. |
-| v1.3 | v1.5 | v1.3 is v1.5 - 2.                                    |
-| v1.4 | v1.5 | v1.4 is v1.5 - 1.                                    |
+| v1.0 | v1.7 | v1.0 is the first release with the v1beta1 contract. |
+| v1.5 | v1.7 | v1.5 is v1.7 - 2.                                    |
+| v1.6 | v1.7 | v1.6 is v1.7 - 1.                                    |
 
 The idea is to always test upgrade from v1.0 and the previous two minor releases.
 
@@ -148,6 +148,8 @@ clusterctl upgrade apply \
 
 <h1> Deploying nightly release images </h1>
 
-Cluster API publishes nightly versions of the project componenents' manifests from the `main` branch to a Google storage bucket for user consumption.  The syntax for the URL is: `https://storage.googleapis.com/artifacts.k8s-staging-cluster-api.appspot.com/components/nightly_main_<YYYYMMDD>/<COMPENENT_NAME>-components.yaml`.
+Cluster API publishes nightly versions of the project components' manifests from the `main` branch to a Google storage bucket for user consumption. The syntax for the URL is: `https://storage.googleapis.com/k8s-staging-cluster-api/components/nightly_main_<YYYYMMDD>/<COMPENENT_NAME>-components.yaml`.
 
-For example, to retrieve the core component manifest published January 1, 2024, the following URL can be used: https://storage.googleapis.com/artifacts.k8s-staging-cluster-api.appspot.com/components/nightly_main_20240101/core-components.yaml.
+Please note that these files are deleted after a certain period, at the time of this writing 60 days after file creation.
+
+For example, to retrieve the core component manifest published April 25, 2024, the following URL can be used: `https://storage.googleapis.com/k8s-staging-cluster-api/components/nightly_main_20240425/core-components.yaml`.

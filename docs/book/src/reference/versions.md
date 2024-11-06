@@ -23,10 +23,10 @@ When a new Kubernetes minor release is available, we will try to support it in a
 (although only in the latest supported Cluster API minor release). See Cluster API [release cycle](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/release/release-cycle.md)
 and [release calendars](https://github.com/kubernetes-sigs/cluster-api/tree/main/docs/release/releases) for more details.
 
-For example, Cluster API v1.5.0 would support the following Kubernetes versions:
-* v1.24.x to v1.27.x for the management cluster
-* v1.22.x to v1.27.x for the workload cluster
-* When Kubernetes 1.28 is released, it will be supported in v1.5.x (but not in v1.4.x)
+For example, Cluster API v1.7.0 would support the following Kubernetes versions:
+* v1.26.x to v1.29.x for the management cluster
+* v1.24.x to v1.29.x for the workload cluster
+* When Kubernetes 1.30 is released, it will be supported in v1.7.x (but not in v1.6.x)
 
 Support in this context means that we:
 * maintain corresponding code paths
@@ -57,8 +57,8 @@ The Core Provider, Kubeadm Bootstrap Provider, and Kubeadm Control Plane Provide
 In some cases, the Management Cluster is separate from the Workload Clusters. The Kubernetes version of the Management and Workload Clusters are allowed to be different.
 
 Management Clusters and Workload Clusters can be upgraded independently and in any order, however, if you are additionally moving from
-v1alpha3 (v0.3.x) to v1beta1 (v1.x) as part of the upgrade rollout, the management cluster will need to be upgraded to at least v1.20.x,
-prior to upgrading any workload cluster using Cluster API v1beta1 (v1.x)
+v1alpha3 (v0.3.x) or v1alpha4 (v0.4.x) to v1beta1 (v1.x) as part of the upgrade, prior to upgrading any workload cluster using Cluster API v1beta1, 
+the management cluster will need to be upgraded the at least the minimum supported Kubernetes version for your target CAPI version.
 
 These diagrams show the relationships between components in a Cluster API release (yellow), and other components (white).
 
@@ -74,17 +74,19 @@ These diagrams show the relationships between components in a Cluster API releas
 
 #### Core Provider (`cluster-api-controller`)
 
-|                   | v1.5 (v1beta1) (EOL) | v1.6 (v1beta1)    | v1.7 (v1beta1)    |
+|                   | v1.6 (v1beta1) (EOL) | v1.7 (v1beta1)    | v1.8 (v1beta1)    |
 |-------------------|----------------------|-------------------|-------------------|
-| Kubernetes v1.22  | ✓ (only workload)    |                   |                   |
-| Kubernetes v1.23* | ✓ (only workload)    | ✓ (only workload) |                   |
-| Kubernetes v1.24  | ✓                    | ✓ (only workload) | ✓ (only workload) |
-| Kubernetes v1.25  | ✓                    | ✓                 | ✓ (only workload) |
-| Kubernetes v1.26  | ✓                    | ✓                 | ✓                 |
+| Kubernetes v1.22  |                      |                   |                   |
+| Kubernetes v1.23* | ✓ (only workload)    |                   |                   |
+| Kubernetes v1.24  | ✓ (only workload)    | ✓ (only workload) |                   |
+| Kubernetes v1.25  | ✓                    | ✓ (only workload) | ✓ (only workload) |
+| Kubernetes v1.26  | ✓                    | ✓                 | ✓ (only workload) |
 | Kubernetes v1.27  | ✓                    | ✓                 | ✓                 |
-| Kubernetes v1.28  | ✓ >= v1.5.1          | ✓                 | ✓                 |
-| Kubernetes v1.29  |                      | ✓ >= v1.6.1       | ✓                 |
-| Kubernetes v1.30  |                      |                   | ✓ >= v1.7.1       |
+| Kubernetes v1.28  | ✓                    | ✓                 | ✓                 |
+| Kubernetes v1.29  | ✓ >= v1.6.1          | ✓                 | ✓                 |
+| Kubernetes v1.30  |                      | ✓ >= v1.7.1       | ✓                 |
+| Kubernetes v1.31  |                      |                   | ✓ >= v1.8.1       |
+
 
 \* There is an issue with CRDs in Kubernetes v1.23.{0-2}. ClusterClass with patches is affected by that (for more details please see [this issue](https://github.com/kubernetes-sigs/cluster-api/issues/5990)). Therefore we recommend to use Kubernetes v1.23.3+ with ClusterClass.
 	 Previous Kubernetes **minor** versions are not affected.
@@ -93,33 +95,35 @@ The Core Provider also talks to API server of every Workload Cluster. Therefore,
 
 #### Kubeadm Bootstrap Provider (`kubeadm-bootstrap-controller`)
 
-|                                    | v1.5 (v1beta1) (EOL) | v1.6 (v1beta1)     | v1.7 (v1beta1)     |
+|                                    | v1.6 (v1beta1) (EOL) | v1.7 (v1beta1)     | v1.8 (v1beta1)     |
 |------------------------------------|----------------------|--------------------|--------------------|
-| Kubernetes v1.22 + kubeadm/v1beta3 | ✓  (only workload)   |                    |                    |
-| Kubernetes v1.23 + kubeadm/v1beta3 | ✓  (only workload)   | ✓  (only workload) |                    |
-| Kubernetes v1.24 + kubeadm/v1beta3 | ✓                    | ✓  (only workload) | ✓  (only workload) |
-| Kubernetes v1.25 + kubeadm/v1beta3 | ✓                    | ✓                  | ✓  (only workload) |
-| Kubernetes v1.26 + kubeadm/v1beta3 | ✓                    | ✓                  | ✓                  |
+| Kubernetes v1.22 + kubeadm/v1beta3 |                      |                    |                    |
+| Kubernetes v1.23 + kubeadm/v1beta3 | ✓  (only workload)   |                    |                    |
+| Kubernetes v1.24 + kubeadm/v1beta3 | ✓  (only workload)   | ✓  (only workload) |                    |
+| Kubernetes v1.25 + kubeadm/v1beta3 | ✓                    | ✓  (only workload) | ✓  (only workload) |
+| Kubernetes v1.26 + kubeadm/v1beta3 | ✓                    | ✓                  | ✓  (only workload) |
 | Kubernetes v1.27 + kubeadm/v1beta3 | ✓                    | ✓                  | ✓                  |
-| Kubernetes v1.28 + kubeadm/v1beta3 | ✓ >= v1.5.1          | ✓                  | ✓                  |
-| Kubernetes v1.29 + kubeadm/v1beta3 |                      | ✓ >= v1.6.1        | ✓                  |
-| Kubernetes v1.30 + kubeadm/v1beta3 |                      |                    | ✓ >= v1.7.1        |
+| Kubernetes v1.28 + kubeadm/v1beta3 | ✓                    | ✓                  | ✓                  |
+| Kubernetes v1.29 + kubeadm/v1beta3 | ✓ >= v1.6.1          | ✓                  | ✓                  |
+| Kubernetes v1.30 + kubeadm/v1beta3 |                      | ✓ >= v1.7.1        | ✓                  |
+| Kubernetes v1.31 + kubeadm/v1beta4 |                      |                    | ✓ >= v1.8.1        |
 
 The Kubeadm Bootstrap Provider generates kubeadm configuration using the API version recommended for the target Kubernetes version.
 
 #### Kubeadm Control Plane Provider (`kubeadm-control-plane-controller`)
 
-|                            | v1.5 (v1beta1) (EOL) | v1.6 (v1beta1)    | v1.7 (v1beta1)    |
+|                            | v1.6 (v1beta1) (EOL) | v1.7 (v1beta1)    | v1.8 (v1beta1)    |
 |----------------------------|----------------------|-------------------|-------------------|
-| Kubernetes v1.22 + etcd/v3 | ✓ (only workload)    |                   |                   |
-| Kubernetes v1.23 + etcd/v3 | ✓ (only workload)    | ✓ (only workload) |                   |
-| Kubernetes v1.24 + etcd/v3 | ✓                    | ✓ (only workload) | ✓ (only workload) |
-| Kubernetes v1.25 + etcd/v3 | ✓                    | ✓                 | ✓ (only workload) |
-| Kubernetes v1.26 + etcd/v3 | ✓                    | ✓                 | ✓                 |
+| Kubernetes v1.22 + etcd/v3 |                      |                   |                   |
+| Kubernetes v1.23 + etcd/v3 | ✓ (only workload)    |                   |                   |
+| Kubernetes v1.24 + etcd/v3 | ✓ (only workload)    | ✓ (only workload) |                   |
+| Kubernetes v1.25 + etcd/v3 | ✓                    | ✓ (only workload) | ✓ (only workload) |
+| Kubernetes v1.26 + etcd/v3 | ✓                    | ✓                 | ✓ (only workload) |
 | Kubernetes v1.27 + etcd/v3 | ✓                    | ✓                 | ✓                 |
-| Kubernetes v1.28 + etcd/v3 | ✓ >= v1.5.1          | ✓                 | ✓                 |
-| Kubernetes v1.29 + etcd/v3 |                      | ✓ >= v1.6.1       | ✓                 |
-| Kubernetes v1.30 + etcd/v3 |                      |                   | ✓ >= v1.7.1       |
+| Kubernetes v1.28 + etcd/v3 | ✓                    | ✓                 | ✓                 |
+| Kubernetes v1.29 + etcd/v3 | ✓ >= v1.6.1          | ✓                 | ✓                 |
+| Kubernetes v1.30 + etcd/v3 |                      | ✓ >= v1.7.1       | ✓                 |
+| Kubernetes v1.31 + etcd/v3 |                      |                   | ✓ >= v1.8.1       |
 
 The Kubeadm Control Plane Provider talks to the API server and etcd members of every Workload Cluster whose control plane it owns. It uses the etcd v3 API.
 
@@ -129,14 +133,23 @@ The Kubeadm Control Plane requires the Kubeadm Bootstrap Provider.
 
 ##### CoreDNS
 
-| CAPI Version         | Max CoreDNS Version for Upgrade |
-|----------------------|---------------------------------|
-| v1.5 (v1beta1)       | v1.10.1                         |
-| >= v1.5.1 (v1beta1)  | v1.11.1                         |
-| v1.6 (v1beta1)       | v1.11.1                         |
-| v1.7 (v1beta1)       | v1.11.1                         |
+| CAPI Version        | Max CoreDNS Version for Upgrade |
+|---------------------|---------------------------------|
+| v1.5 (v1beta1)      | v1.10.1                         |
+| >= v1.5.1 (v1beta1) | v1.11.1                         |
+| v1.6 (v1beta1)      | v1.11.1                         |
+| v1.7 (v1beta1)      | v1.11.1                         |
+| v1.8 (v1beta1)      | v1.11.3                         |
 
 #### Kubernetes version specific notes
+
+**1.31**:
+
+* All providers:
+  * It is not possible anymore to continuously apply CRDs that are setting `caBundle` to an invalid value (in our case `Cg==`). Instead of setting a dummy value the `caBundle` field should be dropped ([#10972](https://github.com/kubernetes-sigs/cluster-api/pull/10972)).
+* Kubeadm Bootstrap Provider:
+  * `kubeadm` dropped the `control-plane update-status` phase which was used in ExperimentalRetryJoin ([#10983](https://github.com/kubernetes-sigs/cluster-api/pull/10983)).
+  * `kubeadm` introduced the experimental `ControlPlaneKubeletLocalMode` feature gate which will be automatically enabled by CAPI for upgrades to v1.31 to not cause network disruptions ([#10947](https://github.com/kubernetes-sigs/cluster-api/pull/10947)).
 
 **1.29**:
 * In-tree cloud providers are now switched off by default. Please use DisableCloudProviders and DisableKubeletCloudCredentialProvider feature flags if you still need this functionality. (https://github.com/kubernetes/kubernetes/pull/117503)

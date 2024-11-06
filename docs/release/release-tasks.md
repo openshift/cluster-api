@@ -122,6 +122,7 @@ Prior art:
 
 * 1.5 - https://github.com/kubernetes-sigs/cluster-api/pull/8430/files
 * 1.6 - https://github.com/kubernetes-sigs/cluster-api/pull/9097/files
+* 1.7 - https://github.com/kubernetes-sigs/cluster-api/pull/9799/files
 
 #### Create a new GitHub milestone for the next release
 
@@ -170,7 +171,7 @@ From this point forward changes which should land in the release have to be cher
    <br>Prior art: [cluster-api: update milestone applier config for v1.5](https://github.com/kubernetes/test-infra/pull/30058)
 
 2. Update the GitHub Actions to work with the new release version.
-   <br>Prior art: [Update actions for v1.6](https://github.com/kubernetes-sigs/cluster-api/pull/9708)
+   <br>Prior art: [Update actions for v1.7](https://github.com/kubernetes-sigs/cluster-api/pull/10357)
 
 #### [Continuously] Maintain the GitHub release milestone
 
@@ -369,13 +370,13 @@ The goal of this task is to keep the CAPI community updated on recent PRs that h
    ```
 
 1. This will generate a new release notes file at `CHANGELOG/<RELEASE_TAG>.md`. Finalize the release notes:
+    - [ ] Look for any `MISSING_AREA` entries. Add the corresponding label to the PR and regenerate the notes.
+    - [ ] Look for any `MULTIPLE_AREAS` entries. If the PR does indeed guarantee multiple areas, just remove the `MULTIPLE_AREAS` prefix and just leave the areas. Otherwise, fix the labels in the PR and regenerate the notes.
+    - [ ] Review that all areas are correctly assigned to each PR. If not, correct the labels and regenerate the notes.
     - [ ] Update the `Kubernetes version support section`. If this is a patch release you can most probably copy the same values from the previous patch release notes. Except if this is the release where a new Kubernetes version support is added.
        <br>**Note**: Check our [Kubernetes support policy](https://cluster-api.sigs.k8s.io/reference/versions.html#supported-kubernetes-versions) in the CAPI book. In case of doubt, reach out to the current release lead.
     - [ ] If this is a `vX.X.0` release, fill in the content for the `Highlights` section. Otherwise, remove the section altogether.
     - [ ] If there a deprecations in this release (for example, a CAPI API version drop), add them, to the `Deprecation Warning` section. Otherwise, remove the section altogether.
-    - [ ] Look for any `MISSING_AREA` entries. Add the corresponding label to the PR and regenerate the notes.
-    - [ ] Look for any `MULTIPLE_AREAS` entries. If the PR does indeed guarantee multiple areas, just remove the `MULTIPLE_AREAS` prefix and just leave the areas. Otherwise, fix the labels in the PR and regenerate the notes.
-    - [ ] Review that all areas are correctly assigned to each PR. If not, correct the labels and regenerate the notes.
     - [ ] Look for area duplications in PR title. Sometimes authors add a prefix in their PR title that matches the area label. When the notes are generated, the area is as a prefix to the PR title, which can create redundant information. Remove the one from the PR title and just leave the area. Make sure you capitalize the title after this.
     - [ ] Check that all entries are in the right section. Sometimes the wrong emoji prefix is added to the PR title, which drives the section in which the entry is added in the release notes. Manually move any entry as needed. Note that fixing the PR title won't fix this even after regenerating the notes, since the notes tool reads this info from the commit messages and these don't get rewritten.
     - [ ] Sort manually all entries if you made any manual edits that might have altered the correct order.
@@ -489,7 +490,11 @@ While we add test coverage for the new release branch we will also drop the test
             * Change intervals (let's use the same as for `release-1.5`).
 2. Create a new dashboard for the new branch in: `test-infra/config/testgrids/kubernetes/sig-cluster-lifecycle/config.yaml` (`dashboard_groups` and `dashboards`).
 3. Remove old release branches and unused versions from the `cluster-api-prowjob-gen.yaml` file in [test-infra](https://github.com/kubernetes/test-infra/blob/master/config/jobs/kubernetes-sigs/cluster-api/) according to our policy documented in [Support and guarantees](../../CONTRIBUTING.md#support-and-guarantees). For example, let's assume we just added `release-1.6`, then we can now drop test coverage for the `release-1.3` branch.
-4. Regenerate the probjob configuration using `make generate-test-infra-prowjobs`.
+4. Regenerate the prowjob configuration running `make generate-test-infra-prowjobs` command from cluster-api repository. Before running this command, ensure to export the `TEST_INFRA_DIR` variable, specifying the location of the [test-infra](https://github.com/kubernetes/test-infra/) repository in your environment. For further information, refer to this [link](https://github.com/kubernetes-sigs/cluster-api/pull/9937).
+
+ ```sh
+  TEST_INFRA_DIR=../../k8s.io/test-infra make generate-test-infra-prowjobs
+  ```
 5. Verify the jobs and dashboards a day later by taking a look at: `https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-1.6`
 6. Update `.github/workflows/weekly-security-scan.yaml` - to setup Trivy and govulncheck scanning - `.github/workflows/weekly-md-link-check.yaml` - to setup link checking in the CAPI book - and `.github/workflows/weekly-test-release.yaml` - to verify the release target is working - for the currently supported branches.
 7. Update the [PR markdown link checker](https://github.com/kubernetes-sigs/cluster-api/blob/main/.github/workflows/pr-md-link-check.yaml) accordingly (e.g. `main` -> `release-1.6`).
@@ -499,7 +504,6 @@ While we add test coverage for the new release branch we will also drop the test
 Prior art:
 
 * [Add jobs for CAPI release 1.6](https://github.com/kubernetes/test-infra/pull/31208)
-* [Update github workflows](https://github.com/kubernetes-sigs/cluster-api/pull/8398)
 
 #### [Continuously] Monitor CI signal
 

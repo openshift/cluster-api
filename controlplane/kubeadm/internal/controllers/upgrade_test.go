@@ -68,7 +68,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	timeout := 30 * time.Second
 
 	cluster, kcp, genericInfrastructureMachineTemplate := createClusterWithControlPlane(namespace.Name)
-	g.Expect(env.Create(ctx, genericInfrastructureMachineTemplate, client.FieldOwner("manager"))).To(Succeed())
+	g.Expect(env.CreateAndWait(ctx, genericInfrastructureMachineTemplate, client.FieldOwner("manager"))).To(Succeed())
 	cluster.UID = types.UID(util.RandomString(10))
 	cluster.Spec.ControlPlaneEndpoint.Host = Host
 	cluster.Spec.ControlPlaneEndpoint.Port = 6443
@@ -84,13 +84,13 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 		recorder:            record.NewFakeRecorder(32),
 		managementCluster: &fakeManagementCluster{
 			Management: &internal.Management{Client: env},
-			Workload: fakeWorkloadCluster{
+			Workload: &fakeWorkloadCluster{
 				Status: internal.ClusterStatus{Nodes: 1},
 			},
 		},
 		managementClusterUncached: &fakeManagementCluster{
 			Management: &internal.Management{Client: env},
-			Workload: fakeWorkloadCluster{
+			Workload: &fakeWorkloadCluster{
 				Status: internal.ClusterStatus{Nodes: 1},
 			},
 		},
@@ -192,12 +192,12 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 
 	fmc := &fakeManagementCluster{
 		Machines: collections.Machines{},
-		Workload: fakeWorkloadCluster{
+		Workload: &fakeWorkloadCluster{
 			Status: internal.ClusterStatus{Nodes: 3},
 		},
 	}
 	objs := []client.Object{builder.GenericInfrastructureMachineTemplateCRD, cluster.DeepCopy(), kcp.DeepCopy(), tmpl.DeepCopy()}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		name := fmt.Sprintf("test-%d", i)
 		m := &clusterv1.Machine{
 			ObjectMeta: metav1.ObjectMeta{

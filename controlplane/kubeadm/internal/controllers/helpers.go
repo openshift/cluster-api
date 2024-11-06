@@ -91,7 +91,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileKubeconfig(ctx context.Context,
 	}
 
 	if needsRotation {
-		log.Info("rotating kubeconfig secret")
+		log.Info("Rotating kubeconfig secret")
 		if err := kubeconfig.RegenerateSecret(ctx, r.Client, configSecret); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "failed to regenerate kubeconfig")
 		}
@@ -386,6 +386,9 @@ func (r *KubeadmControlPlaneReconciler) computeDesiredMachine(kcp *controlplanev
 			annotations[controlplanev1.RemediationForAnnotation] = remediationData
 		}
 	}
+	// Setting pre-terminate hook so we can later remove the etcd member right before Machine termination
+	// (i.e. before InfraMachine deletion).
+	annotations[controlplanev1.PreTerminateHookCleanupAnnotation] = ""
 
 	// Construct the basic Machine.
 	desiredMachine := &clusterv1.Machine{
