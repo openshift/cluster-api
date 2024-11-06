@@ -21,6 +21,8 @@ package container
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -30,19 +32,27 @@ import (
 	"github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
 	dockerfilters "github.com/docker/docker/api/types/filters"
+	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	dockersystem "github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/pkg/errors"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/utils/ptr"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/test/infrastructure/kind"
 )
 
 const (
 	httpProxy  = "HTTP_PROXY"
 	httpsProxy = "HTTPS_PROXY"
 	noProxy    = "NO_PROXY"
+
+	btrfsStorage = "btrfs"
+	zfsStorage   = "zfs"
 )
 
 type dockerRuntime struct {
@@ -53,7 +63,7 @@ type dockerRuntime struct {
 func NewDockerClient() (Runtime, error) {
 	dockerClient, err := getDockerClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to created docker runtime client")
+		return nil, errors.Wrapf(err, "failed to created docker runtime client")
 	}
 	return &dockerRuntime{
 		dockerClient: dockerClient,
@@ -78,7 +88,7 @@ func (d *dockerRuntime) SaveContainerImage(ctx context.Context, image, dest stri
 	}
 	defer reader.Close()
 
-	tar, err := os.Create(dest)
+	tar, err := os.Create(dest) //nolint:gosec // No security issue: dest is safe.
 	if err != nil {
 		return fmt.Errorf("failed to create destination file %q: %v", dest, err)
 	}
@@ -96,20 +106,20 @@ func (d *dockerRuntime) SaveContainerImage(ctx context.Context, image, dest stri
 // already exist. This is important when we're using locally build images in CI which
 // do not exist remotely.
 func (d *dockerRuntime) PullContainerImageIfNotExists(ctx context.Context, image string) error {
-	filters := dockerfilters.NewArgs()
-	filters.Add("reference", image)
-	images, err := d.dockerClient.ImageList(ctx, types.ImageListOptions{
-		Filters: filters,
-	})
+	imageExistsLocally, err := d.ImageExistsLocally(ctx, image)
 	if err != nil {
-		return fmt.Errorf("failure listing container images: %v", err)
+		return errors.Wrapf(err, "failure determining if the image exists in local cache: %s", image)
 	}
-	// Nothing to do as the image already exists locally.
-	if len(images) > 0 {
+	if imageExistsLocally {
 		return nil
 	}
 
-	pullResp, err := d.dockerClient.ImagePull(ctx, image, types.ImagePullOptions{})
+	return d.PullContainerImage(ctx, image)
+}
+
+// PullContainerImage triggers the Docker engine to pull an image.
+func (d *dockerRuntime) PullContainerImage(ctx context.Context, image string) error {
+	pullResp, err := d.dockerClient.ImagePull(ctx, image, dockerimage.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("failure pulling container image: %v", err)
 	}
@@ -122,6 +132,22 @@ func (d *dockerRuntime) PullContainerImageIfNotExists(ctx context.Context, image
 	}
 
 	return nil
+}
+
+// ImageExistsLocally returns if the specified image exists in local container image cache.
+func (d *dockerRuntime) ImageExistsLocally(ctx context.Context, image string) (bool, error) {
+	filters := dockerfilters.NewArgs()
+	filters.Add("reference", image)
+	images, err := d.dockerClient.ImageList(ctx, dockerimage.ListOptions{
+		Filters: filters,
+	})
+	if err != nil {
+		return false, errors.Wrapf(err, "failure listing container image: %s", image)
+	}
+	if len(images) > 0 {
+		return true, nil
+	}
+	return false, nil
 }
 
 // GetHostPort looks up the host port bound for the port and protocol (e.g. "6443/tcp").
@@ -145,9 +171,8 @@ func (d *dockerRuntime) GetHostPort(ctx context.Context, containerName, portAndP
 }
 
 // ExecContainer executes a command in a running container and writes any output to the provided writer.
-func (d *dockerRuntime) ExecContainer(ctxd context.Context, containerName string, config *ExecContainerInput, command string, args ...string) error {
-	ctx := context.Background() // Let the command finish, even if it takes longer than the default timeout
-	execConfig := types.ExecConfig{
+func (d *dockerRuntime) ExecContainer(ctx context.Context, containerName string, config *ExecContainerInput, command string, args ...string) error {
+	execConfig := dockercontainer.ExecOptions{
 		// Run with privileges so we can remount etc..
 		// This might not make sense in the most general sense, but it is
 		// important to many kind commands.
@@ -169,7 +194,7 @@ func (d *dockerRuntime) ExecContainer(ctxd context.Context, containerName string
 		return errors.Wrap(err, "exec ID empty")
 	}
 
-	resp, err := d.dockerClient.ContainerExecAttach(ctx, execID, types.ExecStartCheck{})
+	resp, err := d.dockerClient.ContainerExecAttach(ctx, execID, dockercontainer.ExecStartOptions{})
 	if err != nil {
 		return errors.Wrap(err, "error attaching to container exec")
 	}
@@ -241,7 +266,7 @@ func (d *dockerRuntime) ExecContainer(ctxd context.Context, containerName string
 
 // ListContainers returns a list of all containers.
 func (d *dockerRuntime) ListContainers(ctx context.Context, filters FilterBuilder) ([]Container, error) {
-	listOptions := types.ContainerListOptions{
+	listOptions := dockercontainer.ListOptions{
 		All:     true,
 		Limit:   -1,
 		Filters: dockerfilters.NewArgs(),
@@ -276,8 +301,8 @@ func (d *dockerRuntime) ListContainers(ctx context.Context, filters FilterBuilde
 
 // DeleteContainer will remove a container, forcing removal if still running.
 func (d *dockerRuntime) DeleteContainer(ctx context.Context, containerName string) error {
-	return d.dockerClient.ContainerRemove(ctx, containerName, types.ContainerRemoveOptions{
-		Force:         true, // force the container to be delete now
+	return d.dockerClient.ContainerRemove(ctx, containerName, dockercontainer.RemoveOptions{
+		Force:         true, // force the container to be deleted now
 		RemoveVolumes: true, // delete volumes
 	})
 }
@@ -310,10 +335,15 @@ func (d *dockerRuntime) ContainerDebugInfo(ctx context.Context, containerName st
 		return errors.Wrapf(err, "failed to inspect container %q", containerName)
 	}
 
-	fmt.Fprintln(w, "Inspected the container:")
-	fmt.Fprintf(w, "%+v\n", containerInfo)
+	rawJSON, err := json.Marshal(containerInfo)
+	if err != nil {
+		return errors.Wrapf(err, "failed to marshal container info to json")
+	}
 
-	options := types.ContainerLogsOptions{
+	fmt.Fprintln(w, "Inspected the container:")
+	fmt.Fprintf(w, "%s\n", rawJSON)
+
+	options := dockercontainer.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	}
@@ -341,28 +371,6 @@ func dockerContainerToContainer(container *types.Container) Container {
 	}
 }
 
-// ownerAndGroup gets the user configuration for the container (user:group).
-func (crc *RunContainerInput) ownerAndGroup() string {
-	if crc.User != "" {
-		if crc.Group != "" {
-			return fmt.Sprintf("%s:%s", crc.User, crc.Group)
-		}
-
-		return crc.User
-	}
-
-	return ""
-}
-
-// environmentVariables gets the collection of environment variables for the container.
-func (crc *RunContainerInput) environmentVariables() []string {
-	envVars := []string{}
-	for key, val := range crc.EnvironmentVars {
-		envVars = append(envVars, fmt.Sprintf("%s=%s", key, val))
-	}
-	return envVars
-}
-
 // RunContainer will run a docker container with the given settings and arguments, returning any errors.
 func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContainerInput, output io.Writer) error {
 	containerConfig := dockercontainer.Config{
@@ -378,6 +386,15 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 		Volumes:      map[string]struct{}{},
 	}
 
+	restartPolicy := runConfig.RestartPolicy
+	restartMaximumRetryCount := 0
+	if restartPolicy == "" {
+		restartPolicy = "on-failure"
+		restartMaximumRetryCount = 1
+	}
+
+	// TODO: check if we can simplify the following code for the CAPD load balancer, which now always has runConfig.KindMode == kind.ModeNone
+
 	hostConfig := dockercontainer.HostConfig{
 		// Running containers in a container requires privileges.
 		// NOTE: we could try to replicate this with --cap-add, and use less
@@ -385,36 +402,42 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 		// including some ones docker would otherwise do by default.
 		// for now this is what we want. in the future we may revisit this.
 		Privileged:    true,
-		SecurityOpt:   []string{"seccomp=unconfined"}, // ignore seccomp
+		SecurityOpt:   []string{"seccomp=unconfined", "apparmor=unconfined"}, // ignore seccomp
 		NetworkMode:   dockercontainer.NetworkMode(runConfig.Network),
 		Tmpfs:         runConfig.Tmpfs,
 		PortBindings:  nat.PortMap{},
-		RestartPolicy: dockercontainer.RestartPolicy{Name: "unless-stopped"},
+		RestartPolicy: dockercontainer.RestartPolicy{Name: restartPolicy, MaximumRetryCount: restartMaximumRetryCount},
+		Init:          ptr.To(false),
 	}
 	networkConfig := network.NetworkingConfig{}
 
-	if runConfig.IPFamily == clusterv1.IPv6IPFamily {
+	// NOTE: starting from Kind 0.20 kind requires CgroupnsMode to be set to private.
+	if runConfig.KindMode != kind.ModeNone && runConfig.KindMode != kind.Mode0_19 {
+		hostConfig.CgroupnsMode = "private"
+	}
+
+	if runConfig.IPFamily == clusterv1.IPv6IPFamily || runConfig.IPFamily == clusterv1.DualStackIPFamily {
 		hostConfig.Sysctls = map[string]string{
 			"net.ipv6.conf.all.disable_ipv6": "0",
 			"net.ipv6.conf.all.forwarding":   "1",
 		}
 	}
 
-	// mount /dev/mapper if docker storage driver if Btrfs or ZFS
-	// https://github.com/kubernetes-sigs/kind/pull/1464
-	needed, err := d.needsDevMapper(ctx)
+	info, err := d.dockerClient.Info(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "unable to get Docker engine info, failed to create container %q", runConfig.Name)
 	}
 
-	if needed {
+	// mount /dev/mapper if docker storage driver if Btrfs or ZFS
+	// https://github.com/kubernetes-sigs/kind/pull/1464
+	if d.needsDevMapper(info) {
 		hostConfig.Binds = append(hostConfig.Binds, "/dev/mapper:/dev/mapper:ro")
 	}
 
 	envVars := environmentVariables(runConfig)
 
 	// pass proxy environment variables to be used by node's docker daemon
-	proxyDetails, err := d.getProxyDetails(ctx, runConfig.Network)
+	proxyDetails, err := d.getProxyDetails(ctx, runConfig.Network, runConfig.Name)
 	if err != nil {
 		return errors.Wrapf(err, "error getting subnets for %q", runConfig.Network)
 	}
@@ -426,15 +449,21 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 	configureVolumes(runConfig, &containerConfig, &hostConfig)
 	configurePortMappings(runConfig.PortMappings, &containerConfig, &hostConfig)
 
-	if d.usernsRemap(ctx) {
+	if d.usernsRemap(info) {
 		// We need this argument in order to make this command work
 		// in systems that have userns-remap enabled on the docker daemon
 		hostConfig.UsernsMode = "host"
 	}
 
+	// enable /dev/fuse explicitly for fuse-overlayfs
+	// (Rootless Docker does not automatically mount /dev/fuse with --privileged)
+	if d.mountFuse(info) {
+		hostConfig.Devices = append(hostConfig.Devices, dockercontainer.DeviceMapping{PathOnHost: "/dev/fuse"})
+	}
+
 	// Make sure we have the image
 	if err := d.PullContainerImageIfNotExists(ctx, runConfig.Image); err != nil {
-		return err
+		return errors.Wrapf(err, "error pulling container image %s", runConfig.Image)
 	}
 
 	// Create the container using our settings
@@ -453,7 +482,7 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 	var containerOutput types.HijackedResponse
 	if output != nil {
 		// Read out any output from the container
-		attachOpts := types.ContainerAttachOptions{
+		attachOpts := dockercontainer.AttachOptions{
 			Stream: true,
 			Stdin:  false,
 			Stdout: true,
@@ -468,8 +497,14 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 	}
 
 	// Actually start the container
-	if err := d.dockerClient.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
-		return errors.Wrapf(err, "error starting container %q", runConfig.Name)
+	if err := d.dockerClient.ContainerStart(ctx, resp.ID, dockercontainer.StartOptions{}); err != nil {
+		err := errors.Wrapf(err, "error starting container %q", runConfig.Name)
+		// Delete the container and retry later on. This helps getting around the race
+		// condition where of hitting "port is already allocated" issues.
+		if reterr := d.dockerClient.ContainerRemove(ctx, resp.ID, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true}); reterr != nil {
+			return kerrors.NewAggregate([]error{err, errors.Wrapf(reterr, "error deleting container")})
+		}
+		return err
 	}
 
 	if output != nil {
@@ -513,13 +548,8 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 // needsDevMapper checks whether we need to mount /dev/mapper.
 // This is required when the docker storage driver is Btrfs or ZFS.
 // https://github.com/kubernetes-sigs/kind/pull/1464
-func (d *dockerRuntime) needsDevMapper(ctx context.Context) (bool, error) {
-	info, err := d.dockerClient.Info(ctx)
-	if err != nil {
-		return false, err
-	}
-
-	return info.Driver == "btrfs" || info.Driver == "zfs", nil
+func (d *dockerRuntime) needsDevMapper(info dockersystem.Info) bool {
+	return info.Driver == btrfsStorage || info.Driver == zfsStorage
 }
 
 // ownerAndGroup gets the user configuration for the container (user:group).
@@ -584,7 +614,7 @@ func configureVolumes(crc *RunContainerInput, config *dockercontainer.Config, ho
 // getSubnets returns a slice of subnets for a specified network.
 func (d *dockerRuntime) getSubnets(ctx context.Context, networkName string) ([]string, error) {
 	subnets := []string{}
-	networkInfo, err := d.dockerClient.NetworkInspect(ctx, networkName, types.NetworkInspectOptions{})
+	networkInfo, err := d.dockerClient.NetworkInspect(ctx, networkName, network.InspectOptions{})
 	if err != nil {
 		return subnets, errors.Wrapf(err, "failed to inspect network %q", networkName)
 	}
@@ -603,7 +633,7 @@ type proxyDetails struct {
 
 // getProxyDetails returns a struct with the host environment proxy settings
 // that should be passed to the nodes.
-func (d *dockerRuntime) getProxyDetails(ctx context.Context, network string) (*proxyDetails, error) {
+func (d *dockerRuntime) getProxyDetails(ctx context.Context, network string, nodeNames ...string) (*proxyDetails, error) {
 	var val string
 	details := proxyDetails{Envs: make(map[string]string)}
 	proxyEnvs := []string{httpProxy, httpsProxy, noProxy}
@@ -628,24 +658,48 @@ func (d *dockerRuntime) getProxyDetails(ctx context.Context, network string) (*p
 		if err != nil {
 			return &details, err
 		}
-		noProxyList := strings.Join(append(subnets, details.Envs[noProxy]), ",")
-		details.Envs[noProxy] = noProxyList
-		details.Envs[strings.ToLower(noProxy)] = noProxyList
+		noProxyList := append(subnets, details.Envs[noProxy])
+		noProxyList = append(noProxyList, nodeNames...)
+		// Add pod and service dns names to no_proxy to allow in cluster
+		// Note: this is best effort based on the default CoreDNS spec
+		// https://github.com/kubernetes/dns/blob/master/docs/specification.md
+		// Any user created pod/service hostnames, namespaces, custom DNS services
+		// are expected to be no-proxied by the user explicitly.
+		noProxyList = append(noProxyList, ".svc", ".svc.cluster", ".svc.cluster.local")
+		noProxyJoined := strings.Join(noProxyList, ",")
+		details.Envs[noProxy] = noProxyJoined
+		details.Envs[strings.ToLower(noProxy)] = noProxyJoined
 	}
 
 	return &details, nil
 }
 
 // usernsRemap checks if userns-remap is enabled in dockerd.
-func (d *dockerRuntime) usernsRemap(ctx context.Context) bool {
-	info, err := d.dockerClient.Info(ctx)
-	if err != nil {
-		return false
-	}
-
+func (d *dockerRuntime) usernsRemap(info dockersystem.Info) bool {
 	for _, secOpt := range info.SecurityOptions {
 		if strings.Contains(secOpt, "name=userns") {
 			return true
+		}
+	}
+	return false
+}
+
+// rootless: use fuse-overlayfs by default
+// https://github.com/kubernetes-sigs/kind/issues/2275
+func (d *dockerRuntime) mountFuse(info dockersystem.Info) bool {
+	for _, o := range info.SecurityOptions {
+		// o is like "name=seccomp,profile=default", or "name=rootless",
+		csvReader := csv.NewReader(strings.NewReader(o))
+		sliceSlice, err := csvReader.ReadAll()
+		if err != nil {
+			return false
+		}
+		for _, f := range sliceSlice {
+			for _, ff := range f {
+				if ff == "name=rootless" {
+					return true
+				}
+			}
 		}
 	}
 	return false
@@ -673,7 +727,6 @@ func configurePortMappings(portMappings []PortMapping, config *dockercontainer.C
 		}
 		hostConfig.PortBindings[port] = append(hostConfig.PortBindings[port], mapping)
 		exposedPorts[port] = struct{}{}
-		exposedPorts[nat.Port(fmt.Sprintf("%d/tcp", pm.HostPort))] = struct{}{}
 	}
 
 	config.ExposedPorts = exposedPorts
