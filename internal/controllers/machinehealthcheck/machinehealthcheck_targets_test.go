@@ -239,6 +239,23 @@ func TestHealthCheckTargets(t *testing.T) {
 	}
 
 	testMachine := newTestMachine("machine1", namespace, clusterName, "node1", mhcSelector)
+	testMachineWithInfraReady := testMachine.DeepCopy()
+	testMachineWithInfraReady.CreationTimestamp = metav1.NewTime(time.Now().Add(-100 * time.Second))
+	testMachineWithInfraReady.SetConditions(clusterv1.Conditions{
+		{
+			Type:               clusterv1.InfrastructureReadyCondition,
+			Status:             corev1.ConditionTrue,
+			Severity:           clusterv1.ConditionSeverityInfo,
+			LastTransitionTime: metav1.NewTime(testMachineWithInfraReady.CreationTimestamp.Add(50 * time.Second)),
+		},
+	})
+
+	nodeNotYetStartedTargetAndInfraReady := healthCheckTarget{
+		Cluster: cluster,
+		MHC:     testMHC,
+		Machine: testMachineWithInfraReady,
+		Node:    nil,
+	}
 
 	// Targets for when the node has not yet been seen by the Machine controller
 	testMachineCreated1200s := testMachine.DeepCopy()
@@ -273,6 +290,54 @@ func TestHealthCheckTargets(t *testing.T) {
 		nodeMissing: true,
 	}
 	nodeGoneAwayCondition := newFailedHealthCheckCondition(clusterv1.NodeNotFoundReason, "")
+
+	// Create a test MHC without conditions
+	testMHCEmptyConditions := &clusterv1.MachineHealthCheck{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-mhc",
+			Namespace: namespace,
+		},
+		Spec: clusterv1.MachineHealthCheckSpec{
+			Selector: metav1.LabelSelector{
+				MatchLabels: mhcSelector,
+			},
+			ClusterName: clusterName,
+		},
+	}
+	// Target for when the Node has been seen, but has now gone
+	// using MHC without unhealthyConditions
+	nodeGoneAwayEmptyConditions := healthCheckTarget{
+		Cluster: cluster,
+		MHC:     testMHCEmptyConditions,
+		Machine: testMachine.DeepCopy(),
+		Node: &corev1.Node{
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{
+						Type:   corev1.NodeReady,
+						Status: corev1.ConditionFalse,
+					},
+				},
+			},
+		},
+		nodeMissing: true,
+	}
+	nodeEmptyConditions := healthCheckTarget{
+		Cluster: cluster,
+		MHC:     testMHCEmptyConditions,
+		Machine: testMachine.DeepCopy(),
+		Node: &corev1.Node{
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{
+						Type:   corev1.NodeReady,
+						Status: corev1.ConditionFalse,
+					},
+				},
+			},
+		},
+		nodeMissing: false,
+	}
 
 	// Target for when the node has been in an unknown state for shorter than the timeout
 	testNodeUnknown200 := newTestUnhealthyNode("node1", corev1.NodeReady, corev1.ConditionUnknown, 200*time.Second)
@@ -369,6 +434,13 @@ func TestHealthCheckTargets(t *testing.T) {
 			expectedNextCheckTimes:   []time.Duration{timeoutForMachineToHaveNode - 400*time.Second},
 		},
 		{
+			desc:                     "when the node has not yet started for shorter than the timeout, and infra is ready",
+			targets:                  []healthCheckTarget{nodeNotYetStartedTargetAndInfraReady},
+			expectedHealthy:          []healthCheckTarget{},
+			expectedNeedsRemediation: []healthCheckTarget{},
+			expectedNextCheckTimes:   []time.Duration{timeoutForMachineToHaveNode - 50*time.Second},
+		},
+		{
 			desc:                              "when the node has not yet started for longer than the timeout",
 			targets:                           []healthCheckTarget{nodeNotYetStartedTarget1200s},
 			expectedHealthy:                   []healthCheckTarget{},
@@ -444,6 +516,22 @@ func TestHealthCheckTargets(t *testing.T) {
 			expectedHealthy:                   []healthCheckTarget{},
 			expectedNeedsRemediation:          []healthCheckTarget{machineAnnotationRemediation},
 			expectedNeedsRemediationCondition: []clusterv1.Condition{machineAnnotationRemediationCondition},
+			expectedNextCheckTimes:            []time.Duration{},
+		},
+		{
+			desc:                              "health check with empty unhealthy conditions and missing node",
+			targets:                           []healthCheckTarget{nodeGoneAwayEmptyConditions},
+			expectedHealthy:                   []healthCheckTarget{},
+			expectedNeedsRemediation:          []healthCheckTarget{nodeGoneAwayEmptyConditions},
+			expectedNeedsRemediationCondition: []clusterv1.Condition{nodeGoneAwayCondition},
+			expectedNextCheckTimes:            []time.Duration{},
+		},
+		{
+			desc:                              "health check with empty unhealthy conditions and node",
+			targets:                           []healthCheckTarget{nodeEmptyConditions},
+			expectedHealthy:                   []healthCheckTarget{nodeEmptyConditions},
+			expectedNeedsRemediation:          []healthCheckTarget{},
+			expectedNeedsRemediationCondition: []clusterv1.Condition{},
 			expectedNextCheckTimes:            []time.Duration{},
 		},
 	}

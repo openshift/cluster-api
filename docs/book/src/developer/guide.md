@@ -25,6 +25,8 @@ You'll need the [docker daemon][docker] v19.03 or newer available.
 
 [docker]: https://docs.docker.com/install/
 
+On MacOS systems using [Lima](https://github.com/lima-vm/lima) is a viable alternative to Docker Desktop.
+
 ### A Cluster
 
 You'll likely want an existing cluster as your [management cluster][mcluster].
@@ -81,7 +83,7 @@ The generated binary can be found at ./hack/tools/bin/envsubst
 You'll need to deploy [cert-manager] components on your [management cluster][mcluster], using `kubectl`
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.5/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml
 ```
 
 Ensure the cert-manager webhook service is ready before creating the Cluster API components.

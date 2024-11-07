@@ -20,6 +20,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/pkg/errors"
@@ -132,7 +133,7 @@ func (r *DockerMachinePoolReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Always attempt to Patch the DockerMachinePool object and status after each reconciliation.
 	defer func() {
 		if err := patchDockerMachinePool(ctx, patchHelper, dockerMachinePool); err != nil {
-			log.Error(err, "failed to patch DockerMachinePool")
+			log.Error(err, "Failed to patch DockerMachinePool")
 			if rerr == nil {
 				rerr = err
 			}
@@ -177,8 +178,8 @@ func (r *DockerMachinePoolReconciler) SetupWithManager(ctx context.Context, mgr 
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Watches(
 			&expv1.MachinePool{},
-			handler.EnqueueRequestsFromMapFunc(utilexp.MachinePoolToInfrastructureMapFunc(
-				infraexpv1.GroupVersion.WithKind("DockerMachinePool"), ctrl.LoggerFrom(ctx))),
+			handler.EnqueueRequestsFromMapFunc(utilexp.MachinePoolToInfrastructureMapFunc(ctx,
+				infraexpv1.GroupVersion.WithKind("DockerMachinePool"))),
 		).
 		Watches(
 			&infrav1.DockerMachine{},
@@ -302,6 +303,8 @@ func (r *DockerMachinePoolReconciler) reconcileNormal(ctx context.Context, clust
 			dockerMachinePool.Spec.ProviderIDList = append(dockerMachinePool.Spec.ProviderIDList, *dockerMachine.Spec.ProviderID)
 		}
 	}
+	// Ensure the providerIDList is deterministic (getDockerMachines doesn't guarantee a specific order)
+	sort.Strings(dockerMachinePool.Spec.ProviderIDList)
 
 	dockerMachinePool.Status.Replicas = int32(len(dockerMachineList.Items))
 
@@ -378,7 +381,7 @@ func dockerMachineToDockerMachinePool(_ context.Context, o client.Object) []ctrl
 }
 
 // updateStatus updates the Status field for the MachinePool object.
-// It checks for the current state of the replicas and updates the Status of the MachineSet.
+// It checks for the current state of the replicas and updates the Status of the MachinePool.
 func (r *DockerMachinePoolReconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool, dockerMachines []infrav1.DockerMachine) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
@@ -405,10 +408,10 @@ func (r *DockerMachinePoolReconciler) updateStatus(ctx context.Context, cluster 
 	switch {
 	// We are scaling up
 	case readyReplicaCount < desiredReplicas:
-		conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedCondition, clusterv1.ScalingUpReason, clusterv1.ConditionSeverityWarning, "Scaling up MachineSet to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
+		conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedCondition, clusterv1.ScalingUpReason, clusterv1.ConditionSeverityWarning, "Scaling up MachinePool to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
 	// We are scaling down
 	case readyReplicaCount > desiredReplicas:
-		conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedCondition, clusterv1.ScalingDownReason, clusterv1.ConditionSeverityWarning, "Scaling down MachineSet to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
+		conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedCondition, clusterv1.ScalingDownReason, clusterv1.ConditionSeverityWarning, "Scaling down MachinePool to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
 	default:
 		// Make sure last resize operation is marked as completed.
 		// NOTE: we are checking the number of machines ready so we report resize completed only when the machines

@@ -876,13 +876,11 @@ func TestMachineHealthCheck_Reconcile(t *testing.T) {
 	})
 
 	t.Run("when a Machine has no Node ref for longer than the NodeStartupTimeout", func(t *testing.T) {
-		// FIXME: Resolve flaky/failing test
-		t.Skip("skipping until made stable")
 		g := NewWithT(t)
 		cluster := createCluster(g, ns.Name)
 
 		mhc := newMachineHealthCheck(cluster.Namespace, cluster.Name)
-		mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: time.Second}
+		mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 5 * time.Second}
 
 		g.Expect(env.Create(ctx, mhc)).To(Succeed())
 		defer func(do ...client.Object) {
@@ -976,12 +974,11 @@ func TestMachineHealthCheck_Reconcile(t *testing.T) {
 	})
 
 	t.Run("when a Machine's Node has gone away", func(t *testing.T) {
-		// FIXME: Resolve flaky/failing test
-		t.Skip("skipping until made stable")
 		g := NewWithT(t)
 		cluster := createCluster(g, ns.Name)
 
 		mhc := newMachineHealthCheck(cluster.Namespace, cluster.Name)
+		mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 5 * time.Second}
 
 		g.Expect(env.Create(ctx, mhc)).To(Succeed())
 		defer func(do ...client.Object) {
@@ -1068,6 +1065,92 @@ func TestMachineHealthCheck_Reconcile(t *testing.T) {
 			}
 			return
 		}, timeout, 100*time.Millisecond).Should(Equal(1))
+	})
+
+	t.Run("Machine's Node without conditions", func(t *testing.T) {
+		g := NewWithT(t)
+		cluster := createCluster(g, ns.Name)
+
+		mhc := newMachineHealthCheck(cluster.Namespace, cluster.Name)
+		mhc.Spec.UnhealthyConditions = nil
+
+		g.Expect(env.Create(ctx, mhc)).To(Succeed())
+		defer func(do ...client.Object) {
+			g.Expect(env.Cleanup(ctx, do...)).To(Succeed())
+		}(cluster, mhc)
+
+		// Healthy nodes and machines.
+		_, machines, cleanup1 := createMachinesWithNodes(g, cluster,
+			count(3),
+			firstMachineAsControlPlane(),
+			createNodeRefForMachine(true),
+			nodeStatus(corev1.ConditionTrue),
+			machineLabels(mhc.Spec.Selector.MatchLabels),
+		)
+		defer cleanup1()
+
+		targetMachines := make([]string, len(machines))
+		for i, m := range machines {
+			targetMachines[i] = m.Name
+		}
+		sort.Strings(targetMachines)
+
+		// Make sure the status matches.
+		g.Eventually(func() *clusterv1.MachineHealthCheckStatus {
+			err := env.Get(ctx, util.ObjectKey(mhc), mhc)
+			if err != nil {
+				return nil
+			}
+			return &mhc.Status
+		}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+			ExpectedMachines:    3,
+			CurrentHealthy:      3,
+			RemediationsAllowed: 3,
+			ObservedGeneration:  1,
+			Targets:             targetMachines,
+			Conditions: clusterv1.Conditions{
+				{
+					Type:   clusterv1.RemediationAllowedCondition,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		}))
+
+		// Calculate how many Machines have health check succeeded = false.
+		g.Eventually(func() (unhealthy int) {
+			machines := &clusterv1.MachineList{}
+			err := env.List(ctx, machines, client.MatchingLabels{
+				"selector": mhc.Spec.Selector.MatchLabels["selector"],
+			})
+			if err != nil {
+				return -1
+			}
+
+			for i := range machines.Items {
+				if conditions.IsFalse(&machines.Items[i], clusterv1.MachineHealthCheckSucceededCondition) {
+					unhealthy++
+				}
+			}
+			return
+		}).Should(Equal(0))
+
+		// Calculate how many Machines have been remediated.
+		g.Eventually(func() (remediated int) {
+			machines := &clusterv1.MachineList{}
+			err := env.List(ctx, machines, client.MatchingLabels{
+				"selector": mhc.Spec.Selector.MatchLabels["selector"],
+			})
+			if err != nil {
+				return -1
+			}
+
+			for i := range machines.Items {
+				if conditions.IsTrue(&machines.Items[i], clusterv1.MachineOwnerRemediatedCondition) {
+					remediated++
+				}
+			}
+			return
+		}).Should(Equal(0))
 	})
 
 	t.Run("should react when a Node transitions to unhealthy", func(t *testing.T) {
@@ -2406,13 +2489,11 @@ func createMachinesWithNodes(
 		op(o)
 	}
 
-	var (
-		nodes         []*corev1.Node
-		machines      []*clusterv1.Machine
-		infraMachines []*unstructured.Unstructured
-	)
+	nodes := make([]*corev1.Node, 0, o.count)
+	machines := make([]*clusterv1.Machine, 0, o.count)
+	infraMachines := make([]*unstructured.Unstructured, 0, o.count)
 
-	for i := 0; i < o.count; i++ {
+	for i := range o.count {
 		machine := newRunningMachine(c, o.labels)
 		if i == 0 && o.firstMachineAsControlPlane {
 			if machine.Labels == nil {

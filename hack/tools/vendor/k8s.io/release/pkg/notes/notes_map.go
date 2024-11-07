@@ -37,7 +37,7 @@ type MapProvider interface {
 // NewProviderFromInitString creates a new map provider from an initialization string
 func NewProviderFromInitString(initString string) (MapProvider, error) {
 	// If init string starts with gs:// return a CloudStorageProvider
-	if initString[0:5] == object.GcsPrefix {
+	if len(initString) >= 5 && initString[0:5] == object.GcsPrefix {
 		// Currently for illustration purposes
 		return nil, errors.New("CloudStorageProvider is not yet implemented")
 	}
@@ -117,6 +117,9 @@ type ReleaseNotesMap struct {
 	} `json:"releasenote"`
 
 	DataFields map[string]ReleaseNotesDataField `json:"datafields,omitempty" yaml:"datafields,omitempty"`
+
+	// PRBody is the full original PR body.
+	PRBody *string `json:"pr_body,omitempty" yaml:"pr_body,omitempty"`
 }
 
 // ReleaseNotesDataField extra data added to a release note

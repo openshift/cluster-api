@@ -37,6 +37,7 @@ import (
 
 	gogithub "github.com/google/go-github/v58/github"
 	"github.com/nozzle/throttler"
+	"github.com/sergi/go-diff/diffmatchpatch"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -136,6 +137,12 @@ type ReleaseNote struct {
 
 	// DataFields a key indexed map of data fields
 	DataFields map[string]ReleaseNotesDataField `json:"-"`
+
+	// IsMapped is set if the note got modified from a map
+	IsMapped bool `json:"is_mapped,omitempty"`
+
+	// PRBody is the full PR body of the release note
+	PRBody string `json:"pr_body,omitempty"`
 }
 
 type Documentation struct {
@@ -254,7 +261,7 @@ func GatherReleaseNotes(opts *options.Options) (*ReleaseNotes, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing release notes: %w", err)
 	}
-	logrus.Infof("finished gathering release notes in %v", time.Since(startTime))
+	logrus.Infof("Finished gathering release notes in %v", time.Since(startTime))
 
 	return releaseNotes, nil
 }
@@ -515,6 +522,7 @@ func (g *Gatherer) ReleaseNoteFromCommit(result *Result) (*ReleaseNote, error) {
 		DuplicateKind:  isDuplicateKind,
 		ActionRequired: labelExactMatch(pr, "release-note-action-required"),
 		DoNotPublish:   labelExactMatch(pr, "release-note-none"),
+		PRBody:         prBody,
 	}, nil
 }
 
@@ -754,6 +762,7 @@ func (g *Gatherer) ReleaseNoteForPullRequest(prNr int) (*ReleaseNote, error) {
 		ActionRequired: false,
 		DoNotPublish:   doNotPublish,
 		DataFields:     map[string]ReleaseNotesDataField{},
+		PRBody:         prBody,
 	}
 
 	if s != "" {
@@ -803,7 +812,7 @@ func (g *Gatherer) notesForCommit(commit *gogithub.RepositoryCommit) (*Result, e
 		}
 
 		// If we found a valid release note, return the PR, otherwise, take the next one
-		if len(s) > 0 {
+		if s != "" {
 			res := &Result{commit: commit, pullRequest: pr}
 			logrus.Infof("PR #%d seems to contain a release note", pr.GetNumber())
 			// Do not test further PRs for this commit as soon as one PR matched
@@ -1146,6 +1155,16 @@ func (rn *ReleaseNote) ApplyMap(noteMap *ReleaseNotesMap, markdownLinks bool) er
 	logrus.WithFields(logrus.Fields{
 		"pr": rn.PrNumber,
 	}).Debugf("Applying map to note")
+	rn.IsMapped = true
+
+	if noteMap.PRBody != nil && rn.PRBody != "" && rn.PRBody != *noteMap.PRBody {
+		logrus.Warnf("Original PR body of release note mapping changed for PR: #%d", rn.PrNumber)
+
+		dmp := diffmatchpatch.New()
+		diffs := dmp.DiffMain(rn.PRBody, *noteMap.PRBody, false)
+		logrus.Warnf("The diff between actual release note body and mapped one is:\n%s", dmp.DiffPrettyText(diffs))
+	}
+
 	reRenderMarkdown := false
 	if noteMap.ReleaseNote.Author != nil {
 		rn.Author = *noteMap.ReleaseNote.Author
@@ -1226,6 +1245,7 @@ func (rn *ReleaseNote) ToNoteMap() (string, error) {
 	noteMap.ReleaseNote.Feature = &rn.Feature
 	noteMap.ReleaseNote.ActionRequired = &rn.ActionRequired
 	noteMap.ReleaseNote.DoNotPublish = &rn.DoNotPublish
+	noteMap.PRBody = &rn.PRBody
 
 	yamlCode, err := yaml.Marshal(&noteMap)
 	if err != nil {

@@ -63,6 +63,16 @@ k8s::prepareKindestImagesVariables() {
     fi
   fi
 
+  # Tests not focusing on anything and skipping [Conformance] run a clusterctl upgrade test
+  # on the latest kubernetes version as management cluster.
+  if  [[ ${GINKGO_FOCUS:-} == "" ]] && [[ ${GINKGO_SKIP} == *"Conformance"* ]]; then
+    # Note: We do this because we want to specify KUBERNETES_VERSION_LATEST_CI *only* in the e2e config.
+    if [[ -z "${KUBERNETES_VERSION_LATEST_CI:-}" ]]; then
+      KUBERNETES_VERSION_LATEST_CI=$(grep KUBERNETES_VERSION_LATEST_CI: < "$E2E_CONF_FILE" | awk -F'"' '{ print $2}')
+      echo "Defaulting KUBERNETES_VERSION_LATEST_CI to ${KUBERNETES_VERSION_LATEST_CI} to trigger image build (because env var is not set)"
+    fi
+  fi
+
   # Tests not focusing on [PR-Blocking], [K8s-Install] or [K8s-Install-ci-latest],
   # also run upgrade tests so default KUBERNETES_VERSION_UPGRADE_TO and KUBERNETES_VERSION_UPGRADE_FROM
   # to the value in the e2e config if they are not set.
@@ -182,8 +192,13 @@ kind::buildNodeImage() {
 
   # build the node image
   version="${version//+/_}"
-  echo "+ Building kindest/node:$version"
-  kind build node-image --image "kindest/node:$version"
+  if [[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(beta|rc).[0-9]+$ ]]; then
+    echo "+ Building kindest/node:$version using pre-built binaries"
+    kind build node-image --image "kindest/node:$version" "$version"
+  else
+    echo "+ Building kindest/node:$version from source"
+    kind build node-image --image "kindest/node:$version"
+  fi
 
   # move back to Cluster API
   cd "$REPO_ROOT" || exit
@@ -255,9 +270,9 @@ EOL
 # the actual test run less sensible to the network speed.
 kind:prepullAdditionalImages () {
   # Pulling cert manager images so we can pre-load in kind nodes
-  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.14.5"
-  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.14.5"
-  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.14.5"
+  kind::prepullImage "quay.io/jetstack/cert-manager-cainjector:v1.16.0"
+  kind::prepullImage "quay.io/jetstack/cert-manager-webhook:v1.16.0"
+  kind::prepullImage "quay.io/jetstack/cert-manager-controller:v1.16.0"
 }
 
 # kind:prepullImage pre-pull a docker image if no already present locally.

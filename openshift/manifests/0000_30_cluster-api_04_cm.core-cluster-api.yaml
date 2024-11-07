@@ -118,8 +118,6 @@ data:
       resources:
       - clusterclasses
       verbs:
-      - create
-      - delete
       - get
       - list
       - patch
@@ -151,8 +149,6 @@ data:
       - clusters/finalizers
       - clusters/status
       verbs:
-      - create
-      - delete
       - get
       - list
       - patch
@@ -164,8 +160,6 @@ data:
       - clusters
       - clusters/status
       verbs:
-      - create
-      - delete
       - get
       - list
       - patch
@@ -323,6 +317,7 @@ data:
       - get
       - list
       - patch
+      - update
       - watch
     - apiGroups:
       - ""
@@ -330,22 +325,7 @@ data:
       - events
       verbs:
       - create
-      - get
-      - list
       - patch
-      - watch
-    - apiGroups:
-      - ""
-      resources:
-      - nodes
-      verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
     - apiGroups:
       - ""
       resources:
@@ -356,6 +336,7 @@ data:
       - get
       - list
       - patch
+      - update
       - watch
     - apiGroups:
       - ipam.cluster.x-k8s.io
@@ -967,6 +948,46 @@ data:
         targetPort: webhook-server
       selector:
         cluster.x-k8s.io/provider: cluster-api
+    ---
+    apiVersion: admissionregistration.k8s.io/v1beta1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      name: openshift-cluster-api-protect-cluster-apicluster
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        resourceRules:
+        - apiGroups:
+          - infrastructure.cluster.x-k8s.io
+          apiVersions:
+          - '*'
+          operations:
+          - DELETE
+          resources:
+          - cluster-apiclusters
+      paramKind:
+        apiVersion: config.openshift.io/v1
+        kind: Infrastructure
+      validations:
+      - expression: '!(oldObject.metadata.name == params.status.infrastructureName)'
+        message: InfraCluster resources with metadata.name corresponding to the cluster
+          infrastructureName cannot be deleted.
+    ---
+    apiVersion: admissionregistration.k8s.io/v1beta1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      name: openshift-cluster-api-protect-cluster-apicluster
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: openshift-cluster-api
+      paramRef:
+        name: cluster
+        parameterNotFoundAction: Deny
+      policyName: openshift-cluster-api-protect-cluster-apicluster
+      validationActions:
+      - Deny
   metadata: |
     # maps release series of major.minor to cluster-api contract version
     # the contract version may change between minor or major versions, but *not*
@@ -976,6 +997,9 @@ data:
     apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3
     kind: Metadata
     releaseSeries:
+      - major: 1
+        minor: 8
+        contract: v1beta1
       - major: 1
         minor: 7
         contract: v1beta1
@@ -1011,6 +1035,6 @@ metadata:
   labels:
     provider.cluster.x-k8s.io/name: cluster-api
     provider.cluster.x-k8s.io/type: core
-    provider.cluster.x-k8s.io/version: v1.7.2
+    provider.cluster.x-k8s.io/version: 1.8.4
   name: cluster-api
   namespace: openshift-cluster-api

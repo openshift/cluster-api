@@ -62,7 +62,7 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 	defer teardown(t, g, namespace)
 
 	cluster, kcp, genericInfrastructureMachineTemplate := createClusterWithControlPlane(namespace.Name)
-	g.Expect(env.Create(ctx, genericInfrastructureMachineTemplate, client.FieldOwner("manager"))).To(Succeed())
+	g.Expect(env.CreateAndWait(ctx, genericInfrastructureMachineTemplate, client.FieldOwner("manager"))).To(Succeed())
 	kcp.UID = types.UID(util.RandomString(10))
 
 	r := &KubeadmControlPlaneReconciler{
@@ -70,7 +70,7 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 		recorder: record.NewFakeRecorder(32),
 		managementClusterUncached: &fakeManagementCluster{
 			Management: &internal.Management{Client: env},
-			Workload:   fakeWorkloadCluster{},
+			Workload:   &fakeWorkloadCluster{},
 		},
 	}
 	controlPlane := &internal.ControlPlane{
@@ -102,6 +102,11 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.Name).To(Equal(machineList.Items[0].Name))
 	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.APIVersion).To(Equal(bootstrapv1.GroupVersion.String()))
 	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.Kind).To(Equal("KubeadmConfig"))
+
+	kubeadmConfig := &bootstrapv1.KubeadmConfig{}
+	bootstrapRef := machineList.Items[0].Spec.Bootstrap.ConfigRef
+	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: bootstrapRef.Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
+	g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{internal.ControlPlaneKubeletLocalMode: true}))
 }
 
 func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
@@ -128,16 +133,16 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		defer teardown(t, g, namespace)
 
 		cluster, kcp, genericInfrastructureMachineTemplate := createClusterWithControlPlane(namespace.Name)
-		g.Expect(env.Create(ctx, genericInfrastructureMachineTemplate, client.FieldOwner("manager"))).To(Succeed())
+		g.Expect(env.CreateAndWait(ctx, genericInfrastructureMachineTemplate, client.FieldOwner("manager"))).To(Succeed())
 		kcp.UID = types.UID(util.RandomString(10))
 		setKCPHealthy(kcp)
 
 		fmc := &fakeManagementCluster{
 			Machines: collections.New(),
-			Workload: fakeWorkloadCluster{},
+			Workload: &fakeWorkloadCluster{},
 		}
 
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			m, _ := createMachineNodePair(fmt.Sprintf("test-%d", i), cluster, kcp, true)
 			setMachineHealthy(m)
 			fmc.Machines.Insert(m)
@@ -165,6 +170,11 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		// Note: expected length is 1 because only the newly created machine is on API server. Other machines are
 		// in-memory only during the test.
 		g.Expect(controlPlaneMachines.Items).To(HaveLen(1))
+
+		kubeadmConfig := &bootstrapv1.KubeadmConfig{}
+		bootstrapRef := controlPlaneMachines.Items[0].Spec.Bootstrap.ConfigRef
+		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: bootstrapRef.Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
+		g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{internal.ControlPlaneKubeletLocalMode: true}))
 	})
 	t.Run("does not create a control plane Machine if preflight checks fail", func(t *testing.T) {
 		setup := func(t *testing.T, g *WithT) *corev1.Namespace {
@@ -197,14 +207,14 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		cluster.Status.InfrastructureReady = true
 
 		beforeMachines := collections.New()
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			m, _ := createMachineNodePair(fmt.Sprintf("test-%d", i), cluster.DeepCopy(), kcp.DeepCopy(), true)
 			beforeMachines.Insert(m)
 		}
 
 		fmc := &fakeManagementCluster{
 			Machines: beforeMachines.DeepCopy(),
-			Workload: fakeWorkloadCluster{},
+			Workload: &fakeWorkloadCluster{},
 		}
 
 		r := &KubeadmControlPlaneReconciler{
@@ -255,7 +265,7 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 			Client:              fakeClient,
 			SecretCachingClient: fakeClient,
 			managementCluster: &fakeManagementCluster{
-				Workload: fakeWorkloadCluster{},
+				Workload: &fakeWorkloadCluster{},
 			},
 		}
 
@@ -298,7 +308,7 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 			Client:              fakeClient,
 			SecretCachingClient: fakeClient,
 			managementCluster: &fakeManagementCluster{
-				Workload: fakeWorkloadCluster{},
+				Workload: &fakeWorkloadCluster{},
 			},
 		}
 
@@ -340,7 +350,7 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 			Client:              fakeClient,
 			SecretCachingClient: fakeClient,
 			managementCluster: &fakeManagementCluster{
-				Workload: fakeWorkloadCluster{},
+				Workload: &fakeWorkloadCluster{},
 			},
 		}
 

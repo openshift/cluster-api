@@ -65,12 +65,18 @@ func TestClusterClassDefaultNamespaces(t *testing.T) {
 		WithControlPlaneInfrastructureMachineTemplate(
 			builder.InfrastructureMachineTemplate("", "cpInfra1").
 				Build()).
+		WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckClass{
+			RemediationTemplate: &corev1.ObjectReference{},
+		}).
 		WithWorkerMachineDeploymentClasses(
 			*builder.MachineDeploymentClass("aa").
 				WithInfrastructureTemplate(
 					builder.InfrastructureMachineTemplate("", "infra1").Build()).
 				WithBootstrapTemplate(
 					builder.BootstrapTemplate("", "bootstrap1").Build()).
+				WithMachineHealthCheckClass(&clusterv1.MachineHealthCheckClass{
+					RemediationTemplate: &corev1.ObjectReference{},
+				}).
 				Build()).
 		WithWorkerMachinePoolClasses(
 			*builder.MachinePoolClass("aa").
@@ -97,9 +103,11 @@ func TestClusterClassDefaultNamespaces(t *testing.T) {
 	g.Expect(in.Spec.Infrastructure.Ref.Namespace).To(Equal(namespace))
 	g.Expect(in.Spec.ControlPlane.Ref.Namespace).To(Equal(namespace))
 	g.Expect(in.Spec.ControlPlane.MachineInfrastructure.Ref.Namespace).To(Equal(namespace))
+	g.Expect(in.Spec.ControlPlane.MachineHealthCheck.RemediationTemplate.Namespace).To(Equal(namespace))
 	for i := range in.Spec.Workers.MachineDeployments {
 		g.Expect(in.Spec.Workers.MachineDeployments[i].Template.Bootstrap.Ref.Namespace).To(Equal(namespace))
 		g.Expect(in.Spec.Workers.MachineDeployments[i].Template.Infrastructure.Ref.Namespace).To(Equal(namespace))
+		g.Expect(in.Spec.Workers.MachineDeployments[i].MachineHealthCheck.RemediationTemplate.Namespace).To(Equal(namespace))
 	}
 	for i := range in.Spec.Workers.MachinePools {
 		g.Expect(in.Spec.Workers.MachinePools[i].Template.Bootstrap.Ref.Namespace).To(Equal(namespace))
@@ -910,7 +918,7 @@ func TestClusterClassValidation(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "create fail if ControlPlane MachineHealthCheck does not define UnhealthyConditions",
+			name: "create does not fail if ControlPlane MachineHealthCheck does not define UnhealthyConditions",
 			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithInfrastructureClusterTemplate(
 					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
@@ -924,7 +932,7 @@ func TestClusterClassValidation(t *testing.T) {
 					NodeStartupTimeout: &metav1.Duration{
 						Duration: time.Duration(6000000000000)}}).
 				Build(),
-			expectErr: true,
+			expectErr: false,
 		},
 		{
 			name: "create pass if MachineDeployment MachineHealthCheck is valid",
@@ -983,7 +991,7 @@ func TestClusterClassValidation(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "create fail if MachineDeployment MachineHealthCheck does not define UnhealthyConditions",
+			name: "create does not fail if MachineDeployment MachineHealthCheck does not define UnhealthyConditions",
 			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithInfrastructureClusterTemplate(
 					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
@@ -1001,13 +1009,10 @@ func TestClusterClassValidation(t *testing.T) {
 								Duration: time.Duration(6000000000000)}}).
 						Build()).
 				Build(),
-			expectErr: true,
+			expectErr: false,
 		},
 
-		/*
-			UPDATE Tests
-		*/
-
+		// update tests
 		{
 			name: "update pass in case of no changes",
 			old: builder.ClusterClass(metav1.NamespaceDefault, "class1").
@@ -1769,6 +1774,75 @@ func TestClusterClassValidation(t *testing.T) {
 				Build(),
 			expectErr: true,
 		},
+
+		// CEL tests
+		{
+			name: "fail if x-kubernetes-validations has invalid rule: " +
+				"new rule that uses opts that are not available with the current compatibility version",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithVariables(clusterv1.ClusterClassVariable{
+					Name: "someIP",
+					Schema: clusterv1.VariableSchema{
+						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+							Type: "string",
+							XValidations: []clusterv1.ValidationRule{{
+								// Note: IP will be only available if the compatibility version is 1.30
+								Rule: "ip(self).family() == 6",
+							}},
+						},
+					},
+				}).
+				Build(),
+			expectErr: true,
+		},
+		{
+			name: "pass if x-kubernetes-validations has valid rule: " +
+				"pre-existing rule that uses opts that are not available with the current compatibility version, but with the \"max\" env",
+			old: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithVariables(clusterv1.ClusterClassVariable{
+					Name: "someIP",
+					Schema: clusterv1.VariableSchema{
+						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+							Type: "string",
+							XValidations: []clusterv1.ValidationRule{{
+								// Note: IP will be only available if the compatibility version is 1.30
+								Rule: "ip(self).family() == 6",
+							}},
+						},
+					},
+				}).
+				Build(),
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithVariables(clusterv1.ClusterClassVariable{
+					Name: "someIP",
+					Schema: clusterv1.VariableSchema{
+						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+							Type: "string",
+							XValidations: []clusterv1.ValidationRule{{
+								// Note: IP will be only available if the compatibility version is 1.30
+								Rule: "ip(self).family() == 6",
+							}},
+						},
+					},
+				}).
+				Build(),
+			expectErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2425,6 +2499,88 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 				return
 			}
 			g.Expect(err).ToNot(HaveOccurred())
+		})
+	}
+}
+
+func TestValidateAutoscalerAnnotationsForClusterClass(t *testing.T) {
+	tests := []struct {
+		name         string
+		expectErr    bool
+		clusters     []clusterv1.Cluster
+		clusterClass *clusterv1.ClusterClass
+	}{
+		{
+			name:      "replicas is set in one cluster, there is an autoscaler annotation on the matching ClusterClass MDC",
+			expectErr: true,
+			clusters: []clusterv1.Cluster{
+				*builder.Cluster("ns", "cname1").Build(),
+				*builder.Cluster("ns", "cname2").WithTopology(
+					builder.ClusterTopology().
+						WithMachineDeployment(builder.MachineDeploymentTopology("workers1").
+							WithClass("mdc1").
+							WithReplicas(2).
+							Build(),
+						).
+						Build()).
+					Build(),
+			},
+			clusterClass: builder.ClusterClass("ns", "ccname1").
+				WithWorkerMachineDeploymentClasses(*builder.MachineDeploymentClass("mdc1").
+					WithAnnotations(map[string]string{
+						clusterv1.AutoscalerMaxSizeAnnotation: "20",
+					}).
+					Build()).
+				Build(),
+		},
+		{
+			name:      "replicas is set in one cluster, there are no autoscaler annotation on the matching ClusterClass MDC",
+			expectErr: false,
+			clusters: []clusterv1.Cluster{
+				*builder.Cluster("ns", "cname1").Build(),
+				*builder.Cluster("ns", "cname2").WithTopology(
+					builder.ClusterTopology().
+						WithMachineDeployment(builder.MachineDeploymentTopology("workers1").
+							WithClass("mdc1").
+							WithReplicas(2).
+							Build(),
+						).
+						Build()).
+					Build(),
+			},
+			clusterClass: builder.ClusterClass("ns", "ccname1").
+				WithWorkerMachineDeploymentClasses(*builder.MachineDeploymentClass("mdc1").
+					Build()).
+				Build(),
+		},
+		{
+			name:      "replicas is set in one cluster, but the ClusterClass has no annotations",
+			expectErr: false,
+			clusters: []clusterv1.Cluster{
+				*builder.Cluster("ns", "cname1").Build(),
+				*builder.Cluster("ns", "cname2").WithTopology(
+					builder.ClusterTopology().
+						WithMachineDeployment(builder.MachineDeploymentTopology("workers1").
+							WithClass("mdc1").
+							WithReplicas(2).
+							Build(),
+						).
+						Build()).
+					Build(),
+			},
+			clusterClass: builder.ClusterClass("ns", "ccname1").Build(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			err := validateAutoscalerAnnotationsForClusterClass(tt.clusters, tt.clusterClass)
+			if tt.expectErr {
+				g.Expect(err).ToNot(BeEmpty())
+			} else {
+				g.Expect(err).To(BeEmpty())
+			}
 		})
 	}
 }
