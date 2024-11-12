@@ -24,19 +24,6 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-var _ = Describe("When testing Cluster API working on self-hosted clusters", func() {
-	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
-		return SelfHostedSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			InfrastructureProvider: ptr.To("docker"),
-		}
-	})
-})
-
 var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass [ClusterClass]", func() {
 	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
 		return SelfHostedSpecInput{
@@ -77,10 +64,11 @@ var _ = Describe("When testing Cluster API working on single-node self-hosted cl
 			BootstrapClusterProxy:    bootstrapClusterProxy,
 			ArtifactFolder:           artifactFolder,
 			SkipCleanup:              skipCleanup,
-			Flavor:                   "topology-single-node-cluster",
+			Flavor:                   "topology-no-workers",
 			InfrastructureProvider:   ptr.To("docker"),
 			ControlPlaneMachineCount: ptr.To[int64](1),
-			WorkerMachineCount:       ptr.To[int64](0),
+			// Note: the used template is not using the corresponding variable.
+			WorkerMachineCount: ptr.To[int64](0),
 		}
 	})
 })

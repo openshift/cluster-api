@@ -22,31 +22,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-logr/logr"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
-	"sigs.k8s.io/cluster-api/controllers/remote"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/controllers/external"
+	externalfake "sigs.k8s.io/cluster-api/controllers/external/fake"
+	"sigs.k8s.io/cluster-api/internal/util/cache"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 func TestWatches(t *testing.T) {
@@ -109,6 +112,11 @@ func TestWatches(t *testing.T) {
 
 	g.Expect(env.Create(ctx, testCluster)).To(Succeed())
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
+	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+	testClusterOriginal := client.MergeFrom(testCluster.DeepCopy())
+	testCluster.Status.InfrastructureReady = true
+	g.Expect(env.Status().Patch(ctx, testCluster, testClusterOriginal)).To(Succeed())
+
 	g.Expect(env.Create(ctx, defaultBootstrap)).To(Succeed())
 	g.Expect(env.Create(ctx, node)).To(Succeed())
 	g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
@@ -405,6 +413,12 @@ func TestMachine_Reconcile(t *testing.T) {
 	}
 
 	g.Expect(env.Create(ctx, testCluster)).To(Succeed())
+	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
+	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+	testClusterOriginal := client.MergeFrom(testCluster.DeepCopy())
+	testCluster.Status.InfrastructureReady = true
+	g.Expect(env.Status().Patch(ctx, testCluster, testClusterOriginal)).To(Succeed())
+
 	g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 	g.Expect(env.Create(ctx, defaultBootstrap)).To(Succeed())
 
@@ -623,6 +637,13 @@ func TestMachineOwnerReference(t *testing.T) {
 			},
 			ClusterName: "test-cluster",
 		},
+		Status: clusterv1.MachineStatus{
+			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedV1Beta2Condition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.NotPausedV1Beta2Reason,
+			}}},
+		},
 	}
 
 	machineValidMachine := &clusterv1.Machine{
@@ -646,6 +667,13 @@ func TestMachineOwnerReference(t *testing.T) {
 				DataSecretName: &bootstrapData,
 			},
 			ClusterName: "test-cluster",
+		},
+		Status: clusterv1.MachineStatus{
+			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedV1Beta2Condition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.NotPausedV1Beta2Reason,
+			}}},
 		},
 	}
 
@@ -739,8 +767,9 @@ func TestMachineOwnerReference(t *testing.T) {
 				machineValidControlled,
 			).WithStatusSubresource(&clusterv1.Machine{}).Build()
 			mr := &Reconciler{
-				Client:    c,
-				APIReader: c,
+				Client:       c,
+				APIReader:    c,
+				ClusterCache: clustercache.NewFakeClusterCache(c, client.ObjectKeyFromObject(testCluster)),
 			}
 
 			key := client.ObjectKey{Namespace: tc.m.Namespace, Name: tc.m.Name}
@@ -810,10 +839,12 @@ func TestReconcileRequest(t *testing.T) {
 		err    bool
 	}
 	testCases := []struct {
+		name     string
 		machine  clusterv1.Machine
 		expected expected
 	}{
 		{
+			name: "Machine should be created",
 			machine: clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "created",
@@ -842,6 +873,7 @@ func TestReconcileRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "Machine should be updated",
 			machine: clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "updated",
@@ -870,6 +902,7 @@ func TestReconcileRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "Machine should be deleted",
 			machine: clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "deleted",
@@ -897,9 +930,8 @@ func TestReconcileRequest(t *testing.T) {
 		},
 	}
 
-	for i := range testCases {
-		tc := testCases[i]
-		t.Run("machine should be "+tc.machine.Name, func(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
 
 			clientFake := fake.NewClientBuilder().WithObjects(
@@ -911,9 +943,16 @@ func TestReconcileRequest(t *testing.T) {
 			).WithStatusSubresource(&clusterv1.Machine{}).WithIndex(&corev1.Node{}, index.NodeProviderIDField, index.NodeByProviderID).Build()
 
 			r := &Reconciler{
-				Client:   clientFake,
-				Tracker:  remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), clientFake, clientFake, scheme.Scheme, client.ObjectKey{Name: testCluster.Name, Namespace: testCluster.Namespace}),
-				ssaCache: ssa.NewCache(),
+				Client:               clientFake,
+				ClusterCache:         clustercache.NewFakeClusterCache(clientFake, client.ObjectKey{Name: testCluster.Name, Namespace: testCluster.Namespace}),
+				ssaCache:             ssa.NewCache(),
+				recorder:             record.NewFakeRecorder(10),
+				reconcileDeleteCache: cache.New[cache.ReconcileEntry](),
+				externalTracker: external.ObjectTracker{
+					Controller: externalfake.Controller{},
+					Cache:      &informertest.FakeInformers{},
+					Scheme:     clientFake.Scheme(),
+				},
 			}
 
 			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: util.ObjectKey(&tc.machine)})
@@ -1011,6 +1050,11 @@ func TestMachineConditions(t *testing.T) {
 				Name: "test",
 			},
 			ObservedGeneration: 1,
+			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedV1Beta2Condition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.NotPausedV1Beta2Reason,
+			}}},
 		},
 	}
 
@@ -1178,7 +1222,8 @@ func TestMachineConditions(t *testing.T) {
 				tt.beforeFunc(bootstrap, infra, m)
 			}
 
-			objs := []client.Object{&testCluster, m, node,
+			objs := []client.Object{
+				&testCluster, m, node,
 				builder.GenericInfrastructureMachineCRD.DeepCopy(), infra,
 				builder.GenericBootstrapConfigCRD.DeepCopy(), bootstrap,
 			}
@@ -1190,10 +1235,15 @@ func TestMachineConditions(t *testing.T) {
 				Build()
 
 			r := &Reconciler{
-				Client:   clientFake,
-				recorder: record.NewFakeRecorder(10),
-				Tracker:  remote.NewTestClusterCacheTracker(logr.New(log.NullLogSink{}), clientFake, clientFake, scheme.Scheme, client.ObjectKey{Name: testCluster.Name, Namespace: testCluster.Namespace}),
-				ssaCache: ssa.NewCache(),
+				Client:       clientFake,
+				recorder:     record.NewFakeRecorder(10),
+				ClusterCache: clustercache.NewFakeClusterCache(clientFake, client.ObjectKey{Name: testCluster.Name, Namespace: testCluster.Namespace}),
+				ssaCache:     ssa.NewCache(),
+				externalTracker: external.ObjectTracker{
+					Controller: externalfake.Controller{},
+					Cache:      &informertest.FakeInformers{},
+					Scheme:     clientFake.Scheme(),
+				},
 			}
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: util.ObjectKey(&machine)})
@@ -1207,95 +1257,6 @@ func TestMachineConditions(t *testing.T) {
 			g.Expect(r.Client.Get(ctx, client.ObjectKeyFromObject(&machine), m)).ToNot(HaveOccurred())
 
 			assertConditions(t, m, tt.conditionsToAssert...)
-		})
-	}
-}
-
-func TestReconcileDeleteExternal(t *testing.T) {
-	testCluster := &clusterv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceDefault, Name: "test-cluster"},
-	}
-
-	bootstrapConfig := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"kind":       "BootstrapConfig",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
-			"metadata": map[string]interface{}{
-				"name":      "delete-bootstrap",
-				"namespace": metav1.NamespaceDefault,
-			},
-		},
-	}
-
-	machine := &clusterv1.Machine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "delete",
-			Namespace: metav1.NamespaceDefault,
-		},
-		Spec: clusterv1.MachineSpec{
-			ClusterName: "test-cluster",
-			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "BootstrapConfig",
-					Name:       "delete-bootstrap",
-				},
-			},
-		},
-	}
-
-	testCases := []struct {
-		name            string
-		bootstrapExists bool
-		expectError     bool
-		expected        *unstructured.Unstructured
-	}{
-		{
-			name:            "should continue to reconcile delete of external refs if exists",
-			bootstrapExists: true,
-			expected: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
-					"kind":       "BootstrapConfig",
-					"metadata": map[string]interface{}{
-						"name":            "delete-bootstrap",
-						"namespace":       metav1.NamespaceDefault,
-						"resourceVersion": "999",
-					},
-				},
-			},
-			expectError: false,
-		},
-		{
-			name:            "should no longer reconcile deletion of external refs since it doesn't exist",
-			bootstrapExists: false,
-			expected:        nil,
-			expectError:     false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			g := NewWithT(t)
-
-			objs := []client.Object{testCluster, machine}
-
-			if tc.bootstrapExists {
-				objs = append(objs, bootstrapConfig)
-			}
-
-			c := fake.NewClientBuilder().WithObjects(objs...).Build()
-			r := &Reconciler{
-				Client: c,
-			}
-
-			obj, err := r.reconcileDeleteExternal(ctx, testCluster, machine, machine.Spec.Bootstrap.ConfigRef)
-			if tc.expectError {
-				g.Expect(err).To(HaveOccurred())
-			} else {
-				g.Expect(err).ToNot(HaveOccurred())
-			}
-			g.Expect(obj).To(BeComparableTo(tc.expected))
 		})
 	}
 }
@@ -1325,11 +1286,20 @@ func TestRemoveMachineFinalizerAfterDeleteReconcile(t *testing.T) {
 			},
 			Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 		},
+		Status: clusterv1.MachineStatus{
+			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedV1Beta2Condition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.NotPausedV1Beta2Reason,
+			}}},
+		},
 	}
 	key := client.ObjectKey{Namespace: m.Namespace, Name: m.Name}
-	c := fake.NewClientBuilder().WithObjects(testCluster, m).WithStatusSubresource(&clusterv1.Machine{}).Build()
+	c := fake.NewClientBuilder().WithObjects(testCluster, m, builder.GenericInfrastructureMachineCRD.DeepCopy()).WithStatusSubresource(&clusterv1.Machine{}).Build()
 	mr := &Reconciler{
-		Client: c,
+		Client:               c,
+		ClusterCache:         clustercache.NewFakeClusterCache(c, client.ObjectKeyFromObject(testCluster)),
+		reconcileDeleteCache: cache.New[cache.ReconcileEntry](),
 	}
 	_, err := mr.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 	g.Expect(err).ToNot(HaveOccurred())
@@ -1384,12 +1354,8 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 				},
 
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						{
-							Type:               clusterv1.DrainingSucceededCondition,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-(time.Second * 70)).UTC()},
-						},
+					Deletion: &clusterv1.MachineDeletionStatus{
+						NodeDrainStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 70)).UTC()},
 					},
 				},
 			},
@@ -1410,12 +1376,8 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					NodeDrainTimeout:  &metav1.Duration{Duration: time.Second * 60},
 				},
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						{
-							Type:               clusterv1.DrainingSucceededCondition,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
-						},
+					Deletion: &clusterv1.MachineDeletionStatus{
+						NodeDrainStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
 					},
 				},
 			},
@@ -1435,12 +1397,8 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						{
-							Type:               clusterv1.DrainingSucceededCondition,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
-						},
+					Deletion: &clusterv1.MachineDeletionStatus{
+						NodeDrainStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
 					},
 				},
 			},
@@ -1463,6 +1421,404 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 			g.Expect(got).To(Equal(tt.expected))
 		})
 	}
+}
+
+func TestDrainNode(t *testing.T) {
+	g := NewWithT(t)
+
+	testCluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "test-cluster",
+		},
+	}
+	testMachine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "test-machine",
+		},
+	}
+	nodeDrainStartTime, err := time.Parse(time.RFC3339, "2024-10-09T16:13:59Z")
+	g.Expect(err).ToNot(HaveOccurred())
+
+	tests := []struct {
+		name                string
+		nodeName            string
+		node                *corev1.Node
+		pods                []*corev1.Pod
+		nodeDrainStartTime  *metav1.Time
+		wantCondition       *clusterv1.Condition
+		wantResult          ctrl.Result
+		wantErr             string
+		wantDeletingReason  string
+		wantDeletingMessage string
+	}{
+		{
+			name:     "Node does not exist, no-op",
+			nodeName: "node-does-not-exist",
+		},
+		{
+			name:     "Node does exist, should be cordoned",
+			nodeName: "node-1",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-1",
+				},
+			},
+		},
+		{
+			name:     "Node does exist, should stay cordoned",
+			nodeName: "node-1",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-1",
+				},
+				Spec: corev1.NodeSpec{
+					Unschedulable: true,
+				},
+			},
+		},
+		{
+			name:     "Node does exist, only Pods that don't have to be drained",
+			nodeName: "node-1",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-1",
+				},
+				Spec: corev1.NodeSpec{
+					Unschedulable: true,
+				},
+			},
+			pods: []*corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-1-skip-mirror-pod",
+						Namespace: "test-namespace",
+						Annotations: map[string]string{
+							corev1.MirrorPodAnnotationKey: "some-value",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-4-skip-daemonset-pod",
+						Namespace: "test-namespace",
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								Kind:       "DaemonSet",
+								Name:       "daemonset-does-exist",
+								Controller: ptr.To(true),
+							},
+						},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodRunning,
+					},
+				},
+			},
+		},
+		{
+			name:     "Node does exist, some Pods have to be drained",
+			nodeName: "node-1",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-1",
+				},
+				Spec: corev1.NodeSpec{
+					Unschedulable: true,
+				},
+			},
+			pods: []*corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-1-skip-mirror-pod",
+						Namespace: "test-namespace",
+						Annotations: map[string]string{
+							corev1.MirrorPodAnnotationKey: "some-value",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-2-delete-running-deployment-pod",
+						Namespace: "test-namespace",
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								Kind:       "Deployment",
+								Controller: ptr.To(true),
+							},
+						},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodRunning,
+					},
+				},
+			},
+			nodeDrainStartTime: &metav1.Time{Time: nodeDrainStartTime},
+			wantResult:         ctrl.Result{RequeueAfter: 20 * time.Second},
+			wantCondition: &clusterv1.Condition{
+				Type:     clusterv1.DrainingSucceededCondition,
+				Status:   corev1.ConditionFalse,
+				Severity: clusterv1.ConditionSeverityInfo,
+				Reason:   clusterv1.DrainingReason,
+				Message: `Drain not completed yet (started at 2024-10-09T16:13:59Z):
+* Pods with deletionTimestamp that still exist: test-namespace/pod-2-delete-running-deployment-pod`,
+			},
+			wantDeletingReason: clusterv1.MachineDeletingDrainingNodeV1Beta2Reason,
+			wantDeletingMessage: `Drain not completed yet (started at 2024-10-09T16:13:59Z):
+* Pods with deletionTimestamp that still exist: test-namespace/pod-2-delete-running-deployment-pod`,
+		},
+		{
+			name:     "Node does exist but is unreachable, no Pods have to be drained because they all have old deletionTimestamps",
+			nodeName: "node-1",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-1",
+				},
+				Spec: corev1.NodeSpec{
+					Unschedulable: true,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{ // unreachable.
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionUnknown,
+						},
+					},
+				},
+			},
+			pods: []*corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "pod-1-skip-pod-old-deletionTimestamp",
+						Namespace:         "test-namespace",
+						DeletionTimestamp: &metav1.Time{Time: time.Now().Add(time.Duration(1) * time.Hour * -1)},
+						Finalizers:        []string{"block-deletion"},
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			// Setting NodeName here to avoid noise in the table above.
+			for i := range tt.pods {
+				tt.pods[i].Spec.NodeName = tt.nodeName
+			}
+
+			// Making a copy because drainNode will modify the Machine.
+			testMachine := testMachine.DeepCopy()
+
+			var objs []client.Object
+			objs = append(objs, testCluster, testMachine)
+			c := fake.NewClientBuilder().
+				WithObjects(objs...).
+				Build()
+
+			var remoteObjs []client.Object
+			if tt.node != nil {
+				remoteObjs = append(remoteObjs, tt.node)
+			}
+			for _, p := range tt.pods {
+				remoteObjs = append(remoteObjs, p)
+			}
+			remoteObjs = append(remoteObjs, &appsv1.DaemonSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "daemonset-does-exist",
+					Namespace: "test-namespace",
+				},
+			}, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-namespace",
+					Labels: map[string]string{
+						"kubernetes.io/metadata.name": "test-namespace",
+					},
+				},
+			})
+			remoteClient := fake.NewClientBuilder().
+				WithIndex(&corev1.Pod{}, "spec.nodeName", podByNodeName).
+				WithObjects(remoteObjs...).
+				Build()
+
+			r := &Reconciler{
+				Client:               c,
+				ClusterCache:         clustercache.NewFakeClusterCache(remoteClient, client.ObjectKeyFromObject(testCluster)),
+				reconcileDeleteCache: cache.New[cache.ReconcileEntry](),
+			}
+
+			testMachine.Status.NodeRef = &corev1.ObjectReference{
+				Name: tt.nodeName,
+			}
+			if tt.nodeDrainStartTime != nil {
+				testMachine.Status.Deletion = &clusterv1.MachineDeletionStatus{
+					NodeDrainStartTime: tt.nodeDrainStartTime,
+				}
+			}
+
+			s := &scope{
+				cluster: testCluster,
+				machine: testMachine,
+			}
+
+			res, err := r.drainNode(ctx, s)
+			g.Expect(res).To(BeComparableTo(tt.wantResult))
+			if tt.wantErr == "" {
+				g.Expect(err).ToNot(HaveOccurred())
+			} else {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(BeComparableTo(tt.wantErr))
+			}
+
+			gotCondition := conditions.Get(testMachine, clusterv1.DrainingSucceededCondition)
+			if tt.wantCondition == nil {
+				g.Expect(gotCondition).To(BeNil())
+			} else {
+				g.Expect(gotCondition).ToNot(BeNil())
+				// Cleanup for easier comparison
+				gotCondition.LastTransitionTime = metav1.Time{}
+				g.Expect(gotCondition).To(BeComparableTo(tt.wantCondition))
+			}
+
+			g.Expect(s.deletingReason).To(Equal(tt.wantDeletingReason))
+			g.Expect(s.deletingMessage).To(Equal(tt.wantDeletingMessage))
+
+			// If there is a Node it should be cordoned.
+			if tt.node != nil {
+				gotNode := &corev1.Node{}
+				g.Expect(remoteClient.Get(ctx, client.ObjectKeyFromObject(tt.node), gotNode)).To(Succeed())
+				g.Expect(gotNode.Spec.Unschedulable).To(BeTrue())
+			}
+		})
+	}
+}
+
+func TestDrainNode_withCaching(t *testing.T) {
+	g := NewWithT(t)
+
+	testCluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "test-cluster",
+		},
+	}
+	nodeDrainStartTime, err := time.Parse(time.RFC3339, "2024-10-09T16:13:59Z")
+	g.Expect(err).ToNot(HaveOccurred())
+	testMachine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "test-machine",
+		},
+		Status: clusterv1.MachineStatus{
+			NodeRef: &corev1.ObjectReference{
+				Name: "node-1",
+			},
+			Deletion: &clusterv1.MachineDeletionStatus{
+				NodeDrainStartTime: &metav1.Time{Time: nodeDrainStartTime},
+			},
+		},
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node-1",
+		},
+		Spec: corev1.NodeSpec{
+			Unschedulable: true,
+		},
+	}
+
+	pods := []*corev1.Pod{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pod-delete-running-deployment-pod",
+				Namespace: "test-namespace",
+				Finalizers: []string{
+					// Add a finalizer so the Pod doesn't go away after eviction.
+					"cluster.x-k8s.io/block",
+				},
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						Kind:       "Deployment",
+						Controller: ptr.To(true),
+					},
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "node-1",
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+			},
+		},
+	}
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-namespace",
+			Labels: map[string]string{
+				"kubernetes.io/metadata.name": "test-namespace",
+			},
+		},
+	}
+
+	var objs []client.Object
+	objs = append(objs, testCluster, testMachine)
+	c := fake.NewClientBuilder().
+		WithObjects(objs...).
+		Build()
+
+	remoteObjs := []client.Object{node, ns}
+	for _, p := range pods {
+		remoteObjs = append(remoteObjs, p)
+	}
+	remoteClient := fake.NewClientBuilder().
+		WithIndex(&corev1.Pod{}, "spec.nodeName", podByNodeName).
+		WithObjects(remoteObjs...).
+		Build()
+
+	reconcileDeleteCache := cache.New[cache.ReconcileEntry]()
+	r := &Reconciler{
+		Client:               c,
+		ClusterCache:         clustercache.NewFakeClusterCache(remoteClient, client.ObjectKeyFromObject(testCluster)),
+		reconcileDeleteCache: reconcileDeleteCache,
+	}
+
+	s := &scope{
+		cluster: testCluster,
+		machine: testMachine,
+	}
+
+	// The first reconcile will cordon the Node, evict the one Pod running on the Node and then requeue.
+	res, err := r.drainNode(ctx, s)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(res).To(BeComparableTo(ctrl.Result{RequeueAfter: drainRetryInterval}))
+	// Condition should report the one Pod that has been evicted.
+	gotCondition := conditions.Get(testMachine, clusterv1.DrainingSucceededCondition)
+	g.Expect(gotCondition).ToNot(BeNil())
+	// Cleanup for easier comparison
+	gotCondition.LastTransitionTime = metav1.Time{}
+	g.Expect(gotCondition).To(BeComparableTo(&clusterv1.Condition{
+		Type:     clusterv1.DrainingSucceededCondition,
+		Status:   corev1.ConditionFalse,
+		Severity: clusterv1.ConditionSeverityInfo,
+		Reason:   clusterv1.DrainingReason,
+		Message: `Drain not completed yet (started at 2024-10-09T16:13:59Z):
+* Pods with deletionTimestamp that still exist: test-namespace/pod-delete-running-deployment-pod`,
+	}))
+	g.Expect(s.deletingReason).To(Equal(clusterv1.MachineDeletingDrainingNodeV1Beta2Reason))
+	g.Expect(s.deletingMessage).To(Equal(`Drain not completed yet (started at 2024-10-09T16:13:59Z):
+* Pods with deletionTimestamp that still exist: test-namespace/pod-delete-running-deployment-pod`))
+
+	// Node should be cordoned.
+	gotNode := &corev1.Node{}
+	g.Expect(remoteClient.Get(ctx, client.ObjectKeyFromObject(node), gotNode)).To(Succeed())
+	g.Expect(gotNode.Spec.Unschedulable).To(BeTrue())
+
+	// Drain cache should have an entry for the Machine
+	gotEntry, ok := reconcileDeleteCache.Has(cache.NewReconcileEntryKey(testMachine))
+	g.Expect(ok).To(BeTrue())
+	g.Expect(gotEntry.Request.Namespace).To(Equal(testMachine.Namespace))
+	g.Expect(gotEntry.Request.Name).To(Equal(testMachine.Name))
 }
 
 func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
@@ -1510,12 +1866,8 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 				},
 
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						{
-							Type:               clusterv1.VolumeDetachSucceededCondition,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-(time.Second * 60)).UTC()},
-						},
+					Deletion: &clusterv1.MachineDeletionStatus{
+						WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 60)).UTC()},
 					},
 				},
 			},
@@ -1536,12 +1888,8 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					NodeVolumeDetachTimeout: &metav1.Duration{Duration: time.Second * 60},
 				},
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						{
-							Type:               clusterv1.VolumeDetachSucceededCondition,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
-						},
+					Deletion: &clusterv1.MachineDeletionStatus{
+						WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
 					},
 				},
 			},
@@ -1561,12 +1909,8 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						{
-							Type:               clusterv1.VolumeDetachSucceededCondition,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
-						},
+					Deletion: &clusterv1.MachineDeletionStatus{
+						WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
 					},
 				},
 			},
@@ -1592,28 +1936,86 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 }
 
 func TestShouldWaitForNodeVolumes(t *testing.T) {
+	g := NewWithT(t)
+
+	waitForNodeVolumeDetachStartTime, err := time.Parse(time.RFC3339, "2024-10-09T16:13:59Z")
+	g.Expect(err).ToNot(HaveOccurred())
+
 	testCluster := &clusterv1.Cluster{
 		TypeMeta:   metav1.TypeMeta{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String()},
 		ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceDefault, Name: "test-cluster"},
 	}
 
+	nodeName := "test-node"
+
+	persistentVolume := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-pv",
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			ClaimRef: &corev1.ObjectReference{
+				Kind:      "PersistentVolumeClaim",
+				Namespace: "default",
+				Name:      "test-pvc",
+			},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					VolumeHandle: "foo",
+					Driver:       "dummy",
+				},
+			},
+		},
+	}
+
+	persistentVolumeWithoutClaim := persistentVolume.DeepCopy()
+	persistentVolumeWithoutClaim.Spec.ClaimRef.Kind = "NotAPVC"
+
+	volumeAttachment := &storagev1.VolumeAttachment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-va",
+		},
+		Spec: storagev1.VolumeAttachmentSpec{
+			NodeName: nodeName,
+			Source: storagev1.VolumeAttachmentSource{
+				PersistentVolumeName: &persistentVolume.Name,
+			},
+		},
+		Status: storagev1.VolumeAttachmentStatus{
+			Attached: true,
+		},
+	}
+	testMachine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: metav1.NamespaceDefault,
+		},
+		Status: clusterv1.MachineStatus{
+			Deletion: &clusterv1.MachineDeletionStatus{
+				WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: waitForNodeVolumeDetachStartTime},
+			},
+		},
+	}
+
 	attachedVolumes := []corev1.AttachedVolume{
 		{
-			Name:       "test-volume",
+			Name:       corev1.UniqueVolumeName(fmt.Sprintf("kubernetes.io/csi/%s^%s", persistentVolume.Spec.PersistentVolumeSource.CSI.Driver, persistentVolume.Spec.PersistentVolumeSource.CSI.VolumeHandle)),
 			DevicePath: "test-path",
 		},
 	}
 
 	tests := []struct {
-		name     string
-		node     *corev1.Node
-		expected bool
+		name                    string
+		node                    *corev1.Node
+		remoteObjects           []client.Object
+		expected                ctrl.Result
+		expectedDeletingReason  string
+		expectedDeletingMessage string
 	}{
 		{
-			name: "Node has volumes attached",
+			name: "Node has volumes attached according to node status",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
+					Name: nodeName,
 				},
 				Status: corev1.NodeStatus{
 					Conditions: []corev1.NodeCondition{
@@ -1625,13 +2027,118 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 					VolumesAttached: attachedVolumes,
 				},
 			},
-			expected: true,
+			remoteObjects: []client.Object{
+				persistentVolume,
+			},
+			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
+* PersistentVolumeClaims: default/test-pvc`,
 		},
 		{
-			name: "Node has no volumes attached",
+			name: "Node has volumes attached according to node status but the pv does not reference a PersistentVolumeClaim",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
+					Name: nodeName,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+					VolumesAttached: attachedVolumes,
+				},
+			},
+			remoteObjects: []client.Object{
+				persistentVolumeWithoutClaim,
+			},
+			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
+* PersistentVolumes without a .spec.claimRef to a PersistentVolumeClaim: test-pv`,
+		},
+		{
+			name: "Node has volumes attached according to node status but without a pv",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+					VolumesAttached: attachedVolumes,
+				},
+			},
+			remoteObjects:          []client.Object{},
+			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
+* Node with .status.volumesAttached entries not matching a PersistentVolume: kubernetes.io/csi/dummy^foo`,
+		},
+		{
+			name: "Node has volumes attached according to node status but its from a daemonset pod which gets ignored",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+					VolumesAttached: attachedVolumes,
+				},
+			},
+			remoteObjects: []client.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pod",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								Kind:       appsv1.SchemeGroupVersion.WithKind("DaemonSet").Kind,
+								Name:       "test-ds",
+								Controller: ptr.To(true),
+							},
+						},
+					},
+					Spec: corev1.PodSpec{
+						NodeName: nodeName,
+						Volumes: []corev1.Volume{
+							{
+								Name: "test-pvc",
+								VolumeSource: corev1.VolumeSource{
+									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+										ClaimName: "test-pvc",
+									},
+								},
+							},
+						},
+					},
+				},
+				&appsv1.DaemonSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-ds",
+						Namespace: "default",
+					},
+				},
+				persistentVolume,
+			},
+			expected: ctrl.Result{},
+		},
+		{
+			name: "Node has volumes attached according to volumeattachments",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
 				},
 				Status: corev1.NodeStatus{
 					Conditions: []corev1.NodeCondition{
@@ -1642,7 +2149,155 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 					},
 				},
 			},
-			expected: false,
+			remoteObjects: []client.Object{
+				volumeAttachment,
+				persistentVolume,
+			},
+			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
+* PersistentVolumeClaims: default/test-pvc`,
+		},
+		{
+			name: "Node has volumes attached according to volumeattachments but without a pv",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+			remoteObjects: []client.Object{
+				volumeAttachment,
+			},
+			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
+* VolumeAttachment with .spec.source.persistentVolumeName not matching a PersistentVolume: test-pv`,
+		},
+		{
+			name: "Node has volumes attached according to volumeattachments but its from a daemonset pod which gets ignored",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+			remoteObjects: []client.Object{
+				volumeAttachment,
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pod",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								Kind:       appsv1.SchemeGroupVersion.WithKind("DaemonSet").Kind,
+								Name:       "test-ds",
+								Controller: ptr.To(true),
+							},
+						},
+					},
+					Spec: corev1.PodSpec{
+						NodeName: nodeName,
+						Volumes: []corev1.Volume{
+							{
+								Name: "test-pvc",
+								VolumeSource: corev1.VolumeSource{
+									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+										ClaimName: "test-pvc",
+									},
+								},
+							},
+						},
+					},
+				},
+				&appsv1.DaemonSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-ds",
+						Namespace: "default",
+					},
+				},
+				persistentVolume,
+			},
+			expected: ctrl.Result{},
+		},
+		{
+			name: "Node has volumes attached from a Pod which is in deletion",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+					VolumesAttached: attachedVolumes,
+				},
+			},
+			remoteObjects: []client.Object{
+				volumeAttachment,
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "test-pod",
+						Namespace:         "default",
+						DeletionTimestamp: ptr.To(metav1.NewTime(time.Now().Add(time.Hour * 24 * -1))),
+						Finalizers: []string{
+							"prevent-removal",
+						},
+					},
+					Spec: corev1.PodSpec{
+						NodeName: nodeName,
+						Volumes: []corev1.Volume{
+							{
+								Name: "test-pvc",
+								VolumeSource: corev1.VolumeSource{
+									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+										ClaimName: "test-pvc",
+									},
+								},
+							},
+						},
+					},
+				},
+				persistentVolume,
+			},
+			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
+* PersistentVolumeClaims: default/test-pvc`,
+		},
+		{
+			name: "Node has no volumes attached",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:   corev1.NodeReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expected: ctrl.Result{},
 		},
 		{
 			name: "Node is unreachable and has volumes attached",
@@ -1660,7 +2315,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 					VolumesAttached: attachedVolumes,
 				},
 			},
-			expected: false,
+			expected: ctrl.Result{},
 		},
 		{
 			name: "Node is unreachable and has no volumes attached",
@@ -1677,28 +2332,55 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 					},
 				},
 			},
-			expected: false,
+			expected: ctrl.Result{},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			var objs []client.Object
-			objs = append(objs, testCluster, tt.node)
+			fakeClient := fake.NewClientBuilder().WithObjects(testCluster).Build()
 
-			c := fake.NewClientBuilder().WithObjects(objs...).Build()
-			tracker := remote.NewTestClusterCacheTracker(ctrl.Log, c, c, fakeScheme, client.ObjectKeyFromObject(testCluster))
+			var remoteObjects []client.Object
+			remoteObjects = append(remoteObjects, tt.node)
+			remoteObjects = append(remoteObjects, tt.remoteObjects...)
+			remoteObjects = append(remoteObjects, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+					Labels: map[string]string{
+						"kubernetes.io/metadata.name": "default",
+					},
+				},
+			})
+			remoteFakeClient := fake.NewClientBuilder().WithIndex(&corev1.Pod{}, "spec.nodeName", nodeNameIndex).
+				WithObjects(remoteObjects...).Build()
+
 			r := &Reconciler{
-				Client:  c,
-				Tracker: tracker,
+				Client:               fakeClient,
+				ClusterCache:         clustercache.NewFakeClusterCache(remoteFakeClient, client.ObjectKeyFromObject(testCluster)),
+				reconcileDeleteCache: cache.New[cache.ReconcileEntry](),
 			}
 
-			got, err := r.shouldWaitForNodeVolumes(ctx, testCluster, tt.node.Name)
+			testMachine.Status.NodeRef = &corev1.ObjectReference{
+				Name: tt.node.GetName(),
+			}
+
+			s := &scope{
+				cluster: testCluster,
+				machine: testMachine,
+			}
+
+			got, err := r.shouldWaitForNodeVolumes(ctx, s)
 			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(got).To(Equal(tt.expected))
+			g.Expect(got).To(BeEquivalentTo(tt.expected))
+			g.Expect(s.deletingReason).To(BeEquivalentTo(tt.expectedDeletingReason))
+			g.Expect(s.deletingMessage).To(BeEquivalentTo(tt.expectedDeletingMessage))
 		})
 	}
+}
+
+func nodeNameIndex(o client.Object) []string {
+	return []string{o.(*corev1.Pod).Spec.NodeName}
 }
 
 func TestIsDeleteNodeAllowed(t *testing.T) {
@@ -2158,6 +2840,11 @@ func TestNodeToMachine(t *testing.T) {
 
 	g.Expect(env.Create(ctx, testCluster)).To(Succeed())
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
+	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+	testClusterOriginal := client.MergeFrom(testCluster.DeepCopy())
+	testCluster.Status.InfrastructureReady = true
+	g.Expect(env.Status().Patch(ctx, testCluster, testClusterOriginal)).To(Succeed())
+
 	g.Expect(env.Create(ctx, defaultBootstrap)).To(Succeed())
 	g.Expect(env.Create(ctx, targetNode)).To(Succeed())
 	g.Expect(env.Create(ctx, randomNode)).To(Succeed())
@@ -2343,8 +3030,6 @@ func (fc fakeClientWithNodeDeletionErr) Delete(ctx context.Context, obj client.O
 }
 
 func TestNodeDeletion(t *testing.T) {
-	g := NewWithT(t)
-
 	deletionTime := metav1.Now().Add(-1 * time.Second)
 
 	testCluster := clusterv1.Cluster{
@@ -2413,18 +3098,20 @@ func TestNodeDeletion(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name               string
-		deletionTimeout    *metav1.Duration
-		resultErr          bool
-		clusterDeleted     bool
-		expectNodeDeletion bool
-		createFakeClient   func(...client.Object) client.Client
+		name                 string
+		deletionTimeout      *metav1.Duration
+		resultErr            bool
+		clusterDeleted       bool
+		expectNodeDeletion   bool
+		expectDeletingReason string
+		createFakeClient     func(...client.Object) client.Client
 	}{
 		{
-			name:               "should return no error when deletion is successful",
-			deletionTimeout:    &metav1.Duration{Duration: time.Second},
-			resultErr:          false,
-			expectNodeDeletion: true,
+			name:                 "should return no error when deletion is successful",
+			deletionTimeout:      &metav1.Duration{Duration: time.Second},
+			resultErr:            false,
+			expectNodeDeletion:   true,
+			expectDeletingReason: clusterv1.MachineDeletingDeletionCompletedV1Beta2Reason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				return fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -2433,10 +3120,11 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:               "should return an error when timeout is not expired and node deletion fails",
-			deletionTimeout:    &metav1.Duration{Duration: time.Hour},
-			resultErr:          true,
-			expectNodeDeletion: false,
+			name:                 "should return an error when timeout is not expired and node deletion fails",
+			deletionTimeout:      &metav1.Duration{Duration: time.Hour},
+			resultErr:            true,
+			expectNodeDeletion:   false,
+			expectDeletingReason: clusterv1.MachineDeletingDeletingNodeV1Beta2Reason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -2446,10 +3134,11 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:               "should return an error when timeout is infinite and node deletion fails",
-			deletionTimeout:    &metav1.Duration{Duration: 0}, // should lead to infinite timeout
-			resultErr:          true,
-			expectNodeDeletion: false,
+			name:                 "should return an error when timeout is infinite and node deletion fails",
+			deletionTimeout:      &metav1.Duration{Duration: 0}, // should lead to infinite timeout
+			resultErr:            true,
+			expectNodeDeletion:   false,
+			expectDeletingReason: clusterv1.MachineDeletingDeletingNodeV1Beta2Reason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -2459,10 +3148,11 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:               "should not return an error when timeout is expired and node deletion fails",
-			deletionTimeout:    &metav1.Duration{Duration: time.Millisecond},
-			resultErr:          false,
-			expectNodeDeletion: false,
+			name:                 "should not return an error when timeout is expired and node deletion fails",
+			deletionTimeout:      &metav1.Duration{Duration: time.Millisecond},
+			resultErr:            false,
+			expectNodeDeletion:   false,
+			expectDeletingReason: clusterv1.DeletionCompletedV1Beta2Reason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -2472,11 +3162,12 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:               "should not delete the node or return an error when the cluster is marked for deletion",
-			deletionTimeout:    nil, // should lead to infinite timeout
-			resultErr:          false,
-			clusterDeleted:     true,
-			expectNodeDeletion: false,
+			name:                 "should not delete the node or return an error when the cluster is marked for deletion",
+			deletionTimeout:      nil, // should lead to infinite timeout
+			resultErr:            false,
+			clusterDeleted:       true,
+			expectNodeDeletion:   false,
+			expectDeletingReason: clusterv1.DeletionCompletedV1Beta2Reason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -2488,18 +3179,20 @@ func TestNodeDeletion(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Run(tc.name, func(*testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
 			m := testMachine.DeepCopy()
 			m.Spec.NodeDeletionTimeout = tc.deletionTimeout
 
 			fakeClient := tc.createFakeClient(node, m, cpmachine1)
-			tracker := remote.NewTestClusterCacheTracker(ctrl.Log, fakeClient, fakeClient, fakeScheme, client.ObjectKeyFromObject(&testCluster))
 
 			r := &Reconciler{
 				Client:                   fakeClient,
-				Tracker:                  tracker,
+				ClusterCache:             clustercache.NewFakeClusterCache(fakeClient, client.ObjectKeyFromObject(&testCluster)),
 				recorder:                 record.NewFakeRecorder(10),
 				nodeDeletionRetryTimeout: 10 * time.Millisecond,
+				reconcileDeleteCache:     cache.New[cache.ReconcileEntry](),
 			}
 
 			cluster := testCluster.DeepCopy()
@@ -2507,7 +3200,13 @@ func TestNodeDeletion(t *testing.T) {
 				cluster.DeletionTimestamp = &metav1.Time{Time: deletionTime.Add(time.Hour)}
 			}
 
-			_, err := r.reconcileDelete(context.Background(), cluster, m)
+			s := &scope{
+				cluster:                   cluster,
+				machine:                   m,
+				infraMachineIsNotFound:    true,
+				bootstrapConfigIsNotFound: true,
+			}
+			_, err := r.reconcileDelete(context.Background(), s)
 
 			if tc.resultErr {
 				g.Expect(err).To(HaveOccurred())
@@ -2518,6 +3217,7 @@ func TestNodeDeletion(t *testing.T) {
 					g.Expect(fakeClient.Get(context.Background(), client.ObjectKeyFromObject(node), n)).NotTo(Succeed())
 				}
 			}
+			g.Expect(s.deletingReason).To(Equal(tc.expectDeletingReason))
 		})
 	}
 }
@@ -2547,6 +3247,7 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
 				clusterv1.MachineControlPlaneLabel: "",
+				clusterv1.ClusterNameLabel:         "test-cluster",
 			},
 			Annotations: map[string]string{
 				"machine.cluster.x-k8s.io/exclude-node-draining": "",
@@ -2589,18 +3290,19 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name               string
-		deletionTimeout    *metav1.Duration
-		resultErr          bool
-		clusterDeleted     bool
-		expectNodeDeletion bool
-		createFakeClient   func(...client.Object) client.Client
+		name                 string
+		deletionTimeout      *metav1.Duration
+		resultErr            bool
+		expectNodeDeletion   bool
+		expectDeletingReason string
+		createFakeClient     func(...client.Object) client.Client
 	}{
 		{
-			name:               "should return no error when the node exists and matches the provider id",
-			deletionTimeout:    &metav1.Duration{Duration: time.Second},
-			resultErr:          false,
-			expectNodeDeletion: true,
+			name:                 "should return no error when the node exists and matches the provider id",
+			deletionTimeout:      &metav1.Duration{Duration: time.Second},
+			resultErr:            false,
+			expectNodeDeletion:   true,
+			expectDeletingReason: clusterv1.MachineDeletingDeletionCompletedV1Beta2Reason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				return fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -2617,21 +3319,22 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 			m.Spec.NodeDeletionTimeout = tc.deletionTimeout
 
 			fakeClient := tc.createFakeClient(node, m, cpmachine1)
-			tracker := remote.NewTestClusterCacheTracker(ctrl.Log, fakeClient, fakeClient, fakeScheme, client.ObjectKeyFromObject(&testCluster))
 
 			r := &Reconciler{
 				Client:                   fakeClient,
-				Tracker:                  tracker,
+				ClusterCache:             clustercache.NewFakeClusterCache(fakeClient, client.ObjectKeyFromObject(&testCluster)),
 				recorder:                 record.NewFakeRecorder(10),
 				nodeDeletionRetryTimeout: 10 * time.Millisecond,
+				reconcileDeleteCache:     cache.New[cache.ReconcileEntry](),
 			}
 
-			cluster := testCluster.DeepCopy()
-			if tc.clusterDeleted {
-				cluster.DeletionTimestamp = &metav1.Time{Time: deletionTime.Add(time.Hour)}
+			s := &scope{
+				cluster:                   testCluster.DeepCopy(),
+				machine:                   m,
+				infraMachineIsNotFound:    true,
+				bootstrapConfigIsNotFound: true,
 			}
-
-			_, err := r.reconcileDelete(context.Background(), cluster, m)
+			_, err := r.reconcileDelete(context.Background(), s)
 
 			if tc.resultErr {
 				g.Expect(err).To(HaveOccurred())
@@ -2639,9 +3342,10 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 				g.Expect(err).ToNot(HaveOccurred())
 				if tc.expectNodeDeletion {
 					n := &corev1.Node{}
-					g.Expect(fakeClient.Get(context.Background(), client.ObjectKeyFromObject(node), n)).NotTo(Succeed())
+					g.Expect(apierrors.IsNotFound(fakeClient.Get(context.Background(), client.ObjectKeyFromObject(node), n))).To(BeTrue())
 				}
 			}
+			g.Expect(s.deletingReason).To(Equal(tc.expectDeletingReason))
 		})
 	}
 }
@@ -2686,4 +3390,17 @@ func assertCondition(t *testing.T, from conditions.Getter, condition *clusterv1.
 			g.Expect(conditionToBeAsserted.Message).To(Equal(condition.Message))
 		}
 	}
+}
+
+func podByNodeName(o client.Object) []string {
+	pod, ok := o.(*corev1.Pod)
+	if !ok {
+		panic(fmt.Sprintf("Expected a Pod but got a %T", o))
+	}
+
+	if pod.Spec.NodeName == "" {
+		return nil
+	}
+
+	return []string{pod.Spec.NodeName}
 }

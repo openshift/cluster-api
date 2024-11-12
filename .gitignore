@@ -12,6 +12,9 @@ hack/tools/bin
 
 # E2E test templates
 test/e2e/data/infrastructure-docker/**/cluster-template*.yaml
+!test/e2e/data/infrastructure-docker/**/clusterclass-quick-start.yaml
+!test/e2e/data/infrastructure-docker/**/clusterclass-quick-start-runtimesdk.yaml
+test/e2e/data/infrastructure-docker/**/clusterclass-*.yaml
 test/e2e/data/infrastructure-inmemory/**/cluster-template*.yaml
 
 # Output of Makefile targets using sed on MacOS systems
@@ -60,7 +63,7 @@ cmd/clusterctl/config/manifest
 
 # The golang vendor directory that contains local copies of external
 # dependencies that satisfy Go imports in this project.
-# vendor
+vendor
 
 # User-supplied Tiltfile extensions, settings, and builds
 tilt.d
@@ -79,3 +82,13 @@ out
 
 # Helm
 .helm
+
+# Used during parts of the build process. Files _should_ get cleaned up automatically.
+# This is also a good location for any temporary manfiests used during development
+tmp
+
+# asdf (not a typo! ;) used to manage multiple versions of tools
+.tool-versions
+
+# Development container configurations (https://containers.dev/)
+.devcontainer

@@ -41,23 +41,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/controllers/noderefutil"
-	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/controllers/machine"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
+	"sigs.k8s.io/cluster-api/util/finalizers"
 	"sigs.k8s.io/cluster-api/util/labels/format"
 	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/paused"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
 
@@ -85,9 +87,9 @@ const machineSetManagerName = "capi-machineset"
 
 // Reconciler reconciles a MachineSet object.
 type Reconciler struct {
-	Client    client.Client
-	APIReader client.Reader
-	Tracker   *remote.ClusterCacheTracker
+	Client       client.Client
+	APIReader    client.Reader
+	ClusterCache clustercache.ClusterCache
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -100,6 +102,11 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
+	if r.Client == nil || r.APIReader == nil || r.ClusterCache == nil {
+		return errors.New("Client, APIReader and ClusterCache must not be nil")
+	}
+
+	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "machineset")
 	clusterToMachineSets, err := util.ClusterToTypedObjectsMapper(mgr.GetClient(), &clusterv1.MachineSetList{}, mgr.GetScheme())
 	if err != nil {
 		return err
@@ -114,18 +121,20 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 			handler.EnqueueRequestsFromMapFunc(r.MachineToMachineSets),
 		).
 		WithOptions(options).
-		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
+		WithEventFilter(predicates.ResourceHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
 		Watches(
 			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(clusterToMachineSets),
 			builder.WithPredicates(
 				// TODO: should this wait for Cluster.Status.InfrastructureReady similar to Infra Machine resources?
-				predicates.All(ctrl.LoggerFrom(ctx),
-					predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
-					predicates.ResourceHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue),
+				predicates.All(mgr.GetScheme(), predicateLog,
+					predicates.ClusterPausedTransitions(mgr.GetScheme(), predicateLog),
+					predicates.ResourceHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue),
 				),
 			),
-		).Complete(r)
+		).
+		WatchesRawSource(r.ClusterCache.GetClusterSource("machineset", clusterToMachineSets)).
+		Complete(r)
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
 	}
@@ -135,7 +144,7 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 	return nil
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (retres ctrl.Result, reterr error) {
 	machineSet := &clusterv1.MachineSet{}
 	if err := r.Client.Get(ctx, req.NamespacedName, machineSet); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -147,6 +156,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 		return ctrl.Result{}, err
 	}
 
+	log := ctrl.LoggerFrom(ctx).WithValues("Cluster", klog.KRef(machineSet.Namespace, machineSet.Spec.ClusterName))
+	ctx = ctrl.LoggerInto(ctx, log)
+
+	// Add finalizer first if not set to avoid the race condition between init and delete.
+	if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.Client, machineSet, clusterv1.MachineSetFinalizer); err != nil || finalizerAdded {
+		return ctrl.Result{}, err
+	}
+
 	// AddOwners adds the owners of MachineSet as k/v pairs to the logger.
 	// Specifically, it will add MachineDeployment.
 	ctx, log, err := clog.AddOwners(ctx, r.Client, machineSet)
@@ -154,53 +171,137 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	log = log.WithValues("Cluster", klog.KRef(machineSet.ObjectMeta.Namespace, machineSet.Spec.ClusterName))
-	ctx = ctrl.LoggerInto(ctx, log)
-
 	cluster, err := util.GetClusterByName(ctx, r.Client, machineSet.ObjectMeta.Namespace, machineSet.Spec.ClusterName)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Return early if the object or Cluster is paused.
-	if annotations.IsPaused(cluster, machineSet) {
-		log.Info("Reconciliation is paused for this object")
-		return ctrl.Result{}, nil
+	if isPaused, conditionChanged, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, machineSet); err != nil || isPaused || conditionChanged {
+		return ctrl.Result{}, err
+	}
+
+	s := &scope{
+		cluster:    cluster,
+		machineSet: machineSet,
 	}
 
 	// Initialize the patch helper
-	patchHelper, err := patch.NewHelper(machineSet, r.Client)
+	patchHelper, err := patch.NewHelper(s.machineSet, r.Client)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	defer func() {
+		if err := r.reconcileStatus(ctx, s); err != nil {
+			reterr = kerrors.NewAggregate([]error{reterr, errors.Wrapf(err, "failed to update status")})
+		}
+
+		r.updateStatus(ctx, s)
+
 		// Always attempt to patch the object and status after each reconciliation.
-		if err := patchMachineSet(ctx, patchHelper, machineSet); err != nil {
+		if err := patchMachineSet(ctx, patchHelper, s.machineSet); err != nil {
 			reterr = kerrors.NewAggregate([]error{reterr, err})
+		}
+
+		if reterr != nil {
+			retres = ctrl.Result{}
+			return
+		}
+
+		// Adjust requeue when scaling up
+		if s.machineSet.DeletionTimestamp.IsZero() && reterr == nil {
+			retres = util.LowestNonZeroResult(retres, shouldRequeueForReplicaCountersRefresh(s))
 		}
 	}()
 
-	// Ignore deleted MachineSets, this can happen when foregroundDeletion
-	// is enabled
-	if !machineSet.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+	if isDeploymentChild(s.machineSet) {
+		// If the MachineSet is in a MachineDeployment, try to get the owning MachineDeployment.
+		s.owningMachineDeployment, err = r.getOwnerMachineDeployment(ctx, s.machineSet)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
-	result, err := r.reconcile(ctx, cluster, machineSet)
-	if err != nil {
-		// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
-		// the current cluster because of concurrent access.
-		if errors.Is(err, remote.ErrClusterLocked) {
-			log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
+	alwaysReconcile := []machineSetReconcileFunc{
+		wrapErrMachineSetReconcileFunc(r.reconcileMachineSetOwnerAndLabels, "failed to set MachineSet owner and labels"),
+		wrapErrMachineSetReconcileFunc(r.reconcileInfrastructure, "failed to reconcile infrastructure"),
+		wrapErrMachineSetReconcileFunc(r.reconcileBootstrapConfig, "failed to reconcile bootstrapConfig"),
+		wrapErrMachineSetReconcileFunc(r.getAndAdoptMachinesForMachineSet, "failed to get and adopt Machines for MachineSet"),
+	}
+
+	// Handle deletion reconciliation loop.
+	if !s.machineSet.DeletionTimestamp.IsZero() {
+		reconcileDelete := append(
+			alwaysReconcile,
+			wrapErrMachineSetReconcileFunc(r.reconcileDelete, "failed to reconcile delete"),
+		)
+		return doReconcile(ctx, s, reconcileDelete)
+	}
+
+	reconcileNormal := append(alwaysReconcile,
+		wrapErrMachineSetReconcileFunc(r.reconcileUnhealthyMachines, "failed to reconcile unhealthy machines"),
+		wrapErrMachineSetReconcileFunc(r.syncMachines, "failed to sync Machines"),
+		wrapErrMachineSetReconcileFunc(r.syncReplicas, "failed to sync replicas"),
+	)
+
+	result, kerr := doReconcile(ctx, s, reconcileNormal)
+	if kerr != nil {
+		// Requeue if the reconcile failed because connection to workload cluster was down.
+		if errors.Is(kerr, clustercache.ErrClusterNotConnected) {
+			if len(kerr.Errors()) > 1 {
+				log.Error(kerr, "Requeuing because connection to the workload cluster is down")
+			} else {
+				log.V(5).Info("Requeuing because connection to the workload cluster is down")
+			}
 			return ctrl.Result{RequeueAfter: time.Minute}, nil
 		}
-		r.recorder.Eventf(machineSet, corev1.EventTypeWarning, "ReconcileError", "%v", err)
+		err = kerr
 	}
 	return result, err
 }
 
-func patchMachineSet(ctx context.Context, patchHelper *patch.Helper, machineSet *clusterv1.MachineSet, options ...patch.Option) error {
+type scope struct {
+	machineSet                                *clusterv1.MachineSet
+	cluster                                   *clusterv1.Cluster
+	machines                                  []*clusterv1.Machine
+	bootstrapObjectNotFound                   bool
+	infrastructureObjectNotFound              bool
+	getAndAdoptMachinesForMachineSetSucceeded bool
+	owningMachineDeployment                   *clusterv1.MachineDeployment
+}
+
+type machineSetReconcileFunc func(ctx context.Context, s *scope) (ctrl.Result, error)
+
+func wrapErrMachineSetReconcileFunc(f machineSetReconcileFunc, msg string) machineSetReconcileFunc {
+	return func(ctx context.Context, s *scope) (ctrl.Result, error) {
+		res, err := f(ctx, s)
+		return res, errors.Wrap(err, msg)
+	}
+}
+
+func doReconcile(ctx context.Context, s *scope, phases []machineSetReconcileFunc) (ctrl.Result, kerrors.Aggregate) {
+	res := ctrl.Result{}
+	errs := []error{}
+	for _, phase := range phases {
+		// Call the inner reconciliation methods.
+		phaseResult, err := phase(ctx, s)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if len(errs) > 0 {
+			continue
+		}
+		res = util.LowestNonZeroResult(res, phaseResult)
+	}
+
+	if len(errs) > 0 {
+		return ctrl.Result{}, kerrors.NewAggregate(errs)
+	}
+
+	return res, nil
+}
+
+func patchMachineSet(ctx context.Context, patchHelper *patch.Helper, machineSet *clusterv1.MachineSet) error {
 	// Always update the readyCondition by summarizing the state of other conditions.
 	conditions.SetSummary(machineSet,
 		conditions.WithConditions(
@@ -211,20 +312,28 @@ func patchMachineSet(ctx context.Context, patchHelper *patch.Helper, machineSet 
 	)
 
 	// Patch the object, ignoring conflicts on the conditions owned by this controller.
-	options = append(options,
+	options := []patch.Option{
 		patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
 			clusterv1.ReadyCondition,
 			clusterv1.MachinesCreatedCondition,
 			clusterv1.ResizedCondition,
 			clusterv1.MachinesReadyCondition,
 		}},
-	)
+		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
+			clusterv1.MachineSetScalingUpV1Beta2Condition,
+			clusterv1.MachineSetScalingDownV1Beta2Condition,
+			clusterv1.MachineSetMachinesReadyV1Beta2Condition,
+			clusterv1.MachineSetMachinesUpToDateV1Beta2Condition,
+			clusterv1.MachineSetRemediatingV1Beta2Condition,
+			clusterv1.MachineSetDeletingV1Beta2Condition,
+		}},
+	}
 	return patchHelper.Patch(ctx, machineSet, options...)
 }
 
-func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, machineSet *clusterv1.MachineSet) (ctrl.Result, error) {
-	log := ctrl.LoggerFrom(ctx)
-
+func (r *Reconciler) reconcileMachineSetOwnerAndLabels(_ context.Context, s *scope) (ctrl.Result, error) {
+	machineSet := s.machineSet
+	cluster := s.cluster
 	// Reconcile and retrieve the Cluster object.
 	if machineSet.Labels == nil {
 		machineSet.Labels = make(map[string]string)
@@ -242,17 +351,6 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 		}))
 	}
 
-	// Make sure to reconcile the external infrastructure reference.
-	if err := r.reconcileExternalTemplateReference(ctx, cluster, machineSet, &machineSet.Spec.Template.Spec.InfrastructureRef); err != nil {
-		return ctrl.Result{}, err
-	}
-	// Make sure to reconcile the external bootstrap reference, if any.
-	if machineSet.Spec.Template.Spec.Bootstrap.ConfigRef != nil {
-		if err := r.reconcileExternalTemplateReference(ctx, cluster, machineSet, machineSet.Spec.Template.Spec.Bootstrap.ConfigRef); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
 	// Make sure selector and template to be in the same cluster.
 	if machineSet.Spec.Selector.MatchLabels == nil {
 		machineSet.Spec.Selector.MatchLabels = make(map[string]string)
@@ -265,6 +363,67 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 	machineSet.Spec.Selector.MatchLabels[clusterv1.ClusterNameLabel] = machineSet.Spec.ClusterName
 	machineSet.Spec.Template.Labels[clusterv1.ClusterNameLabel] = machineSet.Spec.ClusterName
 
+	return ctrl.Result{}, nil
+}
+
+func (r *Reconciler) reconcileInfrastructure(ctx context.Context, s *scope) (ctrl.Result, error) {
+	cluster := s.cluster
+	machineSet := s.machineSet
+	// Make sure to reconcile the external infrastructure reference.
+	var err error
+	s.infrastructureObjectNotFound, err = r.reconcileExternalTemplateReference(ctx, cluster, machineSet, s.owningMachineDeployment, &machineSet.Spec.Template.Spec.InfrastructureRef)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *Reconciler) reconcileBootstrapConfig(ctx context.Context, s *scope) (ctrl.Result, error) {
+	cluster := s.cluster
+	machineSet := s.machineSet
+	// Make sure to reconcile the external bootstrap reference, if any.
+	if s.machineSet.Spec.Template.Spec.Bootstrap.ConfigRef != nil {
+		var err error
+		s.bootstrapObjectNotFound, err = r.reconcileExternalTemplateReference(ctx, cluster, machineSet, s.owningMachineDeployment, machineSet.Spec.Template.Spec.Bootstrap.ConfigRef)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *Reconciler) reconcileDelete(ctx context.Context, s *scope) (ctrl.Result, error) {
+	machineSet := s.machineSet
+	machineList := s.machines
+	if !s.getAndAdoptMachinesForMachineSetSucceeded {
+		return ctrl.Result{}, nil
+	}
+
+	log := ctrl.LoggerFrom(ctx)
+
+	// If all the descendant machines are deleted, then remove the machineset's finalizer.
+	if len(machineList) == 0 {
+		controllerutil.RemoveFinalizer(machineSet, clusterv1.MachineSetFinalizer)
+		return ctrl.Result{}, nil
+	}
+
+	// else delete owned machines.
+	for _, machine := range machineList {
+		if machine.DeletionTimestamp.IsZero() {
+			log.Info("Deleting Machine", "Machine", klog.KObj(machine))
+			if err := r.Client.Delete(ctx, machine); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, errors.Wrapf(err, "failed to delete Machine %s", klog.KObj(machine))
+			}
+		}
+	}
+
+	log.Info("Waiting for Machines to be deleted", "Machines", clog.ObjNamesString(machineList))
+	return ctrl.Result{}, nil
+}
+
+func (r *Reconciler) getAndAdoptMachinesForMachineSet(ctx context.Context, s *scope) (ctrl.Result, error) {
+	machineSet := s.machineSet
+	log := ctrl.LoggerFrom(ctx)
 	selectorMap, err := metav1.LabelSelectorAsMap(&machineSet.Spec.Selector)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to convert MachineSet %q label selector to a map", machineSet.Name)
@@ -287,6 +446,7 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 	for idx := range allMachines.Items {
 		machine := &allMachines.Items[idx]
 		log := log.WithValues("Machine", klog.KObj(machine))
+		ctx := ctrl.LoggerInto(ctx, log)
 		if shouldExcludeMachine(machineSet, machine) {
 			continue
 		}
@@ -305,57 +465,10 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 		filteredMachines = append(filteredMachines, machine)
 	}
 
-	result := ctrl.Result{}
+	s.machines = filteredMachines
+	s.getAndAdoptMachinesForMachineSetSucceeded = true
 
-	reconcileUnhealthyMachinesResult, err := r.reconcileUnhealthyMachines(ctx, cluster, machineSet, filteredMachines)
-	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to reconcile unhealthy machines")
-	}
-	result = util.LowestNonZeroResult(result, reconcileUnhealthyMachinesResult)
-
-	if err := r.syncMachines(ctx, machineSet, filteredMachines); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to update Machines")
-	}
-
-	syncReplicasResult, syncErr := r.syncReplicas(ctx, cluster, machineSet, filteredMachines)
-	result = util.LowestNonZeroResult(result, syncReplicasResult)
-
-	// Always updates status as machines come up or die.
-	if err := r.updateStatus(ctx, cluster, machineSet, filteredMachines); err != nil {
-		return ctrl.Result{}, errors.Wrapf(kerrors.NewAggregate([]error{err, syncErr}), "failed to update MachineSet's Status")
-	}
-
-	if syncErr != nil {
-		return ctrl.Result{}, errors.Wrapf(syncErr, "failed to sync MachineSet replicas")
-	}
-
-	var replicas int32
-	if machineSet.Spec.Replicas != nil {
-		replicas = *machineSet.Spec.Replicas
-	}
-
-	// Resync the MachineSet after MinReadySeconds as a last line of defense to guard against clock-skew.
-	// Clock-skew is an issue as it may impact whether an available replica is counted as a ready replica.
-	// A replica is available if the amount of time since last transition exceeds MinReadySeconds.
-	// If there was a clock skew, checking whether the amount of time since last transition to ready state
-	// exceeds MinReadySeconds could be incorrect.
-	// To avoid an available replica stuck in the ready state, we force a reconcile after MinReadySeconds,
-	// at which point it should confirm any available replica to be available.
-	if machineSet.Spec.MinReadySeconds > 0 &&
-		machineSet.Status.ReadyReplicas == replicas &&
-		machineSet.Status.AvailableReplicas != replicas {
-		minReadyResult := ctrl.Result{RequeueAfter: time.Duration(machineSet.Spec.MinReadySeconds) * time.Second}
-		result = util.LowestNonZeroResult(result, minReadyResult)
-		return result, nil
-	}
-
-	// Quickly reconcile until the nodes become Ready.
-	if machineSet.Status.ReadyReplicas != replicas {
-		result = util.LowestNonZeroResult(result, ctrl.Result{RequeueAfter: 15 * time.Second})
-		return result, nil
-	}
-
-	return result, nil
+	return ctrl.Result{}, nil
 }
 
 // syncMachines updates Machines, InfrastructureMachine and BootstrapConfig to propagate in-place mutable fields
@@ -366,7 +479,13 @@ func (r *Reconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, 
 // "metadata.annotations" from "manager" so that "capi-machineset" can own these fields and can work with SSA.
 // Otherwise fields would be co-owned by our "old" "manager" and "capi-machineset" and then we would not be
 // able to e.g. drop labels and annotations.
-func (r *Reconciler) syncMachines(ctx context.Context, machineSet *clusterv1.MachineSet, machines []*clusterv1.Machine) error {
+func (r *Reconciler) syncMachines(ctx context.Context, s *scope) (ctrl.Result, error) {
+	machineSet := s.machineSet
+	machines := s.machines
+	if !s.getAndAdoptMachinesForMachineSetSucceeded {
+		return ctrl.Result{}, nil
+	}
+
 	log := ctrl.LoggerFrom(ctx)
 	for i := range machines {
 		m := machines[i]
@@ -375,18 +494,17 @@ func (r *Reconciler) syncMachines(ctx context.Context, machineSet *clusterv1.Mac
 		if !m.DeletionTimestamp.IsZero() {
 			patchHelper, err := patch.NewHelper(m, r.Client)
 			if err != nil {
-				return errors.Wrapf(err, "failed to generate patch for Machine %q", klog.KObj(m))
+				return ctrl.Result{}, err
 			}
 
 			// Set all other in-place mutable fields that impact the ability to tear down existing machines.
+			m.Spec.ReadinessGates = machineSet.Spec.Template.Spec.ReadinessGates
 			m.Spec.NodeDrainTimeout = machineSet.Spec.Template.Spec.NodeDrainTimeout
 			m.Spec.NodeDeletionTimeout = machineSet.Spec.Template.Spec.NodeDeletionTimeout
 			m.Spec.NodeVolumeDetachTimeout = machineSet.Spec.Template.Spec.NodeVolumeDetachTimeout
 
-			err = patchHelper.Patch(ctx, m)
-			if err != nil {
-				log.Error(err, "Failed to update Machine", "Machine", klog.KObj(m))
-				return errors.Wrapf(err, "failed to update Machine %q", klog.KObj(m))
+			if err := patchHelper.Patch(ctx, m); err != nil {
+				return ctrl.Result{}, err
 			}
 			continue
 		}
@@ -396,7 +514,7 @@ func (r *Reconciler) syncMachines(ctx context.Context, machineSet *clusterv1.Mac
 		// (< v1.4.0) can also work with SSA. Otherwise, fields would be co-owned by our "old" "manager" and
 		// "capi-machineset" and then we would not be able to e.g. drop labels and annotations.
 		if err := ssa.CleanUpManagedFieldsForSSAAdoption(ctx, r.Client, m, machineSetManagerName); err != nil {
-			return errors.Wrapf(err, "failed to update machine: failed to adjust the managedFields of the Machine %q", m.Name)
+			return ctrl.Result{}, errors.Wrapf(err, "failed to update machine: failed to adjust the managedFields of the Machine %q", m.Name)
 		}
 
 		// Update Machine to propagate in-place mutable fields from the MachineSet.
@@ -404,13 +522,13 @@ func (r *Reconciler) syncMachines(ctx context.Context, machineSet *clusterv1.Mac
 		err := ssa.Patch(ctx, r.Client, machineSetManagerName, updatedMachine, ssa.WithCachingProxy{Cache: r.ssaCache, Original: m})
 		if err != nil {
 			log.Error(err, "Failed to update Machine", "Machine", klog.KObj(updatedMachine))
-			return errors.Wrapf(err, "failed to update Machine %q", klog.KObj(updatedMachine))
+			return ctrl.Result{}, errors.Wrapf(err, "failed to update Machine %q", klog.KObj(updatedMachine))
 		}
 		machines[i] = updatedMachine
 
 		infraMachine, err := external.Get(ctx, r.Client, &updatedMachine.Spec.InfrastructureRef, updatedMachine.Namespace)
 		if err != nil {
-			return errors.Wrapf(err, "failed to get InfrastructureMachine %s",
+			return ctrl.Result{}, errors.Wrapf(err, "failed to get InfrastructureMachine %s",
 				klog.KRef(updatedMachine.Spec.InfrastructureRef.Namespace, updatedMachine.Spec.InfrastructureRef.Name))
 		}
 		// Cleanup managed fields of all InfrastructureMachines to drop ownership of labels and annotations
@@ -422,17 +540,17 @@ func (r *Reconciler) syncMachines(ctx context.Context, machineSet *clusterv1.Mac
 			{"f:metadata", "f:labels"},
 		}
 		if err := ssa.DropManagedFields(ctx, r.Client, infraMachine, machineSetManagerName, labelsAndAnnotationsManagedFieldPaths); err != nil {
-			return errors.Wrapf(err, "failed to update machine: failed to adjust the managedFields of the InfrastructureMachine %s", klog.KObj(infraMachine))
+			return ctrl.Result{}, errors.Wrapf(err, "failed to update machine: failed to adjust the managedFields of the InfrastructureMachine %s", klog.KObj(infraMachine))
 		}
 		// Update in-place mutating fields on InfrastructureMachine.
 		if err := r.updateExternalObject(ctx, infraMachine, machineSet); err != nil {
-			return errors.Wrapf(err, "failed to update InfrastructureMachine %s", klog.KObj(infraMachine))
+			return ctrl.Result{}, errors.Wrapf(err, "failed to update InfrastructureMachine %s", klog.KObj(infraMachine))
 		}
 
 		if updatedMachine.Spec.Bootstrap.ConfigRef != nil {
 			bootstrapConfig, err := external.Get(ctx, r.Client, updatedMachine.Spec.Bootstrap.ConfigRef, updatedMachine.Namespace)
 			if err != nil {
-				return errors.Wrapf(err, "failed to get BootstrapConfig %s",
+				return ctrl.Result{}, errors.Wrapf(err, "failed to get BootstrapConfig %s",
 					klog.KRef(updatedMachine.Spec.Bootstrap.ConfigRef.Namespace, updatedMachine.Spec.Bootstrap.ConfigRef.Name))
 			}
 			// Cleanup managed fields of all BootstrapConfigs to drop ownership of labels and annotations
@@ -440,22 +558,29 @@ func (r *Reconciler) syncMachines(ctx context.Context, machineSet *clusterv1.Mac
 			// can also work with SSA. Otherwise, labels and annotations would be co-owned by our "old" "manager"
 			// and "capi-machineset" and then we would not be able to e.g. drop labels and annotations.
 			if err := ssa.DropManagedFields(ctx, r.Client, bootstrapConfig, machineSetManagerName, labelsAndAnnotationsManagedFieldPaths); err != nil {
-				return errors.Wrapf(err, "failed to update machine: failed to adjust the managedFields of the BootstrapConfig %s", klog.KObj(bootstrapConfig))
+				return ctrl.Result{}, errors.Wrapf(err, "failed to update machine: failed to adjust the managedFields of the BootstrapConfig %s", klog.KObj(bootstrapConfig))
 			}
 			// Update in-place mutating fields on BootstrapConfig.
 			if err := r.updateExternalObject(ctx, bootstrapConfig, machineSet); err != nil {
-				return errors.Wrapf(err, "failed to update BootstrapConfig %s", klog.KObj(bootstrapConfig))
+				return ctrl.Result{}, errors.Wrapf(err, "failed to update BootstrapConfig %s", klog.KObj(bootstrapConfig))
 			}
 		}
 	}
-	return nil
+	return ctrl.Result{}, nil
 }
 
 // syncReplicas scales Machine resources up or down.
-func (r *Reconciler) syncReplicas(ctx context.Context, cluster *clusterv1.Cluster, ms *clusterv1.MachineSet, machines []*clusterv1.Machine) (ctrl.Result, error) {
+func (r *Reconciler) syncReplicas(ctx context.Context, s *scope) (ctrl.Result, error) {
+	ms := s.machineSet
+	machines := s.machines
+	cluster := s.cluster
+	if !s.getAndAdoptMachinesForMachineSetSucceeded {
+		return ctrl.Result{}, nil
+	}
+
 	log := ctrl.LoggerFrom(ctx)
 	if ms.Spec.Replicas == nil {
-		return ctrl.Result{}, errors.Errorf("the Replicas field in Spec for machineset %v is nil, this should not be allowed", ms.Name)
+		return ctrl.Result{}, errors.Errorf("the Replicas field in Spec for MachineSet %v is nil, this should not be allowed", ms.Name)
 	}
 	diff := len(machines) - int(*(ms.Spec.Replicas))
 	switch {
@@ -682,6 +807,7 @@ func (r *Reconciler) computeDesiredMachine(machineSet *clusterv1.MachineSet, exi
 	desiredMachine.Annotations = machineAnnotationsFromMachineSet(machineSet)
 
 	// Set all other in-place mutable fields.
+	desiredMachine.Spec.ReadinessGates = machineSet.Spec.Template.Spec.ReadinessGates
 	desiredMachine.Spec.NodeDrainTimeout = machineSet.Spec.Template.Spec.NodeDrainTimeout
 	desiredMachine.Spec.NodeDeletionTimeout = machineSet.Spec.Template.Spec.NodeDeletionTimeout
 	desiredMachine.Spec.NodeVolumeDetachTimeout = machineSet.Spec.Template.Spec.NodeVolumeDetachTimeout
@@ -878,9 +1004,17 @@ func (r *Reconciler) getMachineSetsForMachine(ctx context.Context, m *clusterv1.
 }
 
 // isDeploymentChild returns true if the MachineSet originated from a MachineDeployment by checking its labels.
-func (r *Reconciler) isDeploymentChild(ms *clusterv1.MachineSet) bool {
+func isDeploymentChild(ms *clusterv1.MachineSet) bool {
 	_, ok := ms.Labels[clusterv1.MachineDeploymentNameLabel]
 	return ok
+}
+
+// isCurrentMachineSet returns true if the MachineSet's and MachineDeployments revision are equal.
+func isCurrentMachineSet(ms *clusterv1.MachineSet, md *clusterv1.MachineDeployment) bool {
+	if md == nil {
+		return false
+	}
+	return md.Annotations[clusterv1.RevisionAnnotation] == ms.Annotations[clusterv1.RevisionAnnotation]
 }
 
 // shouldAdopt returns true if the MachineSet should be adopted as a stand-alone MachineSet directly owned by the Cluster.
@@ -893,12 +1027,24 @@ func (r *Reconciler) shouldAdopt(ms *clusterv1.MachineSet) bool {
 	// If the MachineSet is originated by a MachineDeployment object, it should not be adopted directly by the Cluster as a stand-alone MachineSet.
 	// Note: this is required because after restore from a backup both the MachineSet controller and the
 	// MachineDeployment controller are racing to adopt MachineSets, see https://github.com/kubernetes-sigs/cluster-api/issues/7529
-	return !r.isDeploymentChild(ms)
+	return !isDeploymentChild(ms)
 }
 
-// updateStatus updates the Status field for the MachineSet
+// reconcileStatus updates the Status field for the MachineSet
 // It checks for the current state of the replicas and updates the Status of the MachineSet.
-func (r *Reconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluster, ms *clusterv1.MachineSet, filteredMachines []*clusterv1.Machine) error {
+func (r *Reconciler) reconcileStatus(ctx context.Context, s *scope) error {
+	if !s.getAndAdoptMachinesForMachineSetSucceeded {
+		return nil
+	}
+
+	ms := s.machineSet
+	filteredMachines := s.machines
+	cluster := s.cluster
+
+	if ms.Spec.Replicas == nil {
+		return errors.New("Cannot update status when MachineSet spec.replicas is not set")
+	}
+
 	log := ctrl.LoggerFrom(ctx)
 	newStatus := ms.Status.DeepCopy()
 
@@ -919,6 +1065,9 @@ func (r *Reconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluste
 	readyReplicasCount := 0
 	availableReplicasCount := 0
 	desiredReplicas := *ms.Spec.Replicas
+	if !ms.DeletionTimestamp.IsZero() {
+		desiredReplicas = 0
+	}
 	templateLabel := labels.Set(ms.Spec.Template.Labels).AsSelectorPreValidated()
 
 	for _, machine := range filteredMachines {
@@ -1002,8 +1151,33 @@ func (r *Reconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluste
 	return nil
 }
 
+func shouldRequeueForReplicaCountersRefresh(s *scope) ctrl.Result {
+	replicas := ptr.Deref(s.machineSet.Spec.Replicas, 0)
+
+	// Resync the MachineSet after MinReadySeconds as a last line of defense to guard against clock-skew.
+	// Clock-skew is an issue as it may impact whether an available replica is counted as a ready replica.
+	// A replica is available if the amount of time since last transition exceeds MinReadySeconds.
+	// If there was a clock skew, checking whether the amount of time since last transition to ready state
+	// exceeds MinReadySeconds could be incorrect.
+	// To avoid an available replica stuck in the ready state, we force a reconcile after MinReadySeconds,
+	// at which point it should confirm any available replica to be available.
+	if s.machineSet.Spec.MinReadySeconds > 0 &&
+		s.machineSet.Status.ReadyReplicas == replicas &&
+		s.machineSet.Status.AvailableReplicas != replicas {
+		minReadyResult := ctrl.Result{RequeueAfter: time.Duration(s.machineSet.Spec.MinReadySeconds) * time.Second}
+		return minReadyResult
+	}
+
+	// Quickly reconcile until the nodes become Ready.
+	if s.machineSet.Status.ReadyReplicas != replicas {
+		return ctrl.Result{RequeueAfter: 15 * time.Second}
+	}
+
+	return ctrl.Result{}
+}
+
 func (r *Reconciler) getMachineNode(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine) (*corev1.Node, error) {
-	remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
+	remoteClient, err := r.ClusterCache.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return nil, err
 	}
@@ -1014,7 +1188,15 @@ func (r *Reconciler) getMachineNode(ctx context.Context, cluster *clusterv1.Clus
 	return node, nil
 }
 
-func (r *Reconciler) reconcileUnhealthyMachines(ctx context.Context, cluster *clusterv1.Cluster, ms *clusterv1.MachineSet, filteredMachines []*clusterv1.Machine) (ctrl.Result, error) {
+func (r *Reconciler) reconcileUnhealthyMachines(ctx context.Context, s *scope) (ctrl.Result, error) {
+	if !s.getAndAdoptMachinesForMachineSetSucceeded {
+		return ctrl.Result{}, nil
+	}
+
+	cluster := s.cluster
+	ms := s.machineSet
+	filteredMachines := s.machines
+	owner := s.owningMachineDeployment
 	log := ctrl.LoggerFrom(ctx)
 
 	// Calculate how many in flight machines we should remediate.
@@ -1023,12 +1205,7 @@ func (r *Reconciler) reconcileUnhealthyMachines(ctx context.Context, cluster *cl
 
 	// If the MachineSet is part of a MachineDeployment, only allow remediations if
 	// it's the desired revision.
-	if r.isDeploymentChild(ms) {
-		owner, err := r.getOwnerMachineDeployment(ctx, ms)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
+	if isDeploymentChild(ms) {
 		if owner.Annotations[clusterv1.RevisionAnnotation] != ms.Annotations[clusterv1.RevisionAnnotation] {
 			// MachineSet is part of a MachineDeployment but isn't the current revision, no remediations allowed.
 			return ctrl.Result{}, nil
@@ -1142,38 +1319,40 @@ func (r *Reconciler) reconcileUnhealthyMachines(ctx context.Context, cluster *cl
 	return ctrl.Result{}, nil
 }
 
-func (r *Reconciler) reconcileExternalTemplateReference(ctx context.Context, cluster *clusterv1.Cluster, ms *clusterv1.MachineSet, ref *corev1.ObjectReference) error {
+func (r *Reconciler) reconcileExternalTemplateReference(ctx context.Context, cluster *clusterv1.Cluster, ms *clusterv1.MachineSet, owner *clusterv1.MachineDeployment, ref *corev1.ObjectReference) (objectNotFound bool, err error) {
 	if !strings.HasSuffix(ref.Kind, clusterv1.TemplateSuffix) {
-		return nil
+		return false, nil
 	}
 
 	if err := utilconversion.UpdateReferenceAPIContract(ctx, r.Client, ref); err != nil {
-		return err
+		return false, err
 	}
 
 	obj, err := external.Get(ctx, r.Client, ref, cluster.Namespace)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			if _, ok := ms.Labels[clusterv1.MachineDeploymentNameLabel]; !ok {
+			if !ms.DeletionTimestamp.IsZero() {
+				// Tolerate object not found when the machineSet is being deleted.
+				return true, nil
+			}
+
+			if owner == nil {
 				// If the MachineSet is not in a MachineDeployment, return the error immediately.
-				return err
+				return true, err
 			}
 			// When the MachineSet is part of a MachineDeployment but isn't the current revision, we should
 			// ignore the not found references and allow the controller to proceed.
-			owner, err := r.getOwnerMachineDeployment(ctx, ms)
-			if err != nil {
-				return err
+			if !isCurrentMachineSet(ms, owner) {
+				return true, nil
 			}
-			if owner.Annotations[clusterv1.RevisionAnnotation] != ms.Annotations[clusterv1.RevisionAnnotation] {
-				return nil
-			}
+			return true, err
 		}
-		return err
+		return false, err
 	}
 
 	patchHelper, err := patch.NewHelper(obj, r.Client)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	obj.SetOwnerReferences(util.EnsureOwnerRef(obj.GetOwnerReferences(), metav1.OwnerReference{
@@ -1183,5 +1362,5 @@ func (r *Reconciler) reconcileExternalTemplateReference(ctx context.Context, clu
 		UID:        cluster.UID,
 	}))
 
-	return patchHelper.Patch(ctx, obj)
+	return false, patchHelper.Patch(ctx, obj)
 }

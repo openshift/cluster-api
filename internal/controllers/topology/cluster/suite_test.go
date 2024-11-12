@@ -34,9 +34,11 @@ import (
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/internal/controllers/clusterclass"
+	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/test/envtest"
 )
 
@@ -65,42 +67,37 @@ func TestMain(m *testing.M) {
 		}
 	}
 	setupReconcilers := func(ctx context.Context, mgr ctrl.Manager) {
-		// Set up a ClusterCacheTracker and ClusterCacheReconciler to provide to controllers
-		// requiring a connection to a remote cluster
-		secretCachingClient, err := client.New(mgr.GetConfig(), client.Options{
-			HTTPClient: mgr.GetHTTPClient(),
-			Cache: &client.CacheOptions{
-				Reader: mgr.GetCache(),
+		clusterCache, err := clustercache.SetupWithManager(ctx, mgr, clustercache.Options{
+			SecretClient: mgr.GetClient(),
+			Cache: clustercache.CacheOptions{
+				Indexes: []clustercache.CacheOptionsIndex{clustercache.NodeProviderIDIndex},
 			},
-		})
-		if err != nil {
-			panic(fmt.Sprintf("unable to create secretCachingClient: %v", err))
-		}
-		tracker, err := remote.NewClusterCacheTracker(
-			mgr,
-			remote.ClusterCacheTrackerOptions{
-				Log:                 &ctrl.Log,
-				SecretCachingClient: secretCachingClient,
+			Client: clustercache.ClientOptions{
+				UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
+				Cache: clustercache.ClientCacheOptions{
+					DisableFor: []client.Object{
+						// Don't cache ConfigMaps & Secrets.
+						&corev1.ConfigMap{},
+						&corev1.Secret{},
+					},
+				},
 			},
-		)
+		}, controller.Options{MaxConcurrentReconciles: 10})
 		if err != nil {
-			panic(fmt.Sprintf("unable to create cluster cache tracker: %v", err))
+			panic(fmt.Sprintf("Failed to create ClusterCache: %v", err))
 		}
-		if err := (&remote.ClusterCacheReconciler{
-			Client:  mgr.GetClient(),
-			Tracker: tracker,
-		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
-			panic(fmt.Sprintf("Failed to start ClusterCacheReconciler: %v", err))
-		}
+
 		if err := (&Reconciler{
-			Client:    mgr.GetClient(),
-			APIReader: mgr.GetAPIReader(),
-			Tracker:   tracker,
+			Client:        mgr.GetClient(),
+			APIReader:     mgr.GetAPIReader(),
+			ClusterCache:  clusterCache,
+			RuntimeClient: fakeruntimeclient.NewRuntimeClientBuilder().Build(),
 		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
 			panic(fmt.Sprintf("unable to create topology cluster reconciler: %v", err))
 		}
 		if err := (&clusterclass.Reconciler{
-			Client: mgr.GetClient(),
+			Client:        mgr.GetClient(),
+			RuntimeClient: fakeruntimeclient.NewRuntimeClientBuilder().Build(),
 		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 5}); err != nil {
 			panic(fmt.Sprintf("unable to create clusterclass reconciler: %v", err))
 		}

@@ -20,7 +20,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -139,16 +138,6 @@ func (r *KubeadmControlPlaneReconciler) scaleDownControlPlane(
 		// NOTE: etcd member removal will be performed by the kcp-cleanup hook after machine completes drain & all volumes are detached.
 	}
 
-	parsedVersion, err := semver.ParseTolerant(controlPlane.KCP.Spec.Version)
-	if err != nil {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
-	}
-
-	if err := workloadCluster.RemoveMachineFromKubeadmConfigMap(ctx, machineToDelete, parsedVersion); err != nil {
-		logger.Error(err, "Failed to remove machine from kubeadm ConfigMap")
-		return ctrl.Result{}, err
-	}
-
 	logger = logger.WithValues("Machine", klog.KObj(machineToDelete))
 	if err := r.Client.Delete(ctx, machineToDelete); err != nil && !apierrors.IsNotFound(err) {
 		logger.Error(err, "Failed to delete control plane machine")
@@ -180,6 +169,7 @@ func (r *KubeadmControlPlaneReconciler) preflightChecks(ctx context.Context, con
 
 	// If there are deleting machines, wait for the operation to complete.
 	if controlPlane.HasDeletingMachine() {
+		controlPlane.PreflightCheckResults.HasDeletingMachine = true
 		logger.Info("Waiting for machines to be deleted", "machines", strings.Join(controlPlane.Machines.Filter(collections.HasDeletionTimestamp).Names(), ", "))
 		return ctrl.Result{RequeueAfter: deleteRequeueAfter}, nil
 	}
@@ -214,9 +204,19 @@ loopmachines:
 			// Instead of confusing users with errors about that the conditions are not set, let's point them
 			// towards the unset nodeRef (which is the root cause of the conditions not being there).
 			machineErrors = append(machineErrors, errors.Errorf("Machine %s does not have a corresponding Node yet (Machine.status.nodeRef not set)", machine.Name))
+
+			controlPlane.PreflightCheckResults.ControlPlaneComponentsNotHealthy = true
+			if controlPlane.IsEtcdManaged() {
+				controlPlane.PreflightCheckResults.EtcdClusterNotHealthy = true
+			}
 		} else {
 			for _, condition := range allMachineHealthConditions {
 				if err := preflightCheckCondition("Machine", machine, condition); err != nil {
+					if condition == controlplanev1.MachineEtcdMemberHealthyCondition {
+						controlPlane.PreflightCheckResults.EtcdClusterNotHealthy = true
+					} else {
+						controlPlane.PreflightCheckResults.ControlPlaneComponentsNotHealthy = true
+					}
 					machineErrors = append(machineErrors, err)
 				}
 			}

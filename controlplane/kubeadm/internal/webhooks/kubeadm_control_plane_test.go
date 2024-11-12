@@ -268,7 +268,7 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 			if tt.enableIgnitionFeature {
 				// NOTE: KubeadmBootstrapFormatIgnition feature flag is disabled by default.
 				// Enabling the feature flag temporarily for this test.
-				defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.KubeadmBootstrapFormatIgnition, true)()
+				utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.KubeadmBootstrapFormatIgnition, true)
 			}
 
 			g := NewWithT(t)
@@ -552,6 +552,17 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			ImageRepository: "gcr.io/capi-test",
 			ImageTag:        "v99.99.99",
 		},
+	}
+
+	validUnsupportedCoreDNSVersionWithSkipAnnotation := dns.DeepCopy()
+	validUnsupportedCoreDNSVersionWithSkipAnnotation.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
+		ImageMeta: bootstrapv1.ImageMeta{
+			ImageRepository: "gcr.io/capi-test",
+			ImageTag:        "v99.99.99",
+		},
+	}
+	validUnsupportedCoreDNSVersionWithSkipAnnotation.Annotations = map[string]string{
+		controlplanev1.SkipCoreDNSAnnotation: "",
 	}
 
 	unsetCoreDNSToVersion := dns.DeepCopy()
@@ -861,6 +872,17 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			kcp:    validUnsupportedCoreDNSVersion,
 		},
 		{
+			name:      "should fail when upgrading to an unsupported version",
+			before:    dns,
+			kcp:       validUnsupportedCoreDNSVersion,
+			expectErr: true,
+		},
+		{
+			name:   "should succeed when upgrading to an unsupported version and KCP has skip annotation set",
+			before: dns,
+			kcp:    validUnsupportedCoreDNSVersionWithSkipAnnotation,
+		},
+		{
 			name:      "should fail when using an invalid DNS build",
 			expectErr: true,
 			before:    before,
@@ -1052,7 +1074,7 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			if tt.enableIgnitionFeature {
 				// NOTE: KubeadmBootstrapFormatIgnition feature flag is disabled by default.
 				// Enabling the feature flag temporarily for this test.
-				defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.KubeadmBootstrapFormatIgnition, true)()
+				utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.KubeadmBootstrapFormatIgnition, true)
 			}
 
 			g := NewWithT(t)

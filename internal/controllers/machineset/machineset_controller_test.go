@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
-	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -37,13 +36,12 @@ import (
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/external"
-	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 var _ reconcile.Reconciler = &Reconciler{}
@@ -62,6 +60,11 @@ func TestMachineSetReconciler(t *testing.T) {
 
 		t.Log("Creating the Cluster Kubeconfig Secret")
 		g.Expect(env.CreateKubeconfigSecret(ctx, cluster)).To(Succeed())
+
+		// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+		patch := client.MergeFrom(cluster.DeepCopy())
+		cluster.Status.InfrastructureReady = true
+		g.Expect(env.Status().Patch(ctx, cluster, patch)).To(Succeed())
 
 		return ns, cluster
 	}
@@ -586,6 +589,14 @@ func TestMachineSetReconcile(t *testing.T) {
 			},
 			Spec: clusterv1.MachineSetSpec{
 				ClusterName: testClusterName,
+				Replicas:    ptr.To[int32](0),
+			},
+			Status: clusterv1.MachineSetStatus{
+				V1Beta2: &clusterv1.MachineSetV1Beta2Status{Conditions: []metav1.Condition{{
+					Type:   clusterv1.PausedV1Beta2Condition,
+					Status: metav1.ConditionFalse,
+					Reason: clusterv1.NotPausedV1Beta2Reason,
+				}}},
 			},
 		}
 		request := reconcile.Request{
@@ -600,28 +611,6 @@ func TestMachineSetReconcile(t *testing.T) {
 		result, err := msr.Reconcile(ctx, request)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(result).To(BeComparableTo(reconcile.Result{}))
-	})
-
-	t.Run("records event if reconcile fails", func(t *testing.T) {
-		g := NewWithT(t)
-
-		ms := newMachineSet("machineset1", testClusterName, int32(0))
-		ms.Spec.Selector.MatchLabels = map[string]string{
-			"--$-invalid": "true",
-		}
-
-		request := reconcile.Request{
-			NamespacedName: util.ObjectKey(ms),
-		}
-
-		rec := record.NewFakeRecorder(32)
-		c := fake.NewClientBuilder().WithObjects(testCluster, ms).WithStatusSubresource(&clusterv1.MachineSet{}).Build()
-		msr := &Reconciler{
-			Client:   c,
-			recorder: rec,
-		}
-		_, _ = msr.Reconcile(ctx, request)
-		g.Eventually(rec.Events).Should(Receive())
 	})
 
 	t.Run("reconcile successfully when labels are missing", func(t *testing.T) {
@@ -890,6 +879,9 @@ func newMachineSet(name, cluster string, replicas int32) *clusterv1.MachineSet {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: metav1.NamespaceDefault,
+			Finalizers: []string{
+				clusterv1.MachineSetFinalizer,
+			},
 			Labels: map[string]string{
 				clusterv1.ClusterNameLabel: cluster,
 			},
@@ -909,6 +901,13 @@ func newMachineSet(name, cluster string, replicas int32) *clusterv1.MachineSet {
 					clusterv1.ClusterNameLabel: cluster,
 				},
 			},
+		},
+		Status: clusterv1.MachineSetStatus{
+			V1Beta2: &clusterv1.MachineSetV1Beta2Status{Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedV1Beta2Condition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.NotPausedV1Beta2Reason,
+			}}},
 		},
 	}
 }
@@ -930,6 +929,9 @@ func TestMachineSetReconcile_MachinesCreatedConditionFalseOnBadInfraRef(t *testi
 			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
 				clusterv1.ClusterNameLabel: cluster.Name,
+			},
+			Finalizers: []string{
+				clusterv1.MachineSetFinalizer,
 			},
 		},
 		Spec: clusterv1.MachineSetSpec{
@@ -957,6 +959,13 @@ func TestMachineSetReconcile_MachinesCreatedConditionFalseOnBadInfraRef(t *testi
 					clusterv1.ClusterNameLabel: cluster.Name,
 				},
 			},
+		},
+		Status: clusterv1.MachineSetStatus{
+			V1Beta2: &clusterv1.MachineSetV1Beta2Status{Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedV1Beta2Condition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.NotPausedV1Beta2Reason,
+			}}},
 		},
 	}
 
@@ -1004,15 +1013,16 @@ func TestMachineSetReconciler_updateStatusResizedCondition(t *testing.T) {
 		{
 			name:       "MachineSet should have ResizedCondition=false on scale down",
 			machineSet: newMachineSet("ms-scale-down", cluster.Name, int32(0)),
-			machines: []*clusterv1.Machine{{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "machine-a",
-					Namespace: metav1.NamespaceDefault,
-					Labels: map[string]string{
-						clusterv1.ClusterNameLabel: cluster.Name,
+			machines: []*clusterv1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "machine-a",
+						Namespace: metav1.NamespaceDefault,
+						Labels: map[string]string{
+							clusterv1.ClusterNameLabel: cluster.Name,
+						},
 					},
 				},
-			},
 			},
 			expectedReason:  clusterv1.ScalingDownReason,
 			expectedMessage: "Scaling down MachineSet to 0 replicas (actual 1)",
@@ -1028,8 +1038,14 @@ func TestMachineSetReconciler_updateStatusResizedCondition(t *testing.T) {
 				Client:   c,
 				recorder: record.NewFakeRecorder(32),
 			}
-			err := msr.updateStatus(ctx, cluster, tc.machineSet, tc.machines)
-			g.Expect(err).ToNot(HaveOccurred())
+			s := &scope{
+				cluster:    cluster,
+				machineSet: tc.machineSet,
+				machines:   tc.machines,
+				getAndAdoptMachinesForMachineSetSucceeded: true,
+			}
+			setReplicas(ctx, s.machineSet, s.machines, tc.machines != nil)
+			g.Expect(msr.reconcileStatus(ctx, s)).To(Succeed())
 			gotCond := conditions.Get(tc.machineSet, clusterv1.ResizedCondition)
 			g.Expect(gotCond).ToNot(BeNil())
 			g.Expect(gotCond.Status).To(Equal(corev1.ConditionFalse))
@@ -1266,7 +1282,13 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 		Client:   env,
 		ssaCache: ssa.NewCache(),
 	}
-	g.Expect(reconciler.syncMachines(ctx, ms, machines)).To(Succeed())
+	s := &scope{
+		machineSet: ms,
+		machines:   machines,
+		getAndAdoptMachinesForMachineSetSucceeded: true,
+	}
+	_, err := reconciler.syncMachines(ctx, s)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// The inPlaceMutatingMachine should have cleaned up managed fields.
 	updatedInPlaceMutatingMachine := inPlaceMutatingMachine.DeepCopy()
@@ -1337,10 +1359,18 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 		"modified-annotation":  "modified-value-2", // Modify the value of the annotation
 		// Drop "dropped-annotation"
 	}
+	readinessGates := []clusterv1.MachineReadinessGate{{ConditionType: "foo"}}
+	ms.Spec.Template.Spec.ReadinessGates = readinessGates
 	ms.Spec.Template.Spec.NodeDrainTimeout = duration10s
 	ms.Spec.Template.Spec.NodeDeletionTimeout = duration10s
 	ms.Spec.Template.Spec.NodeVolumeDetachTimeout = duration10s
-	g.Expect(reconciler.syncMachines(ctx, ms, []*clusterv1.Machine{updatedInPlaceMutatingMachine, deletingMachine})).To(Succeed())
+	s = &scope{
+		machineSet: ms,
+		machines:   []*clusterv1.Machine{updatedInPlaceMutatingMachine, deletingMachine},
+		getAndAdoptMachinesForMachineSetSucceeded: true,
+	}
+	_, err = reconciler.syncMachines(ctx, s)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// Verify in-place mutable fields are updated on the Machine.
 	updatedInPlaceMutatingMachine = inPlaceMutatingMachine.DeepCopy()
@@ -1363,6 +1393,8 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			Not(BeNil()),
 			HaveValue(Equal(*ms.Spec.Template.Spec.NodeVolumeDetachTimeout)),
 		))
+		// Verify readiness gates.
+		g.Expect(updatedInPlaceMutatingMachine.Spec.ReadinessGates).Should(Equal(readinessGates))
 	}, timeout).Should(Succeed())
 
 	// Verify in-place mutable fields are updated on InfrastructureMachine
@@ -1418,7 +1450,13 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 	ms.Spec.Template.Spec.NodeDrainTimeout = duration11s
 	ms.Spec.Template.Spec.NodeDeletionTimeout = duration11s
 	ms.Spec.Template.Spec.NodeVolumeDetachTimeout = duration11s
-	g.Expect(reconciler.syncMachines(ctx, ms, []*clusterv1.Machine{updatedInPlaceMutatingMachine, deletingMachine})).To(Succeed())
+	s = &scope{
+		machineSet: ms,
+		machines:   []*clusterv1.Machine{updatedInPlaceMutatingMachine, deletingMachine},
+		getAndAdoptMachinesForMachineSetSucceeded: true,
+	}
+	_, err = reconciler.syncMachines(ctx, s)
+	g.Expect(err).ToNot(HaveOccurred())
 	updatedDeletingMachine := deletingMachine.DeepCopy()
 
 	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedDeletingMachine), updatedDeletingMachine)).To(Succeed())
@@ -1439,8 +1477,6 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 
 func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 	t.Run("should delete unhealthy machines if preflight checks pass", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineSetPreflightChecks, true)()
-
 		g := NewWithT(t)
 
 		controlPlaneStable := builder.ControlPlane("default", "cp1").
@@ -1487,7 +1523,15 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		r := &Reconciler{
 			Client: fakeClient,
 		}
-		_, err := r.reconcileUnhealthyMachines(ctx, cluster, machineSet, machines)
+
+		s := &scope{
+			cluster:    cluster,
+			machineSet: machineSet,
+			machines:   machines,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+
+		_, err := r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 		// Verify the unhealthy machine is deleted.
 		m := &clusterv1.Machine{}
@@ -1499,8 +1543,6 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 	})
 
 	t.Run("should update the unhealthy machine MachineOwnerRemediated condition if preflight checks did not pass", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineSetPreflightChecks, true)()
-
 		g := NewWithT(t)
 
 		// An upgrading control plane should cause the preflight checks to not pass.
@@ -1547,7 +1589,13 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		r := &Reconciler{
 			Client: fakeClient,
 		}
-		_, err := r.reconcileUnhealthyMachines(ctx, cluster, machineSet, machines)
+		s := &scope{
+			cluster:    cluster,
+			machineSet: machineSet,
+			machines:   machines,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		_, err := r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		// Verify the unhealthy machine has the updated condition.
@@ -1653,8 +1701,16 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 			Client: fakeClient,
 		}
 
+		s := &scope{
+			cluster:                 cluster,
+			machineSet:              machineSetOld,
+			machines:                machines,
+			owningMachineDeployment: machineDeployment,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+
 		// Test first with the old MachineSet.
-		_, err := r.reconcileUnhealthyMachines(ctx, cluster, machineSetOld, machines)
+		_, err := r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		condition := clusterv1.MachineOwnerRemediatedCondition
@@ -1677,7 +1733,14 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 			To(BeFalse(), "Machine should not have the %s condition set", condition)
 
 		// Test with the current MachineSet.
-		_, err = r.reconcileUnhealthyMachines(ctx, cluster, machineSetCurrent, machines)
+		s = &scope{
+			cluster:                 cluster,
+			machineSet:              machineSetCurrent,
+			machines:                machines,
+			owningMachineDeployment: machineDeployment,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		_, err = r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		// Verify the unhealthy machine has been deleted.
@@ -1784,7 +1847,14 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		//
 		// First pass.
 		//
-		_, err := r.reconcileUnhealthyMachines(ctx, cluster, machineSet, append(unhealthyMachines, healthyMachine))
+		s := &scope{
+			cluster:                 cluster,
+			machineSet:              machineSet,
+			machines:                append(unhealthyMachines, healthyMachine),
+			owningMachineDeployment: machineDeployment,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		_, err := r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		condition := clusterv1.MachineOwnerRemediatedCondition
@@ -1825,7 +1895,7 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		}
 
 		// Perform the second pass.
-		var allMachines = func() (res []*clusterv1.Machine) {
+		allMachines := func() (res []*clusterv1.Machine) {
 			var machineList clusterv1.MachineList
 			g.Expect(r.Client.List(ctx, &machineList)).To(Succeed())
 			for i := range machineList.Items {
@@ -1835,10 +1905,17 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 			return
 		}
 
-		_, err = r.reconcileUnhealthyMachines(ctx, cluster, machineSet, allMachines())
+		s = &scope{
+			cluster:                 cluster,
+			machineSet:              machineSet,
+			machines:                allMachines(),
+			owningMachineDeployment: machineDeployment,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		_, err = r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		var validateSecondPass = func(cleanFinalizer bool) {
+		validateSecondPass := func(cleanFinalizer bool) {
 			t.Helper()
 			for i := range unhealthyMachines {
 				m := unhealthyMachines[i]
@@ -1882,7 +1959,14 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		// Perform another pass with the same exact configuration.
 		// This is testing that, given that we have Machines that are being deleted and are in flight,
 		// we have reached the maximum amount of tokens we have and we should wait to remediate the rest.
-		_, err = r.reconcileUnhealthyMachines(ctx, cluster, machineSet, allMachines())
+		s = &scope{
+			cluster:                 cluster,
+			machineSet:              machineSet,
+			machines:                allMachines(),
+			owningMachineDeployment: machineDeployment,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		_, err = r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		// Validate and remove finalizers for in flight machines.
@@ -1896,7 +1980,14 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		// Call again to verify that the remaining unhealthy machines are deleted,
 		// at this point all unhealthy machines should be deleted given the max in flight
 		// is greater than the number of unhealthy machines.
-		_, err = r.reconcileUnhealthyMachines(ctx, cluster, machineSet, allMachines())
+		s = &scope{
+			cluster:                 cluster,
+			machineSet:              machineSet,
+			machines:                allMachines(),
+			owningMachineDeployment: machineDeployment,
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		_, err = r.reconcileUnhealthyMachines(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 
 		// Iterate over the unhealthy machines and verify that all were deleted.
@@ -1914,8 +2005,6 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 
 func TestMachineSetReconciler_syncReplicas(t *testing.T) {
 	t.Run("should hold off on creating new machines when preflight checks do not pass", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineSetPreflightChecks, true)()
-
 		g := NewWithT(t)
 
 		// An upgrading control plane should cause the preflight checks to not pass.
@@ -1948,7 +2037,13 @@ func TestMachineSetReconciler_syncReplicas(t *testing.T) {
 		r := &Reconciler{
 			Client: fakeClient,
 		}
-		result, err := r.syncReplicas(ctx, cluster, machineSet, nil)
+		s := &scope{
+			cluster:    cluster,
+			machineSet: machineSet,
+			machines:   []*clusterv1.Machine{},
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		result, err := r.syncReplicas(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(result.IsZero()).To(BeFalse(), "syncReplicas should not return a 'zero' result")
 
@@ -2121,5 +2216,99 @@ func assertMachine(g *WithT, actualMachine *clusterv1.Machine, expectedMachine *
 	// Check Finalizer
 	if expectedMachine.Finalizers != nil {
 		g.Expect(actualMachine.Finalizers).Should(Equal(expectedMachine.Finalizers))
+	}
+}
+
+func TestReconciler_reconcileDelete(t *testing.T) {
+	labels := map[string]string{
+		"some": "labelselector",
+	}
+	ms := builder.MachineSet("default", "ms0").WithClusterName("test").Build()
+	ms.Finalizers = []string{
+		clusterv1.MachineSetFinalizer,
+	}
+	ms.DeletionTimestamp = ptr.To(metav1.Now())
+	ms.Spec.Selector = metav1.LabelSelector{
+		MatchLabels: labels,
+	}
+	msWithoutFinalizer := ms.DeepCopy()
+	msWithoutFinalizer.Finalizers = []string{}
+	tests := []struct {
+		name         string
+		machineSet   *clusterv1.MachineSet
+		want         *clusterv1.MachineSet
+		objs         []client.Object
+		wantMachines []clusterv1.Machine
+		expectError  bool
+	}{
+		{
+			name:         "Should do nothing when no descendant Machines exist and finalizer is already gone",
+			machineSet:   msWithoutFinalizer.DeepCopy(),
+			want:         msWithoutFinalizer.DeepCopy(),
+			objs:         nil,
+			wantMachines: nil,
+			expectError:  false,
+		},
+		{
+			name:         "Should remove finalizer when no descendant Machines exist",
+			machineSet:   ms.DeepCopy(),
+			want:         msWithoutFinalizer.DeepCopy(),
+			objs:         nil,
+			wantMachines: nil,
+			expectError:  false,
+		},
+		{
+			name:       "Should keep finalizer when descendant Machines exist and trigger deletion only for descendant Machines",
+			machineSet: ms.DeepCopy(),
+			want:       ms.DeepCopy(),
+			objs: []client.Object{
+				builder.Machine("default", "m0").WithClusterName("test").WithLabels(labels).Build(),
+				builder.Machine("default", "m1").WithClusterName("test").WithLabels(labels).Build(),
+				builder.Machine("default", "m2-not-part-of-ms").WithClusterName("test").Build(),
+				builder.Machine("default", "m3-not-part-of-ms").WithClusterName("test").Build(),
+			},
+			wantMachines: []clusterv1.Machine{
+				*builder.Machine("default", "m2-not-part-of-ms").WithClusterName("test").Build(),
+				*builder.Machine("default", "m3-not-part-of-ms").WithClusterName("test").Build(),
+			},
+			expectError: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			c := fake.NewClientBuilder().WithObjects(tt.objs...).Build()
+			r := &Reconciler{
+				Client:   c,
+				recorder: record.NewFakeRecorder(32),
+			}
+
+			s := &scope{
+				machineSet: tt.machineSet,
+			}
+
+			// populate s.machines
+			_, err := r.getAndAdoptMachinesForMachineSet(ctx, s)
+			g.Expect(err).ToNot(HaveOccurred())
+			_, err = r.reconcileDelete(ctx, s)
+			if tt.expectError {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).ToNot(HaveOccurred())
+			}
+
+			g.Expect(tt.machineSet).To(BeComparableTo(tt.want))
+
+			machineList := &clusterv1.MachineList{}
+			g.Expect(c.List(ctx, machineList, client.InNamespace("default"))).ToNot(HaveOccurred())
+
+			// Remove ResourceVersion so we can actually compare.
+			for i := range machineList.Items {
+				machineList.Items[i].ResourceVersion = ""
+			}
+
+			g.Expect(machineList.Items).To(ConsistOf(tt.wantMachines))
+		})
 	}
 }

@@ -45,11 +45,11 @@ import (
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/hooks"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
 	"sigs.k8s.io/cluster-api/internal/topology/clustershim"
 	"sigs.k8s.io/cluster-api/internal/topology/names"
 	"sigs.k8s.io/cluster-api/internal/topology/ownerrefs"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 var (
@@ -235,6 +235,33 @@ func TestComputeControlPlaneInfrastructureMachineTemplate(t *testing.T) {
 		g.Expect(obj.GetOwnerReferences()[0].Kind).To(Equal("Cluster"))
 		g.Expect(obj.GetOwnerReferences()[0].Name).To(Equal(cluster.Name))
 	})
+
+	t.Run("Always generates the infrastructureMachineTemplate from the template in the cluster namespace", func(t *testing.T) {
+		g := NewWithT(t)
+
+		cluster := cluster.DeepCopy()
+		cluster.Namespace = "differs"
+		scope := scope.New(cluster)
+		scope.Blueprint = blueprint
+
+		obj, err := computeControlPlaneInfrastructureMachineTemplate(ctx, scope)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(obj).ToNot(BeNil())
+
+		assertTemplateToTemplate(g, assertTemplateInput{
+			cluster:     scope.Current.Cluster,
+			templateRef: blueprint.ClusterClass.Spec.ControlPlane.MachineInfrastructure.Ref,
+			template:    blueprint.ControlPlane.InfrastructureMachineTemplate,
+			currentRef:  nil,
+			obj:         obj,
+		})
+
+		// Ensure Cluster ownership is added to generated InfrastructureCluster.
+		g.Expect(obj.GetOwnerReferences()).To(HaveLen(1))
+		g.Expect(obj.GetOwnerReferences()[0].Kind).To(Equal("Cluster"))
+		g.Expect(obj.GetOwnerReferences()[0].Name).To(Equal(cluster.Name))
+	})
+
 	t.Run("If there is already a reference to the infrastructureMachineTemplate, it preserves the reference name", func(t *testing.T) {
 		g := NewWithT(t)
 
@@ -642,7 +669,7 @@ func TestComputeControlPlane(t *testing.T) {
 
 func TestComputeControlPlaneVersion(t *testing.T) {
 	t.Run("Compute control plane version under various circumstances", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+		utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
 		nonBlockingBeforeClusterUpgradeResponse := &runtimehooksv1.BeforeClusterUpgradeResponse{
 			CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
@@ -888,7 +915,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 	})
 
 	t.Run("Calling AfterControlPlaneUpgrade hook", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+		utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
 		catalog := runtimecatalog.New()
 		_ = runtimehooksv1.AddToCatalog(catalog)
@@ -1189,7 +1216,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 	})
 
 	t.Run("register intent to call AfterClusterUpgrade and AfterControlPlaneUpgrade hooks", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+		utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
 		catalog := runtimecatalog.New()
 		_ = runtimehooksv1.AddToCatalog(catalog)
@@ -1381,7 +1408,8 @@ func TestComputeMachineDeployment(t *testing.T) {
 				MachineHealthCheck: &clusterv1.MachineHealthCheckClass{
 					UnhealthyConditions: unhealthyConditions,
 					NodeStartupTimeout: &metav1.Duration{
-						Duration: time.Duration(1)},
+						Duration: time.Duration(1),
+					},
 				},
 			},
 		},
@@ -2906,7 +2934,8 @@ func Test_computeMachineHealthCheck(t *testing.T) {
 			},
 		},
 		NodeStartupTimeout: &metav1.Duration{
-			Duration: time.Duration(1)},
+			Duration: time.Duration(1),
+		},
 	}
 	selector := &metav1.LabelSelector{MatchLabels: map[string]string{
 		"foo": "bar",
@@ -2950,7 +2979,8 @@ func Test_computeMachineHealthCheck(t *testing.T) {
 				},
 			},
 			NodeStartupTimeout: &metav1.Duration{
-				Duration: time.Duration(1)},
+				Duration: time.Duration(1),
+			},
 		},
 	}
 
