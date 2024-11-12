@@ -32,7 +32,7 @@ const pathKey = pathKeyType("grpc.internal.address.hierarchical_path")
 
 type pathValue []string
 
-func (p pathValue) Equal(o interface{}) bool {
+func (p pathValue) Equal(o any) bool {
 	op, ok := o.(pathValue)
 	if !ok {
 		return false
@@ -70,26 +70,29 @@ func Set(addr resolver.Address, path []string) resolver.Address {
 //
 // Input:
 // [
-//   {addr0, path: [p0, wt0]}
-//   {addr1, path: [p0, wt1]}
-//   {addr2, path: [p1, wt2]}
-//   {addr3, path: [p1, wt3]}
+//
+//	{addr0, path: [p0, wt0]}
+//	{addr1, path: [p0, wt1]}
+//	{addr2, path: [p1, wt2]}
+//	{addr3, path: [p1, wt3]}
+//
 // ]
 //
 // Addresses will be split into p0/p1, and the p0/p1 will be removed from the
 // path.
 //
 // Output:
-// {
-//   p0: [
-//     {addr0, path: [wt0]},
-//     {addr1, path: [wt1]},
-//   ],
-//   p1: [
-//     {addr2, path: [wt2]},
-//     {addr3, path: [wt3]},
-//   ],
-// }
+//
+//	{
+//	  p0: [
+//	    {addr0, path: [wt0]},
+//	    {addr1, path: [wt1]},
+//	  ],
+//	  p1: [
+//	    {addr2, path: [wt2]},
+//	    {addr3, path: [wt3]},
+//	  ],
+//	}
 //
 // If hierarchical path is not set, or has no path in it, the address is
 // dropped.

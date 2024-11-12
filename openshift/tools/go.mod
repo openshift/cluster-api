@@ -2,7 +2,6 @@ module tools
 
 go 1.22.7
 
-
 require github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20241105164812-acabef006352
 
 require (
