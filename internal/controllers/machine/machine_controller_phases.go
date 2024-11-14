@@ -185,25 +185,22 @@ func (r *Reconciler) reconcileBootstrap(ctx context.Context, s *scope) (ctrl.Res
 	cluster := s.cluster
 	m := s.machine
 
-	// If the Bootstrap ref is nil (and so the machine should use user generated data secret), return.
-	if m.Spec.Bootstrap.ConfigRef == nil {
-		return ctrl.Result{}, nil
-	}
+	if m.Spec.Bootstrap.ConfigRef != nil {
+		// Call generic external reconciler if we have an external reference.
+		externalResult, err := r.reconcileExternal(ctx, cluster, m, m.Spec.Bootstrap.ConfigRef)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		s.bootstrapConfig = externalResult.Result
 
-	// Call generic external reconciler if we have an external reference.
-	externalResult, err := r.reconcileExternal(ctx, cluster, m, m.Spec.Bootstrap.ConfigRef)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	s.bootstrapConfig = externalResult.Result
+		// If the external object is paused return.
+		if externalResult.Paused {
+			return ctrl.Result{}, nil
+		}
 
-	// If the external object is paused return.
-	if externalResult.Paused {
-		return ctrl.Result{}, nil
-	}
-
-	if externalResult.RequeueAfter > 0 {
-		return ctrl.Result{RequeueAfter: externalResult.RequeueAfter}, nil
+		if externalResult.RequeueAfter > 0 {
+			return ctrl.Result{RequeueAfter: externalResult.RequeueAfter}, nil
+		}
 	}
 
 	// If the bootstrap data is populated, set ready and return.
@@ -212,33 +209,37 @@ func (r *Reconciler) reconcileBootstrap(ctx context.Context, s *scope) (ctrl.Res
 		conditions.MarkTrue(m, clusterv1.BootstrapReadyCondition)
 		return ctrl.Result{}, nil
 	}
-	bootstrapConfig := externalResult.Result
 
 	// If the bootstrap config is being deleted, return early.
-	if !bootstrapConfig.GetDeletionTimestamp().IsZero() {
+	if !s.bootstrapConfig.GetDeletionTimestamp().IsZero() {
+		return ctrl.Result{}, nil
+	}
+
+	// If the Bootstrap ref is nil (and so the machine should use user generated data secret), return.
+	if m.Spec.Bootstrap.ConfigRef == nil {
 		return ctrl.Result{}, nil
 	}
 
 	// Determine if the bootstrap provider is ready.
-	ready, err := external.IsReady(bootstrapConfig)
+	ready, err := external.IsReady(s.bootstrapConfig)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Report a summary of current status of the bootstrap object defined for this machine.
 	conditions.SetMirror(m, clusterv1.BootstrapReadyCondition,
-		conditions.UnstructuredGetter(bootstrapConfig),
+		conditions.UnstructuredGetter(s.bootstrapConfig),
 		conditions.WithFallbackValue(ready, clusterv1.WaitingForDataSecretFallbackReason, clusterv1.ConditionSeverityInfo, ""),
 	)
 
 	// If the bootstrap provider is not ready, requeue.
 	if !ready {
-		log.Info("Waiting for bootstrap provider to generate data secret and report status.ready", bootstrapConfig.GetKind(), klog.KObj(bootstrapConfig))
+		log.Info("Waiting for bootstrap provider to generate data secret and report status.ready", s.bootstrapConfig.GetKind(), klog.KObj(s.bootstrapConfig))
 		return ctrl.Result{}, nil
 	}
 
 	// Get and set the name of the secret containing the bootstrap data.
-	secretName, _, err := unstructured.NestedString(bootstrapConfig.Object, "status", "dataSecretName")
+	secretName, _, err := unstructured.NestedString(s.bootstrapConfig.Object, "status", "dataSecretName")
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to retrieve dataSecretName from bootstrap provider for Machine %q in namespace %q", m.Name, m.Namespace)
 	} else if secretName == "" {
@@ -246,7 +247,7 @@ func (r *Reconciler) reconcileBootstrap(ctx context.Context, s *scope) (ctrl.Res
 	}
 	m.Spec.Bootstrap.DataSecretName = ptr.To(secretName)
 	if !m.Status.BootstrapReady {
-		log.Info("Bootstrap provider generated data secret and reports status.ready", bootstrapConfig.GetKind(), klog.KObj(bootstrapConfig), "Secret", klog.KRef(m.Namespace, secretName))
+		log.Info("Bootstrap provider generated data secret and reports status.ready", s.bootstrapConfig.GetKind(), klog.KObj(s.bootstrapConfig), "Secret", klog.KRef(m.Namespace, secretName))
 	}
 	m.Status.BootstrapReady = true
 	return ctrl.Result{}, nil
