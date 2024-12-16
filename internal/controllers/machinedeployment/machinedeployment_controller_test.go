@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 const (
@@ -60,6 +61,11 @@ func TestMachineDeploymentReconciler(t *testing.T) {
 
 		t.Log("Creating the Cluster Kubeconfig Secret")
 		g.Expect(env.CreateKubeconfigSecret(ctx, cluster)).To(Succeed())
+
+		// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+		patch := client.MergeFrom(cluster.DeepCopy())
+		cluster.Status.InfrastructureReady = true
+		g.Expect(env.Status().Patch(ctx, cluster, patch)).To(Succeed())
 
 		return ns, cluster
 	}
@@ -962,11 +968,14 @@ func TestGetMachineSetsForDeployment(t *testing.T) {
 				recorder: record.NewFakeRecorder(32),
 			}
 
-			got, err := r.getMachineSetsForDeployment(ctx, &tc.machineDeployment)
+			s := &scope{
+				machineDeployment: &tc.machineDeployment,
+			}
+			err := r.getAndAdoptMachineSetsForDeployment(ctx, s)
 			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(got).To(HaveLen(len(tc.expected)))
 
-			for idx, res := range got {
+			g.Expect(s.machineSets).To(HaveLen(len(tc.expected)))
+			for idx, res := range s.machineSets {
 				g.Expect(res.Name).To(Equal(tc.expected[idx].Name))
 				g.Expect(res.Namespace).To(Equal(tc.expected[idx].Namespace))
 			}
@@ -992,4 +1001,94 @@ func updateMachineDeployment(ctx context.Context, c client.Client, md *clusterv1
 		modify(md)
 		return patchHelper.Patch(ctx, md)
 	})
+}
+
+func TestReconciler_reconcileDelete(t *testing.T) {
+	labels := map[string]string{
+		"some": "labelselector",
+	}
+	md := builder.MachineDeployment("default", "md0").WithClusterName("test").Build()
+	md.Finalizers = []string{
+		clusterv1.MachineDeploymentFinalizer,
+	}
+	md.DeletionTimestamp = ptr.To(metav1.Now())
+	md.Spec.Selector = metav1.LabelSelector{
+		MatchLabels: labels,
+	}
+	mdWithoutFinalizer := md.DeepCopy()
+	mdWithoutFinalizer.Finalizers = []string{}
+	tests := []struct {
+		name              string
+		machineDeployment *clusterv1.MachineDeployment
+		want              *clusterv1.MachineDeployment
+		objs              []client.Object
+		wantMachineSets   []clusterv1.MachineSet
+		expectError       bool
+	}{
+		{
+			name:              "Should do nothing when no descendant MachineSets exist and finalizer is already gone",
+			machineDeployment: mdWithoutFinalizer.DeepCopy(),
+			want:              mdWithoutFinalizer.DeepCopy(),
+			objs:              nil,
+			wantMachineSets:   nil,
+			expectError:       false,
+		},
+		{
+			name:              "Should remove finalizer when no descendant MachineSets exist",
+			machineDeployment: md.DeepCopy(),
+			want:              mdWithoutFinalizer.DeepCopy(),
+			objs:              nil,
+			wantMachineSets:   nil,
+			expectError:       false,
+		},
+		{
+			name:              "Should keep finalizer when descendant MachineSets exist and trigger deletion only for descendant MachineSets",
+			machineDeployment: md.DeepCopy(),
+			want:              md.DeepCopy(),
+			objs: []client.Object{
+				builder.MachineSet("default", "ms0").WithClusterName("test").WithLabels(labels).Build(),
+				builder.MachineSet("default", "ms1").WithClusterName("test").WithLabels(labels).Build(),
+				builder.MachineSet("default", "ms2-not-part-of-md").WithClusterName("test").Build(),
+				builder.MachineSet("default", "ms3-not-part-of-md").WithClusterName("test").Build(),
+			},
+			wantMachineSets: []clusterv1.MachineSet{
+				*builder.MachineSet("default", "ms2-not-part-of-md").WithClusterName("test").Build(),
+				*builder.MachineSet("default", "ms3-not-part-of-md").WithClusterName("test").Build(),
+			},
+			expectError: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			c := fake.NewClientBuilder().WithObjects(tt.objs...).Build()
+			r := &Reconciler{
+				Client:   c,
+				recorder: record.NewFakeRecorder(32),
+			}
+
+			s := &scope{
+				machineDeployment: tt.machineDeployment,
+			}
+			err := r.reconcileDelete(ctx, s)
+			if tt.expectError {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).ToNot(HaveOccurred())
+			}
+
+			g.Expect(tt.machineDeployment).To(BeComparableTo(tt.want))
+
+			machineSetList := &clusterv1.MachineSetList{}
+			g.Expect(c.List(ctx, machineSetList, client.InNamespace("default"))).ToNot(HaveOccurred())
+
+			// Remove ResourceVersion so we can actually compare.
+			for i := range machineSetList.Items {
+				machineSetList.Items[i].ResourceVersion = ""
+			}
+
+			g.Expect(machineSetList.Items).To(ConsistOf(tt.wantMachineSets))
+		})
+	}
 }

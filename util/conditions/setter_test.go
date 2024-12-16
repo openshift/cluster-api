@@ -33,35 +33,45 @@ import (
 func TestHasSameState(t *testing.T) {
 	g := NewWithT(t)
 
+	// two nils
+	var nil2 *clusterv1.Condition
+	g.Expect(HasSameState(nil1, nil2)).To(BeTrue())
+
+	// nil condition 1
+	g.Expect(HasSameState(nil1, true1)).To(BeFalse())
+
+	// nil condition 2
+	g.Expect(HasSameState(true1, nil2)).To(BeFalse())
+
 	// same condition
 	falseInfo2 := falseInfo1.DeepCopy()
-	g.Expect(hasSameState(falseInfo1, falseInfo2)).To(BeTrue())
+	g.Expect(HasSameState(falseInfo1, falseInfo2)).To(BeTrue())
 
 	// different LastTransitionTime does not impact state
 	falseInfo2 = falseInfo1.DeepCopy()
 	falseInfo2.LastTransitionTime = metav1.NewTime(time.Date(1900, time.November, 10, 23, 0, 0, 0, time.UTC))
-	g.Expect(hasSameState(falseInfo1, falseInfo2)).To(BeTrue())
+	g.Expect(HasSameState(falseInfo1, falseInfo2)).To(BeTrue())
 
 	// different Type, Status, Reason, Severity and Message determine different state
 	falseInfo2 = falseInfo1.DeepCopy()
 	falseInfo2.Type = "another type"
-	g.Expect(hasSameState(falseInfo1, falseInfo2)).To(BeFalse())
+	g.Expect(HasSameState(falseInfo1, falseInfo2)).To(BeFalse())
 
 	falseInfo2 = falseInfo1.DeepCopy()
 	falseInfo2.Status = corev1.ConditionTrue
-	g.Expect(hasSameState(falseInfo1, falseInfo2)).To(BeFalse())
+	g.Expect(HasSameState(falseInfo1, falseInfo2)).To(BeFalse())
 
 	falseInfo2 = falseInfo1.DeepCopy()
 	falseInfo2.Severity = clusterv1.ConditionSeverityWarning
-	g.Expect(hasSameState(falseInfo1, falseInfo2)).To(BeFalse())
+	g.Expect(HasSameState(falseInfo1, falseInfo2)).To(BeFalse())
 
 	falseInfo2 = falseInfo1.DeepCopy()
 	falseInfo2.Reason = "another severity"
-	g.Expect(hasSameState(falseInfo1, falseInfo2)).To(BeFalse())
+	g.Expect(HasSameState(falseInfo1, falseInfo2)).To(BeFalse())
 
 	falseInfo2 = falseInfo1.DeepCopy()
 	falseInfo2.Message = "another message"
-	g.Expect(hasSameState(falseInfo1, falseInfo2)).To(BeFalse())
+	g.Expect(HasSameState(falseInfo1, falseInfo2)).To(BeFalse())
 }
 
 func TestLexicographicLess(t *testing.T) {
@@ -84,6 +94,12 @@ func TestLexicographicLess(t *testing.T) {
 	a = TrueCondition("A")
 	b = TrueCondition(clusterv1.ReadyCondition)
 	g.Expect(lexicographicLess(a, b)).To(BeFalse())
+
+	a = TrueCondition("A")
+	g.Expect(lexicographicLess(a, nil1)).To(BeFalse())
+
+	b = TrueCondition("A")
+	g.Expect(lexicographicLess(nil1, b)).To(BeTrue())
 }
 
 func TestSet(t *testing.T) {
@@ -304,7 +320,7 @@ func (matcher *ConditionsMatcher) Match(actual interface{}) (success bool, err e
 	}
 
 	for i := range actualConditions {
-		if !hasSameState(&actualConditions[i], &matcher.Expected[i]) {
+		if !HasSameState(&actualConditions[i], &matcher.Expected[i]) {
 			return false, nil
 		}
 	}

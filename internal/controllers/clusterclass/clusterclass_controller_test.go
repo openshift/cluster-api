@@ -29,7 +29,10 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/version"
+	utilversion "k8s.io/apiserver/pkg/util/version"
 	utilfeature "k8s.io/component-base/featuregate/testing"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -40,9 +43,8 @@ import (
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/feature"
-	tlog "sigs.k8s.io/cluster-api/internal/log"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 func TestClusterClassReconciler_reconcile(t *testing.T) {
@@ -209,6 +211,7 @@ func assertStatusVariables(actualClusterClass *clusterv1.ClusterClass) error {
 	}
 	return nil
 }
+
 func assertInfrastructureClusterTemplate(ctx context.Context, actualClusterClass *clusterv1.ClusterClass, ns *corev1.Namespace) error {
 	// Assert the infrastructure cluster template has the correct owner reference.
 	actualInfraClusterTemplate := builder.InfrastructureClusterTemplate("", "").Build()
@@ -382,7 +385,9 @@ func assertHasOwnerReference(obj client.Object, ownerRef metav1.OwnerReference) 
 		}
 	}
 	if !found {
-		return fmt.Errorf("object %s does not have OwnerReference %s", tlog.KObj{Obj: obj}, &ownerRef)
+		// Note: Kind might be empty here as it's usually only set on Unstructured objects.
+		// But as this is just test code we don't care too much about it.
+		return fmt.Errorf("%s %s does not have OwnerReference %s", obj.GetObjectKind().GroupVersionKind().Kind, klog.KObj(obj), &ownerRef)
 	}
 	return nil
 }
@@ -404,7 +409,7 @@ func isOwnerReferenceEqual(a, b metav1.OwnerReference) bool {
 }
 
 func TestReconciler_reconcileVariables(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
 	catalog := runtimecatalog.New()
 	_ = runtimehooksv1.AddToCatalog(catalog)
@@ -534,7 +539,9 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
 							DiscoverVariablesExtension: ptr.To("variables-one"),
-						}}}).
+						},
+					},
+				}).
 				Build(),
 			patchResponse: &runtimehooksv1.DiscoverVariablesResponse{
 				CommonResponse: runtimehooksv1.CommonResponse{
@@ -750,7 +757,9 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
 							DiscoverVariablesExtension: ptr.To("variables-one"),
-						}}}).
+						},
+					},
+				}).
 				Build(),
 			patchResponse: &runtimehooksv1.DiscoverVariablesResponse{
 				CommonResponse: runtimehooksv1.CommonResponse{
@@ -788,7 +797,9 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
 							DiscoverVariablesExtension: ptr.To("variables-one"),
-						}}}).
+						},
+					},
+				}).
 				Build(),
 			patchResponse: &runtimehooksv1.DiscoverVariablesResponse{
 				CommonResponse: runtimehooksv1.CommonResponse{
@@ -827,7 +838,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 								},
 								XValidations: []clusterv1.ValidationRule{{
 									Rule:              "true",
-									MessageExpression: "'test error message, got value %s'.format([self])",
+									MessageExpression: "'test error message, got value %s'.format([self.enabled])",
 									FieldPath:         ".enabled",
 								}},
 							},
@@ -889,7 +900,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 									},
 									XValidations: []clusterv1.ValidationRule{{
 										Rule:              "true",
-										MessageExpression: "'test error message, got value %s'.format([self])",
+										MessageExpression: "'test error message, got value %s'.format([self.enabled])",
 										FieldPath:         ".enabled",
 									}},
 								},
@@ -961,7 +972,9 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
 							DiscoverVariablesExtension: ptr.To("variables-one"),
-						}}}).
+						},
+					},
+				}).
 				Build(),
 			patchResponse: &runtimehooksv1.DiscoverVariablesResponse{
 				CommonResponse: runtimehooksv1.CommonResponse{
@@ -1007,7 +1020,9 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
 							DiscoverVariablesExtension: ptr.To("variables-one"),
-						}}}).
+						},
+					},
+				}).
 				Build(),
 			patchResponse: &runtimehooksv1.DiscoverVariablesResponse{
 				CommonResponse: runtimehooksv1.CommonResponse{
@@ -1058,7 +1073,9 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
 							DiscoverVariablesExtension: ptr.To("variables-one"),
-						}}}).
+						},
+					},
+				}).
 				Build(),
 			patchResponse: &runtimehooksv1.DiscoverVariablesResponse{
 				CommonResponse: runtimehooksv1.CommonResponse{
@@ -1133,7 +1150,9 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
 							DiscoverVariablesExtension: ptr.To("variables-one"),
-						}}}).
+						},
+					},
+				}).
 				Build(),
 			patchResponse: &runtimehooksv1.DiscoverVariablesResponse{
 				CommonResponse: runtimehooksv1.CommonResponse{
@@ -1196,6 +1215,17 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				RuntimeClient: fakeRuntimeClient,
 			}
 
+			// Pin the compatibility version used in variable CEL validation to 1.29, so we don't have to continuously refactor
+			// the unit tests that verify that compatibility is handled correctly.
+			effectiveVer := utilversion.DefaultComponentGlobalsRegistry.EffectiveVersionFor(utilversion.DefaultKubeComponent)
+			if effectiveVer != nil {
+				g.Expect(effectiveVer.MinCompatibilityVersion()).To(Equal(version.MustParse("v1.29")))
+			} else {
+				v := utilversion.DefaultKubeEffectiveVersion()
+				v.SetMinCompatibilityVersion(version.MustParse("v1.29"))
+				g.Expect(utilversion.DefaultComponentGlobalsRegistry.Register(utilversion.DefaultKubeComponent, v, nil)).To(Succeed())
+			}
+
 			err := r.reconcileVariables(ctx, tt.clusterClass)
 
 			// Cleanup condition timestamps for easier comparison.
@@ -1204,6 +1234,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 			}
 			g.Expect(tt.wantConditions).To(Equal(tt.clusterClass.Status.Conditions))
 			if tt.wantErrMessage != "" {
+				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(Equal(tt.wantErrMessage))
 				return
 			}
@@ -1242,18 +1273,21 @@ func TestReconciler_extensionConfigToClusterClass(t *testing.T) {
 	// These ClusterClasses will be reconciled as they both reference the passed ExtensionConfig `runtime1`.
 	onePatchClusterClass := builder.ClusterClass(metav1.NamespaceDefault, "cc1").
 		WithPatches([]clusterv1.ClusterClassPatch{
-			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime1")}}}).
+			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime1")}},
+		}).
 		Build()
 	twoPatchClusterClass := builder.ClusterClass(metav1.NamespaceDefault, "cc2").
 		WithPatches([]clusterv1.ClusterClassPatch{
 			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime1")}},
-			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime2")}}}).
+			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime2")}},
+		}).
 		Build()
 
 	// This ClusterClasses will not be reconciled as it does not reference the passed ExtensionConfig `runtime1`.
 	notReconciledClusterClass := builder.ClusterClass(metav1.NamespaceDefault, "cc3").
 		WithPatches([]clusterv1.ClusterClassPatch{
-			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.other-runtime-class")}}}).
+			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.other-runtime-class")}},
+		}).
 		Build()
 
 	t.Run("test", func(t *testing.T) {

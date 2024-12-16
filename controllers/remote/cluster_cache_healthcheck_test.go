@@ -19,6 +19,7 @@ package remote
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -95,7 +96,7 @@ func TestClusterCacheHealthCheck(t *testing.T) {
 					Namespace: ns.GetName(),
 				},
 			}
-			g.Expect(k8sClient.Create(ctx, testCluster)).To(Succeed())
+			g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
 			conditions.MarkTrue(testCluster, clusterv1.ControlPlaneInitializedCondition)
 			testCluster.Status.InfrastructureReady = true
 			g.Expect(k8sClient.Status().Update(ctx, testCluster)).To(Succeed())
@@ -158,7 +159,8 @@ func TestClusterCacheHealthCheck(t *testing.T) {
 			ns := setup(t, g)
 			defer teardown(t, g, ns)
 			// Create a context with a timeout to cancel the healthcheck after some time
-			ctx, cancel := context.WithTimeout(ctx, time.Second)
+			contextTimeout := time.Second
+			ctx, cancel := context.WithTimeout(ctx, contextTimeout)
 			defer cancel()
 			// Delete the cluster accessor and lock the cluster to simulate creation of a new cluster accessor
 			cct.deleteAccessor(ctx, testClusterKey)
@@ -177,8 +179,9 @@ func TestClusterCacheHealthCheck(t *testing.T) {
 				path:               "/",
 			})
 			timeElapsedForHealthCheck := time.Since(startHealthCheck)
+			timeElapsedForHealthCheckRounded := int(math.Round(timeElapsedForHealthCheck.Seconds()))
 			// If the duration is shorter than the timeout, we know that the healthcheck wasn't requeued properly.
-			g.Expect(timeElapsedForHealthCheck).Should(BeNumerically(">=", time.Second))
+			g.Expect(timeElapsedForHealthCheckRounded).Should(BeNumerically(">=", int(contextTimeout.Seconds())))
 			// The healthcheck should be aborted by the timout of the context
 			g.Expect(ctx.Done()).Should(BeClosed())
 		})

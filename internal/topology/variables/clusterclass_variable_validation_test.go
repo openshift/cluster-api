@@ -21,8 +21,11 @@ import (
 	"strings"
 	"testing"
 
+	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apimachinery/pkg/util/version"
+	utilversion "k8s.io/apiserver/pkg/util/version"
 	"k8s.io/utils/ptr"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -339,6 +342,19 @@ func Test_ValidateClusterClassVariables(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			// Pin the compatibility version used in variable CEL validation to 1.29, so we don't have to continuously refactor
+			// the unit tests that verify that compatibility is handled correctly.
+			effectiveVer := utilversion.DefaultComponentGlobalsRegistry.EffectiveVersionFor(utilversion.DefaultKubeComponent)
+			if effectiveVer != nil {
+				g.Expect(effectiveVer.MinCompatibilityVersion()).To(Equal(version.MustParse("v1.29")))
+			} else {
+				v := utilversion.DefaultKubeEffectiveVersion()
+				v.SetMinCompatibilityVersion(version.MustParse("v1.29"))
+				g.Expect(utilversion.DefaultComponentGlobalsRegistry.Register(utilversion.DefaultKubeComponent, v, nil)).To(Succeed())
+			}
+
 			gotErrs := ValidateClusterClassVariables(ctx,
 				tt.oldClusterClassVariables,
 				tt.clusterClassVariables,
@@ -2591,6 +2607,204 @@ func Test_ValidateClusterClassVariable(t *testing.T) {
 					"spec.variables[cpu].schema.openAPIV3Schema.properties[array].items.x-kubernetes-validations[0].messageExpression"),
 				forbidden("x-kubernetes-validations estimated rule & messageExpression cost total for entire OpenAPIv3 schema exceeds budget by factor of more than 100x",
 					"spec.variables[cpu].schema.openAPIV3Schema"),
+			},
+		},
+		{
+			name: "fail if x-kubernetes-validations are under oneOf/anyOf/allOf/not",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name: "variableA",
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "number",
+						Not: &clusterv1.JSONSchemaProps{
+							XValidations: []clusterv1.ValidationRule{{
+								Rule: "should be forbidden",
+							}},
+						},
+						AnyOf: []clusterv1.JSONSchemaProps{{
+							XValidations: []clusterv1.ValidationRule{{
+								Rule: "should be forbidden",
+							}},
+						}},
+						AllOf: []clusterv1.JSONSchemaProps{{
+							XValidations: []clusterv1.ValidationRule{{
+								Rule: "should be forbidden",
+							}},
+						}},
+						OneOf: []clusterv1.JSONSchemaProps{{
+							XValidations: []clusterv1.ValidationRule{{
+								Rule: "should be forbidden",
+							}},
+						}},
+					},
+				},
+			},
+			wantErrs: []validationMatch{
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.allOf[0].x-kubernetes-validations"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.anyOf[0].x-kubernetes-validations"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.not.x-kubernetes-validations"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.oneOf[0].x-kubernetes-validations"),
+			},
+		},
+		{
+			name: "fail if defaults are under oneOf/anyOf/allOf/not",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name: "variableA",
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "number",
+						Not: &clusterv1.JSONSchemaProps{
+							Default: &apiextensionsv1.JSON{
+								Raw: []byte(`42.0`),
+							},
+						},
+						AnyOf: []clusterv1.JSONSchemaProps{{
+							Default: &apiextensionsv1.JSON{
+								Raw: []byte(`42.0`),
+							},
+						}},
+						AllOf: []clusterv1.JSONSchemaProps{{
+							Default: &apiextensionsv1.JSON{
+								Raw: []byte(`42.0`),
+							},
+						}},
+						OneOf: []clusterv1.JSONSchemaProps{{
+							Default: &apiextensionsv1.JSON{
+								Raw: []byte(`42.0`),
+							},
+						}},
+					},
+				},
+			},
+			wantErrs: []validationMatch{
+				forbidden("must be undefined to be structural", "spec.variables[variableA].schema.openAPIV3Schema.allOf[0].default"),
+				forbidden("must be undefined to be structural", "spec.variables[variableA].schema.openAPIV3Schema.anyOf[0].default"),
+				forbidden("must be undefined to be structural", "spec.variables[variableA].schema.openAPIV3Schema.not.default"),
+				forbidden("must be undefined to be structural", "spec.variables[variableA].schema.openAPIV3Schema.oneOf[0].default"),
+			},
+		}, {
+			name: "fail if there are types set under oneOf/anyOf/allOf/not",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name: "variableA",
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "number",
+						Not: &clusterv1.JSONSchemaProps{
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"testField": {
+									Type: "number",
+								},
+							},
+						},
+						AnyOf: []clusterv1.JSONSchemaProps{{
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"testField": {
+									Type: "number",
+								},
+							},
+						}},
+						AllOf: []clusterv1.JSONSchemaProps{{
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"testField": {
+									Type: "number",
+								},
+							},
+						}},
+						OneOf: []clusterv1.JSONSchemaProps{{
+							Properties: map[string]clusterv1.JSONSchemaProps{
+								"testField": {
+									Type: "number",
+								},
+							},
+						}},
+					},
+				},
+			},
+			wantErrs: []validationMatch{
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.allOf[0].properties[testField].type"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.anyOf[0].properties[testField].type"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.not.properties[testField].type"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.oneOf[0].properties[testField].type"),
+			},
+		}, {
+			name: "pass if oneOf/anyOf/allOf/not schemas are valid",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name: "variableA",
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "string",
+						Not: &clusterv1.JSONSchemaProps{
+							Format: "email",
+						},
+						AnyOf: []clusterv1.JSONSchemaProps{{
+							Format: "ipv4",
+						}, {
+							Format: "ipv6",
+						}},
+						AllOf: []clusterv1.JSONSchemaProps{{
+							Format: "ipv4",
+						}, {
+							Format: "ipv6",
+						}},
+						OneOf: []clusterv1.JSONSchemaProps{{
+							Format: "ipv4",
+						}, {
+							Format: "ipv6",
+						}},
+					},
+				},
+			},
+		}, {
+			name: "pass & fail correctly for int-or-string in oneOf/anyOf/allOf schemas",
+			clusterClassVariable: &clusterv1.ClusterClassVariable{
+				Name: "variableA",
+				Schema: clusterv1.VariableSchema{
+					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"anyOfExampleField": { // Valid variant
+								XIntOrString: true,
+								AnyOf: []clusterv1.JSONSchemaProps{{
+									Type: "integer",
+								}, {
+									Type: "string",
+								}},
+							},
+							"allOfExampleFieldWithAnyOf": { // Valid variant
+								XIntOrString: true,
+								AllOf: []clusterv1.JSONSchemaProps{{
+									AnyOf: []clusterv1.JSONSchemaProps{{
+										Type: "integer",
+									}, {
+										Type: "string",
+									}},
+								}},
+							},
+							"allOfExampleField": {
+								AllOf: []clusterv1.JSONSchemaProps{{
+									Type: "integer",
+								}, {
+									Type: "string",
+								}},
+							},
+							"oneOfExampleField": {
+								OneOf: []clusterv1.JSONSchemaProps{{
+									Type: "integer",
+								}, {
+									Type: "string",
+								}},
+							},
+						},
+					},
+				},
+			},
+			wantErrs: []validationMatch{
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.properties[allOfExampleField].allOf[0].type"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.properties[allOfExampleField].allOf[1].type"),
+				required("must not be empty for specified object fields", "spec.variables[variableA].schema.openAPIV3Schema.properties[allOfExampleField].type"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.properties[oneOfExampleField].oneOf[0].type"),
+				forbidden("must be empty to be structural", "spec.variables[variableA].schema.openAPIV3Schema.properties[oneOfExampleField].oneOf[1].type"),
+				required("must not be empty for specified object fields", "spec.variables[variableA].schema.openAPIV3Schema.properties[oneOfExampleField].type"),
 			},
 		},
 	}

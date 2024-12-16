@@ -28,14 +28,6 @@ rules:
   - cluster.x-k8s.io
   resources:
   - clusters
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - cluster.x-k8s.io
-  resources:
-  - clusters
   - machines
   - machinesets
   verbs:
@@ -46,6 +38,7 @@ rules:
   - infrastructure.cluster.x-k8s.io
   resources:
   - inmemoryclusters
+  - inmemorymachines
   verbs:
   - create
   - delete
@@ -59,25 +52,6 @@ rules:
   resources:
   - inmemoryclusters/finalizers
   - inmemoryclusters/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - inmemorymachines
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
   - inmemorymachines/finalizers
   - inmemorymachines/status
   verbs:

@@ -32,7 +32,7 @@ import (
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 func TestMachineSetReconciler_runPreflightChecks(t *testing.T) {
@@ -68,8 +68,6 @@ func TestMachineSetReconciler_runPreflightChecks(t *testing.T) {
 		Build()
 
 	t.Run("should run preflight checks if the feature gate is enabled", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineSetPreflightChecks, true)()
-
 		tests := []struct {
 			name         string
 			cluster      *clusterv1.Cluster
@@ -570,7 +568,7 @@ func TestMachineSetReconciler_runPreflightChecks(t *testing.T) {
 	})
 
 	t.Run("should not run the preflight checks if the feature gate is disabled", func(t *testing.T) {
-		defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineSetPreflightChecks, false)()
+		utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineSetPreflightChecks, false)
 
 		g := NewWithT(t)
 		cluster := &clusterv1.Cluster{
