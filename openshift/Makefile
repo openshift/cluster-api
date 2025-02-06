@@ -22,4 +22,4 @@ ocp-manifests: $(RELEASE_DIR) $(KUSTOMIZE) check-env ## Builds openshift specifi
 	$(KUSTOMIZE) build ../config/default > core-components.yaml
 	# Generate provider manifests.
 	# TODO: load the provider-version dynamically at rebase time when this is invoked by the Rebase Bot during one of its lifecycle hooks.
-	cd tools && $(MANIFESTS_GEN) --provider-name "cluster-api" --provider-type "CoreProvider" --provider-version "${PROVIDER_VERSION}" --base-path "../../" --manifests-path "../manifests"
+	cd tools && $(MANIFESTS_GEN) --provider-name "cluster-api" --provider-type "CoreProvider" --provider-version "${PROVIDER_VERSION}" --base-path "../../" --manifests-path "../manifests" --kustomize-dir="openshift"
