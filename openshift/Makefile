@@ -19,4 +19,5 @@ update-manifests-gen:
 .PHONY: ocp-manifests
 ocp-manifests: $(RELEASE_DIR) check-env ## Builds openshift specific manifests
 	# Generate provider manifests.
-	cd tools && $(MANIFESTS_GEN) --provider-name "cluster-api" --provider-type "CoreProvider" --provider-version "${PROVIDER_VERSION}" --base-path "../../" --manifests-path "../manifests"
+	# TODO: load the provider-version dynamically at rebase time when this is invoked by the Rebase Bot during one of its lifecycle hooks.
+	cd tools && $(MANIFESTS_GEN) --provider-name "cluster-api" --provider-type "CoreProvider" --provider-version "${PROVIDER_VERSION}" --base-path "../../" --manifests-path "../manifests" --kustomize-dir="openshift"
