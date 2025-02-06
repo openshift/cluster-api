@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager # This patch is applied before manifests-gen renames it.
+  namespace: system        # This patch is applied before manifests-gen changes the namespace.
+spec:
+  template:
+    spec:
+     containers:
+     - name: manager
+       args:
+       - --leader-elect
+       - --diagnostics-address=${CAPI_DIAGNOSTICS_ADDRESS:=:8443}
+       - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
+       - --use-deprecated-infra-machine-naming=${CAPI_USE_DEPRECATED_INFRA_MACHINE_NAMING:=false}
+       - --feature-gates=MachinePool=${EXP_MACHINE_POOL:=true},ClusterResourceSet=${EXP_CLUSTER_RESOURCE_SET:=true},ClusterTopology=${CLUSTER_TOPOLOGY:=false},RuntimeSDK=${EXP_RUNTIME_SDK:=false},MachineSetPreflightChecks=${EXP_MACHINE_SET_PREFLIGHT_CHECKS:=false}
+       - --additional-sync-machine-labels=.*
+
