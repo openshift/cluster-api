@@ -31,15 +31,15 @@ import (
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/feature"
-	runtimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
+	internalruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
 	runtimeregistry "sigs.k8s.io/cluster-api/internal/runtime/registry"
 	fakev1alpha1 "sigs.k8s.io/cluster-api/internal/runtime/test/v1alpha1"
 )
 
 func Test_warmupRunnable_Start(t *testing.T) {
 	g := NewWithT(t)
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
 	t.Run("succeed to warm up registry on Start", func(t *testing.T) {
 		ns, err := env.CreateNamespace(ctx, "test-runtime-extension")
@@ -75,7 +75,7 @@ func Test_warmupRunnable_Start(t *testing.T) {
 		r := &warmupRunnable{
 			Client:    env.GetClient(),
 			APIReader: env.GetAPIReader(),
-			RuntimeClient: runtimeclient.New(runtimeclient.Options{
+			RuntimeClient: internalruntimeclient.New(internalruntimeclient.Options{
 				Catalog:  cat,
 				Registry: registry,
 			}),
@@ -140,7 +140,7 @@ func Test_warmupRunnable_Start(t *testing.T) {
 		r := &warmupRunnable{
 			Client:    env.GetClient(),
 			APIReader: env.GetAPIReader(),
-			RuntimeClient: runtimeclient.New(runtimeclient.Options{
+			RuntimeClient: internalruntimeclient.New(internalruntimeclient.Options{
 				Catalog:  cat,
 				Registry: registry,
 			}),

@@ -43,10 +43,10 @@ import (
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/hooks"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 var (
@@ -61,7 +61,7 @@ var (
 )
 
 func TestClusterReconciler_reconcileNewlyCreatedCluster(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 	g := NewWithT(t)
 	timeout := 5 * time.Second
 
@@ -109,7 +109,7 @@ func TestClusterReconciler_reconcileNewlyCreatedCluster(t *testing.T) {
 }
 
 func TestClusterReconciler_reconcileMultipleClustersFromOneClass(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 
 	g := NewWithT(t)
 	timeout := 5 * time.Second
@@ -161,7 +161,7 @@ func TestClusterReconciler_reconcileMultipleClustersFromOneClass(t *testing.T) {
 }
 
 func TestClusterReconciler_reconcileUpdateOnClusterTopology(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 	g := NewWithT(t)
 	timeout := 300 * time.Second
 
@@ -252,7 +252,7 @@ func TestClusterReconciler_reconcileUpdateOnClusterTopology(t *testing.T) {
 }
 
 func TestClusterReconciler_reconcileUpdatesOnClusterClass(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 	g := NewWithT(t)
 	timeout := 5 * time.Second
 
@@ -352,7 +352,7 @@ func TestClusterReconciler_reconcileUpdatesOnClusterClass(t *testing.T) {
 }
 
 func TestClusterReconciler_reconcileClusterClassRebase(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 	g := NewWithT(t)
 	timeout := 30 * time.Second
 
@@ -433,7 +433,7 @@ func TestClusterReconciler_reconcileClusterClassRebase(t *testing.T) {
 }
 
 func TestClusterReconciler_reconcileDelete(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
 	catalog := runtimecatalog.New()
 	_ = runtimehooksv1.AddToCatalog(catalog)
@@ -586,7 +586,7 @@ func TestClusterReconciler_reconcileDelete(t *testing.T) {
 // TestClusterReconciler_deleteClusterClass tests the correct deletion behaviour for a ClusterClass with references in existing Clusters.
 // In this case deletion of the ClusterClass should be blocked by the webhook.
 func TestClusterReconciler_deleteClusterClass(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 	g := NewWithT(t)
 	timeout := 5 * time.Second
 
@@ -894,6 +894,18 @@ func setupTestEnvForIntegrationTests(ns *corev1.Namespace) (func() error, error)
 			return cleanup, err
 		}
 	}
+	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessors.
+	patch := client.MergeFrom(cluster1.DeepCopy())
+	cluster1.Status.InfrastructureReady = true
+	if err := env.Status().Patch(ctx, cluster1, patch); err != nil {
+		return nil, err
+	}
+	patch = client.MergeFrom(cluster2.DeepCopy())
+	cluster2.Status.InfrastructureReady = true
+	if err := env.Status().Patch(ctx, cluster2, patch); err != nil {
+		return nil, err
+	}
+
 	return cleanup, nil
 }
 
@@ -1041,7 +1053,7 @@ func assertMachineDeploymentsReconcile(cluster *clusterv1.Cluster) error {
 
 			// Check replicas and version for the MachineDeployment.
 			if *md.Spec.Replicas != *topologyMD.Replicas {
-				return fmt.Errorf("replicas %v does not match expected %v", md.Spec.Replicas, topologyMD.Replicas)
+				return fmt.Errorf("replicas %v does not match expected %v", *md.Spec.Replicas, *topologyMD.Replicas)
 			}
 			if *md.Spec.Template.Spec.Version != cluster.Spec.Topology.Version {
 				return fmt.Errorf("version %v does not match expected %v", *md.Spec.Template.Spec.Version, cluster.Spec.Topology.Version)
@@ -1364,7 +1376,8 @@ func TestReconciler_DefaultCluster(t *testing.T) {
 								},
 							},
 						},
-					}}...).
+					},
+				}...).
 				WithConditions(*conditions.TrueCondition(clusterv1.ClusterClassVariablesReconciledCondition)).
 				Build(),
 			initialCluster: clusterBuilder.DeepCopy().
@@ -1428,7 +1441,7 @@ func TestReconciler_DefaultCluster(t *testing.T) {
 				APIReader: fakeClient,
 			}
 			// Ignore the error here as we expect the ClusterClass to fail in reconciliation as its references do not exist.
-			var _, _ = r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{Name: tt.initialCluster.Name, Namespace: tt.initialCluster.Namespace}})
+			_, _ = r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{Name: tt.initialCluster.Name, Namespace: tt.initialCluster.Namespace}})
 			got := &clusterv1.Cluster{}
 			g.Expect(fakeClient.Get(ctx, client.ObjectKey{Name: tt.initialCluster.Name, Namespace: tt.initialCluster.Namespace}, got)).To(Succeed())
 			// Compare the spec of the two clusters to ensure that variables are defaulted correctly.
@@ -1549,7 +1562,7 @@ func TestReconciler_ValidateCluster(t *testing.T) {
 				Client:    fakeClient,
 				APIReader: fakeClient,
 			}
-			var _, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{Name: tt.cluster.Name, Namespace: tt.cluster.Namespace}})
+			_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{Name: tt.cluster.Name, Namespace: tt.cluster.Namespace}})
 			// Reconcile will always return an error here as the topology is incomplete. This test checks specifically for
 			// validation errors.
 			validationErrMessage := fmt.Sprintf("Cluster.cluster.x-k8s.io %q is invalid:", tt.cluster.Name)

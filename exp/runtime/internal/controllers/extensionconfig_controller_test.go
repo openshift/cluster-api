@@ -41,15 +41,15 @@ import (
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/feature"
-	runtimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
+	internalruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
 	runtimeregistry "sigs.k8s.io/cluster-api/internal/runtime/registry"
 	fakev1alpha1 "sigs.k8s.io/cluster-api/internal/runtime/test/v1alpha1"
 	"sigs.k8s.io/cluster-api/util"
 )
 
 func TestExtensionReconciler_Reconcile(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
 	g := NewWithT(t)
 	ns, err := env.CreateNamespace(ctx, "test-extension-config")
@@ -59,7 +59,7 @@ func TestExtensionReconciler_Reconcile(t *testing.T) {
 	g.Expect(fakev1alpha1.AddToCatalog(cat)).To(Succeed())
 
 	registry := runtimeregistry.New()
-	runtimeClient := runtimeclient.New(runtimeclient.Options{
+	runtimeClient := internalruntimeclient.New(internalruntimeclient.Options{
 		Catalog:  cat,
 		Registry: registry,
 	})
@@ -197,8 +197,8 @@ func TestExtensionReconciler_Reconcile(t *testing.T) {
 }
 
 func TestExtensionReconciler_discoverExtensionConfig(t *testing.T) {
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)()
-	defer utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)()
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 	g := NewWithT(t)
 	ns, err := env.CreateNamespace(ctx, "test-runtime-extension")
 	g.Expect(err).ToNot(HaveOccurred())
@@ -214,7 +214,7 @@ func TestExtensionReconciler_discoverExtensionConfig(t *testing.T) {
 		g.Expect(err).ToNot(HaveOccurred())
 		defer srv1.Close()
 
-		runtimeClient := runtimeclient.New(runtimeclient.Options{
+		runtimeClient := internalruntimeclient.New(internalruntimeclient.Options{
 			Catalog:  cat,
 			Registry: registry,
 		})
@@ -248,7 +248,7 @@ func TestExtensionReconciler_discoverExtensionConfig(t *testing.T) {
 		// srv1 := fakeSecureExtensionServer(discoveryHandler("first"))
 		// defer srv1.Close()
 
-		runtimeClient := runtimeclient.New(runtimeclient.Options{
+		runtimeClient := internalruntimeclient.New(internalruntimeclient.Options{
 			Catalog:  cat,
 			Registry: registry,
 		})
