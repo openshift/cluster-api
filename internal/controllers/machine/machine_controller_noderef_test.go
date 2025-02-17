@@ -26,20 +26,209 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/api/v1beta1/index"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
 	"sigs.k8s.io/cluster-api/internal/topology/ownerrefs"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
+
+func TestReconcileNode(t *testing.T) {
+	defaultMachine := clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "machine-test",
+			Namespace: metav1.NamespaceDefault,
+			Labels: map[string]string{
+				clusterv1.ClusterNameLabel: "test-cluster",
+			},
+		},
+		Spec: clusterv1.MachineSpec{
+			ProviderID: ptr.To("aws://us-east-1/test-node-1"),
+		},
+	}
+
+	defaultCluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: metav1.NamespaceDefault,
+		},
+	}
+
+	testCases := []struct {
+		name               string
+		machine            *clusterv1.Machine
+		node               *corev1.Node
+		nodeGetErr         bool
+		expectResult       ctrl.Result
+		expectError        bool
+		expected           func(g *WithT, m *clusterv1.Machine)
+		expectNodeGetError bool
+	}{
+		{
+			name:         "No op if provider ID is not set",
+			machine:      &clusterv1.Machine{},
+			node:         nil,
+			nodeGetErr:   false,
+			expectResult: ctrl.Result{},
+			expectError:  false,
+		},
+		{
+			name:               "err reading node (something different than not found), it should return error",
+			machine:            defaultMachine.DeepCopy(),
+			node:               nil,
+			nodeGetErr:         true,
+			expectResult:       ctrl.Result{},
+			expectError:        true,
+			expectNodeGetError: true,
+		},
+		{
+			name:         "waiting for the node to exist, no op",
+			machine:      defaultMachine.DeepCopy(),
+			node:         nil,
+			nodeGetErr:   false,
+			expectResult: ctrl.Result{},
+			expectError:  false,
+		},
+		{
+			name:    "node found, should surface info",
+			machine: defaultMachine.DeepCopy(),
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node-1",
+				},
+				Spec: corev1.NodeSpec{
+					ProviderID: "aws://us-east-1/test-node-1",
+				},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{
+						MachineID: "foo",
+					},
+					Addresses: []corev1.NodeAddress{
+						{
+							Type:    corev1.NodeInternalIP,
+							Address: "1.1.1.1",
+						},
+						{
+							Type:    corev1.NodeInternalIP,
+							Address: "2.2.2.2",
+						},
+					},
+				},
+			},
+			nodeGetErr:   false,
+			expectResult: ctrl.Result{},
+			expectError:  false,
+			expected: func(g *WithT, m *clusterv1.Machine) {
+				g.Expect(m.Status.NodeRef).ToNot(BeNil())
+				g.Expect(m.Status.NodeRef.Name).To(Equal("test-node-1"))
+				g.Expect(m.Status.NodeInfo).ToNot(BeNil())
+				g.Expect(m.Status.NodeInfo.MachineID).To(Equal("foo"))
+			},
+		},
+		{
+			name: "node not found when already seen, should error",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "machine-test",
+					Namespace: metav1.NamespaceDefault,
+					Labels: map[string]string{
+						clusterv1.ClusterNameLabel: "test-cluster",
+					},
+				},
+				Spec: clusterv1.MachineSpec{
+					ProviderID: ptr.To("aws://us-east-1/test-node-1"),
+				},
+				Status: clusterv1.MachineStatus{
+					NodeRef: &corev1.ObjectReference{
+						Kind:       "Node",
+						Name:       "test-node-1",
+						APIVersion: "v1",
+					},
+				},
+			},
+			node:         nil,
+			nodeGetErr:   false,
+			expectResult: ctrl.Result{},
+			expectError:  true,
+		},
+		{
+			name: "node not found is tolerated when machine is deleting",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "machine-test",
+					Namespace: metav1.NamespaceDefault,
+					Labels: map[string]string{
+						clusterv1.ClusterNameLabel: "test-cluster",
+					},
+					DeletionTimestamp: ptr.To(metav1.Now()),
+					Finalizers:        []string{"foo"},
+				},
+				Spec: clusterv1.MachineSpec{
+					ProviderID: ptr.To("aws://us-east-1/test-node-1"),
+				},
+				Status: clusterv1.MachineStatus{
+					NodeRef: &corev1.ObjectReference{
+						Kind:       "Node",
+						Name:       "test-node-1",
+						APIVersion: "v1",
+					},
+				},
+			},
+			node:         nil,
+			nodeGetErr:   false,
+			expectResult: ctrl.Result{},
+			expectError:  false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			c := fake.NewClientBuilder().WithObjects(tc.machine).WithIndex(&corev1.Node{}, "spec.providerID", index.NodeByProviderID).Build()
+			if tc.nodeGetErr {
+				c = fake.NewClientBuilder().WithObjects(tc.machine).Build() // No Index
+			}
+
+			if tc.node != nil {
+				g.Expect(c.Create(ctx, tc.node)).To(Succeed())
+				defer func() { _ = c.Delete(ctx, tc.node) }()
+			}
+
+			r := &Reconciler{
+				ClusterCache: clustercache.NewFakeClusterCache(c, client.ObjectKeyFromObject(defaultCluster)),
+				Client:       c,
+				recorder:     record.NewFakeRecorder(10),
+			}
+			s := &scope{cluster: defaultCluster, machine: tc.machine}
+			result, err := r.reconcileNode(ctx, s)
+			g.Expect(result).To(BeComparableTo(tc.expectResult))
+			if tc.expectError {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).ToNot(HaveOccurred())
+			}
+
+			if tc.expected != nil {
+				tc.expected(g, tc.machine)
+			}
+
+			g.Expect(s.nodeGetError != nil).To(Equal(tc.expectNodeGetError))
+		})
+	}
+}
 
 func TestGetNode(t *testing.T) {
 	g := NewWithT(t)
@@ -56,6 +245,11 @@ func TestGetNode(t *testing.T) {
 	}
 
 	g.Expect(env.Create(ctx, testCluster)).To(Succeed())
+	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+	patch := client.MergeFrom(testCluster.DeepCopy())
+	testCluster.Status.InfrastructureReady = true
+	g.Expect(env.Status().Patch(ctx, testCluster, patch)).To(Succeed())
+
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 	defer func(do ...client.Object) {
 		g.Expect(env.Cleanup(ctx, do...)).To(Succeed())
@@ -127,35 +321,50 @@ func TestGetNode(t *testing.T) {
 		g.Expect(env.Cleanup(ctx, do...)).To(Succeed())
 	}(nodesToCleanup...)
 
-	tracker, err := remote.NewClusterCacheTracker(
-		env.Manager, remote.ClusterCacheTrackerOptions{
-			Indexes: []remote.Index{remote.NodeProviderIDIndex},
+	clusterCache, err := clustercache.SetupWithManager(ctx, env.Manager, clustercache.Options{
+		SecretClient: env.Manager.GetClient(),
+		Cache: clustercache.CacheOptions{
+			Indexes: []clustercache.CacheOptionsIndex{clustercache.NodeProviderIDIndex},
 		},
-	)
-	g.Expect(err).ToNot(HaveOccurred())
+		Client: clustercache.ClientOptions{
+			UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
+			Cache: clustercache.ClientCacheOptions{
+				DisableFor: []client.Object{
+					// Don't cache ConfigMaps & Secrets.
+					&corev1.ConfigMap{},
+					&corev1.Secret{},
+				},
+			},
+		},
+	}, controller.Options{MaxConcurrentReconciles: 10, SkipNameValidation: ptr.To(true)})
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create ClusterCache: %v", err))
+	}
 
 	r := &Reconciler{
-		Tracker: tracker,
-		Client:  env,
+		ClusterCache: clusterCache,
+		Client:       env,
 	}
 
 	w, err := ctrl.NewControllerManagedBy(env.Manager).For(&corev1.Node{}).Build(r)
 	g.Expect(err).ToNot(HaveOccurred())
 
-	g.Expect(tracker.Watch(ctx, remote.WatchInput{
-		Name:    "TestGetNode",
-		Cluster: util.ObjectKey(testCluster),
-		Watcher: w,
-		Kind:    &corev1.Node{},
-		EventHandler: handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
-			return nil
-		}),
-	})).To(Succeed())
+	// Retry because the ClusterCache might not have immediately created the clusterAccessor.
+	g.Eventually(func(g Gomega) {
+		g.Expect(clusterCache.Watch(ctx, util.ObjectKey(testCluster), clustercache.NewWatcher(clustercache.WatcherOptions{
+			Name:    "TestGetNode",
+			Watcher: w,
+			Kind:    &corev1.Node{},
+			EventHandler: handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
+				return nil
+			}),
+		}))).To(Succeed())
+	}, 1*time.Minute, 5*time.Second).Should(Succeed())
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
-			remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(testCluster))
+			remoteClient, err := r.ClusterCache.GetClient(ctx, util.ObjectKey(testCluster))
 			g.Expect(err).ToNot(HaveOccurred())
 
 			node, err := r.getNode(ctx, remoteClient, tc.providerIDInput)
@@ -203,12 +412,14 @@ func TestNodeLabelSync(t *testing.T) {
 					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
 					Kind:       "GenericBootstrapConfig",
 					Name:       "bootstrap-config1",
+					Namespace:  metav1.NamespaceDefault,
 				},
 			},
 			InfrastructureRef: corev1.ObjectReference{
 				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
 				Kind:       "GenericInfrastructureMachine",
 				Name:       "infra-config1",
+				Namespace:  metav1.NamespaceDefault,
 			},
 		},
 	}
@@ -241,6 +452,8 @@ func TestNodeLabelSync(t *testing.T) {
 
 		machine := defaultMachine.DeepCopy()
 		machine.Namespace = ns.Name
+		machine.Spec.Bootstrap.ConfigRef.Namespace = ns.Name
+		machine.Spec.InfrastructureRef.Namespace = ns.Name
 		machine.Spec.ProviderID = ptr.To(nodeProviderID)
 
 		// Set Machine labels.
@@ -331,7 +544,11 @@ func TestNodeLabelSync(t *testing.T) {
 
 		g.Expect(env.Create(ctx, cluster)).To(Succeed())
 		defaultKubeconfigSecret := kubeconfig.GenerateSecret(cluster, kubeconfig.FromEnvTestConfig(env.Config, cluster))
-		g.Expect(env.Create(ctx, defaultKubeconfigSecret)).To(Succeed())
+		g.Expect(env.CreateAndWait(ctx, defaultKubeconfigSecret)).To(Succeed())
+		// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+		patch := client.MergeFrom(cluster.DeepCopy())
+		cluster.Status.InfrastructureReady = true
+		g.Expect(env.Status().Patch(ctx, cluster, patch)).To(Succeed())
 
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 		// Set InfrastructureMachine .status.interruptible and .status.ready to true.

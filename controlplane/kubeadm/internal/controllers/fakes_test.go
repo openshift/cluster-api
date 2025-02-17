@@ -27,6 +27,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/collections"
 )
@@ -37,6 +38,7 @@ type fakeManagementCluster struct {
 	Machines     collections.Machines
 	MachinePools *expv1.MachinePoolList
 	Workload     *fakeWorkloadCluster
+	WorkloadErr  error
 	Reader       client.Reader
 }
 
@@ -49,7 +51,7 @@ func (f *fakeManagementCluster) List(ctx context.Context, list client.ObjectList
 }
 
 func (f *fakeManagementCluster) GetWorkloadCluster(_ context.Context, _ client.ObjectKey) (internal.WorkloadCluster, error) {
-	return f.Workload, nil
+	return f.Workload, f.WorkloadErr
 }
 
 func (f *fakeManagementCluster) GetMachinesForCluster(c context.Context, cluster *clusterv1.Cluster, filters ...collections.Func) (collections.Machines, error) {
@@ -84,7 +86,7 @@ func (f *fakeWorkloadCluster) ForwardEtcdLeadership(_ context.Context, _ *cluste
 	return nil
 }
 
-func (f *fakeWorkloadCluster) ReconcileEtcdMembers(_ context.Context, _ []string, _ semver.Version) ([]string, error) {
+func (f *fakeWorkloadCluster) ReconcileEtcdMembersAndControlPlaneNodes(_ context.Context, _ []*etcd.Member, _ []string) ([]string, error) {
 	return nil, nil
 }
 
@@ -126,10 +128,6 @@ func (f *fakeWorkloadCluster) UpdateKubeletConfigMap(_ context.Context, _ semver
 
 func (f *fakeWorkloadCluster) RemoveEtcdMemberForMachine(_ context.Context, _ *clusterv1.Machine) error {
 	f.removeEtcdMemberForMachineCalled++
-	return nil
-}
-
-func (f *fakeWorkloadCluster) RemoveMachineFromKubeadmConfigMap(_ context.Context, _ *clusterv1.Machine, _ semver.Version) error {
 	return nil
 }
 

@@ -24,7 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
-	"sigs.k8s.io/cluster-api/controllers/remote"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	kubeadmcontrolplanecontrollers "sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/controllers"
 )
 
@@ -32,13 +32,15 @@ import (
 type KubeadmControlPlaneReconciler struct {
 	Client              client.Client
 	SecretCachingClient client.Client
-	Tracker             *remote.ClusterCacheTracker
+	ClusterCache        clustercache.ClusterCache
 
 	EtcdDialTimeout time.Duration
 	EtcdCallTimeout time.Duration
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
+
+	RemoteConditionsGracePeriod time.Duration
 
 	// Deprecated: DeprecatedInfraMachineNaming. Name the InfraStructureMachines after the InfraMachineTemplate.
 	DeprecatedInfraMachineNaming bool
@@ -49,10 +51,11 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mg
 	return (&kubeadmcontrolplanecontrollers.KubeadmControlPlaneReconciler{
 		Client:                       r.Client,
 		SecretCachingClient:          r.SecretCachingClient,
-		Tracker:                      r.Tracker,
+		ClusterCache:                 r.ClusterCache,
 		EtcdDialTimeout:              r.EtcdDialTimeout,
 		EtcdCallTimeout:              r.EtcdCallTimeout,
 		WatchFilterValue:             r.WatchFilterValue,
+		RemoteConditionsGracePeriod:  r.RemoteConditionsGracePeriod,
 		DeprecatedInfraMachineNaming: r.DeprecatedInfraMachineNaming,
 	}).SetupWithManager(ctx, mgr, options)
 }
