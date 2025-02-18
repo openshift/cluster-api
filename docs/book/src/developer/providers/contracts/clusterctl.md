@@ -312,13 +312,11 @@ providers.
 | CABPK         | cluster.x-k8s.io/provider=bootstrap-kubeadm           |
 | CABPM         | cluster.x-k8s.io/provider=bootstrap-microk8s          |
 | CABPKK3S      | cluster.x-k8s.io/provider=bootstrap-kubekey-k3s       |
-| CABPOCNE      | cluster.x-k8s.io/provider=bootstrap-ocne              |
 | CABPK0S       | cluster.x-k8s.io/provider=bootstrap-k0smotron         |
 | CACPK         | cluster.x-k8s.io/provider=control-plane-kubeadm       |
 | CACPM         | cluster.x-k8s.io/provider=control-plane-microk8s      |
 | CACPN         | cluster.x-k8s.io/provider=control-plane-nested        |
 | CACPKK3S      | cluster.x-k8s.io/provider=control-plane-kubekey-k3s   |
-| CACPOCNE      | cluster.x-k8s.io/provider=control-plane-ocne          |
 | CACPK0S       | cluster.x-k8s.io/provider=control-plane-k0smotron     |
 | CAPA          | cluster.x-k8s.io/provider=infrastructure-aws          |
 | CAPB          | cluster.x-k8s.io/provider=infrastructure-byoh         |
@@ -415,6 +413,12 @@ ClusterClass definitions MUST be stored in the same location as the component YA
 `{ClusterClass-name}` is the name of the ClusterClass that is referenced from the Cluster.spec.topology.class field
 in the Cluster template; Cluster template files using a ClusterClass are usually simpler because they are no longer
 required to have all the templates.
+
+Additionally, namespace of the ClusterClass can differ from the Cluster. This requires specifying
+Cluster.spec.topology.classNamespace field in the Cluster template;
+Cluster template may define classNamespace as `classNamespace: ${CLUSTER_CLASS_NAMESPACE:=""}`, which would allow to
+optionally specify namespace of the referred ClusterClass via env. Empty or missing value is uses Cluster namespace
+by default.
 
 Each provider should create user facing documentation with the list of available ClusterClass definitions.
 
