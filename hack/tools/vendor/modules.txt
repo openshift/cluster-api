@@ -1707,7 +1707,7 @@ sigs.k8s.io/cluster-api/version
 ## explicit; go 1.22.0
 sigs.k8s.io/cluster-api/test/infrastructure/container
 sigs.k8s.io/cluster-api/test/infrastructure/kind
-# sigs.k8s.io/controller-runtime v0.19.4
+# sigs.k8s.io/controller-runtime v0.19.6
 ## explicit; go 1.22.0
 sigs.k8s.io/controller-runtime
 sigs.k8s.io/controller-runtime/pkg/builder

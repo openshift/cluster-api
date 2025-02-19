@@ -83,6 +83,10 @@ func TestMain(m *testing.M) {
 		if err != nil {
 			panic(fmt.Sprintf("Failed to create ClusterCache: %v", err))
 		}
+		go func() {
+			<-ctx.Done()
+			clusterCache.(interface{ Shutdown() }).Shutdown()
+		}()
 
 		// Setting ConnectionCreationRetryInterval to 2 seconds, otherwise client creation is
 		// only retried every 30s. If we get unlucky tests are then failing with timeout.
@@ -94,6 +98,7 @@ func TestMain(m *testing.M) {
 			APIReader:                   mgr.GetAPIReader(),
 			ClusterCache:                clusterCache,
 			RemoteConditionsGracePeriod: 5 * time.Minute,
+			AdditionalSyncMachineLabels: nil,
 		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
 			panic(fmt.Sprintf("Failed to start MachineReconciler: %v", err))
 		}

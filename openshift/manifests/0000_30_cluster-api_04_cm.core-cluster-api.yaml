@@ -888,6 +888,6 @@ metadata:
   labels:
     provider.cluster.x-k8s.io/name: cluster-api
     provider.cluster.x-k8s.io/type: core
-    provider.cluster.x-k8s.io/version: 1.9.4
+    provider.cluster.x-k8s.io/version: 1.9.5
   name: cluster-api
   namespace: openshift-cluster-api
