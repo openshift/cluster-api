@@ -14,4 +14,5 @@ spec:
        - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
        - --feature-gates=MachinePool=${EXP_MACHINE_POOL:=true},ClusterResourceSet=${EXP_CLUSTER_RESOURCE_SET:=true},ClusterTopology=${CLUSTER_TOPOLOGY:=false},RuntimeSDK=${EXP_RUNTIME_SDK:=false},MachineSetPreflightChecks=${EXP_MACHINE_SET_PREFLIGHT_CHECKS:=false}
        - --additional-sync-machine-labels=.*
+       - --additional-sync-machine-annotations=.*
 
