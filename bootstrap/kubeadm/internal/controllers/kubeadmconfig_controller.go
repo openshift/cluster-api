@@ -207,7 +207,13 @@ func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	if isPaused, conditionChanged, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, config); err != nil || isPaused || conditionChanged {
+	// Initialize the patch helper.
+	patchHelper, err := patch.NewHelper(config, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, config); err != nil || isPaused || requeue {
 		return ctrl.Result{}, err
 	}
 
@@ -216,12 +222,6 @@ func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		Config:      config,
 		ConfigOwner: configOwner,
 		Cluster:     cluster,
-	}
-
-	// Initialize the patch helper.
-	patchHelper, err := patch.NewHelper(config, r.Client)
-	if err != nil {
-		return ctrl.Result{}, err
 	}
 
 	// Attempt to Patch the KubeadmConfig object and status after each reconciliation if no error occurs.
@@ -261,6 +261,7 @@ func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				bootstrapv1.CertificatesAvailableCondition,
 			}},
 			patch.WithOwnedV1Beta2Conditions{Conditions: []string{
+				clusterv1.PausedV1Beta2Condition,
 				bootstrapv1.KubeadmConfigReadyV1Beta2Condition,
 				bootstrapv1.KubeadmConfigDataSecretAvailableV1Beta2Condition,
 				bootstrapv1.KubeadmConfigCertificatesAvailableV1Beta2Condition,
@@ -279,12 +280,7 @@ func (r *KubeadmConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	res, err := r.reconcile(ctx, scope, cluster, config, configOwner)
-	if err != nil && errors.Is(err, clustercache.ErrClusterNotConnected) {
-		log.V(5).Info("Requeuing because connection to the workload cluster is down")
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
-	}
-	return res, err
+	return r.reconcile(ctx, scope, cluster, config, configOwner)
 }
 
 func (r *KubeadmConfigReconciler) reconcile(ctx context.Context, scope *Scope, cluster *clusterv1.Cluster, config *bootstrapv1.KubeadmConfig, configOwner *bsutil.ConfigOwner) (ctrl.Result, error) {
@@ -317,15 +313,36 @@ func (r *KubeadmConfigReconciler) reconcile(ctx context.Context, scope *Scope, c
 			Status: metav1.ConditionTrue,
 			Reason: bootstrapv1.KubeadmConfigDataSecretAvailableV1Beta2Reason,
 		})
+		v1beta2conditions.Set(scope.Config, metav1.Condition{
+			Type:   bootstrapv1.KubeadmConfigCertificatesAvailableV1Beta2Condition,
+			Status: metav1.ConditionTrue,
+			Reason: bootstrapv1.KubeadmConfigCertificatesAvailableV1Beta2Reason,
+		})
 		return ctrl.Result{}, nil
 	// Status is ready means a config has been generated.
+	// This also solves the upgrade scenario to a version which includes v1beta2 to ensure v1beta2 conditions are properly set.
 	case config.Status.Ready:
+		// Based on existing code paths status.Ready is only true if status.dataSecretName is set
+		// So we can assume that the DataSecret is available.
+		conditions.MarkTrue(config, bootstrapv1.DataSecretAvailableCondition)
+		v1beta2conditions.Set(scope.Config, metav1.Condition{
+			Type:   bootstrapv1.KubeadmConfigDataSecretAvailableV1Beta2Condition,
+			Status: metav1.ConditionTrue,
+			Reason: bootstrapv1.KubeadmConfigDataSecretAvailableV1Beta2Reason,
+		})
+		// Same applies for the CertificatesAvailable, which must have been the case to generate
+		// the DataSecret.
+		v1beta2conditions.Set(scope.Config, metav1.Condition{
+			Type:   bootstrapv1.KubeadmConfigCertificatesAvailableV1Beta2Condition,
+			Status: metav1.ConditionTrue,
+			Reason: bootstrapv1.KubeadmConfigCertificatesAvailableV1Beta2Reason,
+		})
 		if config.Spec.JoinConfiguration != nil && config.Spec.JoinConfiguration.Discovery.BootstrapToken != nil {
 			if !configOwner.HasNodeRefs() {
 				// If the BootstrapToken has been generated for a join but the config owner has no nodeRefs,
 				// this indicates that the node has not yet joined and the token in the join config has not
 				// been consumed and it may need a refresh.
-				return r.refreshBootstrapTokenIfNeeded(ctx, config, cluster)
+				return r.refreshBootstrapTokenIfNeeded(ctx, config, cluster, scope)
 			}
 			if configOwner.IsMachinePool() {
 				// If the BootstrapToken has been generated and infrastructure is ready but the configOwner is a MachinePool,
@@ -363,7 +380,7 @@ func (r *KubeadmConfigReconciler) reconcile(ctx context.Context, scope *Scope, c
 	return r.joinWorker(ctx, scope)
 }
 
-func (r *KubeadmConfigReconciler) refreshBootstrapTokenIfNeeded(ctx context.Context, config *bootstrapv1.KubeadmConfig, cluster *clusterv1.Cluster) (ctrl.Result, error) {
+func (r *KubeadmConfigReconciler) refreshBootstrapTokenIfNeeded(ctx context.Context, config *bootstrapv1.KubeadmConfig, cluster *clusterv1.Cluster, scope *Scope) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	token := config.Spec.JoinConfiguration.Discovery.BootstrapToken.Token
 
@@ -374,6 +391,11 @@ func (r *KubeadmConfigReconciler) refreshBootstrapTokenIfNeeded(ctx context.Cont
 
 	secret, err := getToken(ctx, remoteClient, token)
 	if err != nil {
+		if apierrors.IsNotFound(err) && scope.ConfigOwner.IsMachinePool() {
+			log.Info("Bootstrap token secret not found, triggering creation of new token")
+			config.Spec.JoinConfiguration.Discovery.BootstrapToken.Token = ""
+			return r.recreateBootstrapToken(ctx, config, scope, remoteClient)
+		}
 		return ctrl.Result{}, errors.Wrapf(err, "failed to get bootstrap token secret in order to refresh it")
 	}
 	log = log.WithValues("Secret", klog.KObj(secret))
@@ -404,11 +426,31 @@ func (r *KubeadmConfigReconciler) refreshBootstrapTokenIfNeeded(ctx context.Cont
 	log.Info("Refreshing token until the infrastructure has a chance to consume it", "oldExpiration", secretExpiration, "newExpiration", newExpiration)
 	err = remoteClient.Update(ctx, secret)
 	if err != nil {
+		if apierrors.IsNotFound(err) && scope.ConfigOwner.IsMachinePool() {
+			log.Info("Bootstrap token secret not found, triggering creation of new token")
+			config.Spec.JoinConfiguration.Discovery.BootstrapToken.Token = ""
+			return r.recreateBootstrapToken(ctx, config, scope, remoteClient)
+		}
 		return ctrl.Result{}, errors.Wrapf(err, "failed to refresh bootstrap token")
 	}
 	return ctrl.Result{
 		RequeueAfter: r.tokenCheckRefreshOrRotationInterval(),
 	}, nil
+}
+
+func (r *KubeadmConfigReconciler) recreateBootstrapToken(ctx context.Context, config *bootstrapv1.KubeadmConfig, scope *Scope, remoteClient client.Client) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	token, err := createToken(ctx, remoteClient, r.TokenTTL)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create new bootstrap token")
+	}
+
+	config.Spec.JoinConfiguration.Discovery.BootstrapToken.Token = token
+	log.V(3).Info("Altering JoinConfiguration.Discovery.BootstrapToken.Token")
+
+	// Update the bootstrap data
+	return r.joinWorker(ctx, scope)
 }
 
 func (r *KubeadmConfigReconciler) rotateMachinePoolBootstrapToken(ctx context.Context, config *bootstrapv1.KubeadmConfig, cluster *clusterv1.Cluster, scope *Scope) (ctrl.Result, error) {
@@ -426,16 +468,7 @@ func (r *KubeadmConfigReconciler) rotateMachinePoolBootstrapToken(ctx context.Co
 	}
 	if shouldRotate {
 		log.Info("Creating new bootstrap token, the existing one should be rotated")
-		token, err := createToken(ctx, remoteClient, r.TokenTTL)
-		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create new bootstrap token")
-		}
-
-		config.Spec.JoinConfiguration.Discovery.BootstrapToken.Token = token
-		log.V(3).Info("Altering JoinConfiguration.Discovery.BootstrapToken.Token")
-
-		// update the bootstrap data
-		return r.joinWorker(ctx, scope)
+		return r.recreateBootstrapToken(ctx, config, scope, remoteClient)
 	}
 	return ctrl.Result{
 		RequeueAfter: r.tokenCheckRefreshOrRotationInterval(),
@@ -606,6 +639,7 @@ func (r *KubeadmConfigReconciler) handleClusterNotInitialized(ctx context.Contex
 		BaseUserData: cloudinit.BaseUserData{
 			AdditionalFiles:     files,
 			NTP:                 scope.Config.Spec.NTP,
+			BootCommands:        scope.Config.Spec.BootCommands,
 			PreKubeadmCommands:  scope.Config.Spec.PreKubeadmCommands,
 			PostKubeadmCommands: scope.Config.Spec.PostKubeadmCommands,
 			Users:               users,
@@ -762,6 +796,7 @@ func (r *KubeadmConfigReconciler) joinWorker(ctx context.Context, scope *Scope) 
 		BaseUserData: cloudinit.BaseUserData{
 			AdditionalFiles:      files,
 			NTP:                  scope.Config.Spec.NTP,
+			BootCommands:         scope.Config.Spec.BootCommands,
 			PreKubeadmCommands:   scope.Config.Spec.PreKubeadmCommands,
 			PostKubeadmCommands:  scope.Config.Spec.PostKubeadmCommands,
 			Users:                users,
@@ -916,6 +951,7 @@ func (r *KubeadmConfigReconciler) joinControlplane(ctx context.Context, scope *S
 		BaseUserData: cloudinit.BaseUserData{
 			AdditionalFiles:      files,
 			NTP:                  scope.Config.Spec.NTP,
+			BootCommands:         scope.Config.Spec.BootCommands,
 			PreKubeadmCommands:   scope.Config.Spec.PreKubeadmCommands,
 			PostKubeadmCommands:  scope.Config.Spec.PostKubeadmCommands,
 			Users:                users,

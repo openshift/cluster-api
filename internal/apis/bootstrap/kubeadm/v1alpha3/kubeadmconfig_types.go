@@ -141,10 +141,14 @@ type KubeadmConfigStatus struct {
 //
 // Deprecated: This type will be removed in one of the next releases.
 type KubeadmConfig struct {
-	metav1.TypeMeta   `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard object's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   KubeadmConfigSpec   `json:"spec,omitempty"`
+	// spec is the desired state of KubeadmConfig.
+	Spec KubeadmConfigSpec `json:"spec,omitempty"`
+	// status is the observed state of KubeadmConfig.
 	Status KubeadmConfigStatus `json:"status,omitempty"`
 }
 
@@ -165,8 +169,11 @@ func (c *KubeadmConfig) SetConditions(conditions clusterv1alpha3.Conditions) {
 // Deprecated: This type will be removed in one of the next releases.
 type KubeadmConfigList struct {
 	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard list's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#lists-and-simple-kinds
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []KubeadmConfig `json:"items"`
+	// items is the list of KubeadmConfigs.
+	Items []KubeadmConfig `json:"items"`
 }
 
 func init() {

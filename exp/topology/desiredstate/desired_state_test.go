@@ -17,6 +17,7 @@ limitations under the License.
 package desiredstate
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ import (
 	"sigs.k8s.io/cluster-api/internal/hooks"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/topology/clustershim"
-	"sigs.k8s.io/cluster-api/internal/topology/names"
+	topologynames "sigs.k8s.io/cluster-api/internal/topology/names"
 	"sigs.k8s.io/cluster-api/internal/topology/ownerrefs"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/test/builder"
@@ -295,6 +296,8 @@ func TestComputeControlPlaneInfrastructureMachineTemplate(t *testing.T) {
 }
 
 func TestComputeControlPlane(t *testing.T) {
+	g := NewWithT(t)
+
 	// templates and ClusterClass
 	labels := map[string]string{"l1": ""}
 	annotations := map[string]string{"a1": ""}
@@ -313,8 +316,12 @@ func TestComputeControlPlane(t *testing.T) {
 		Annotations: controlPlaneMachineTemplateAnnotations,
 	})
 	clusterClassDuration := 20 * time.Second
+	clusterClassReadinessGates := []clusterv1.MachineReadinessGate{
+		{ConditionType: "foo"},
+	}
 	clusterClass := builder.ClusterClass(metav1.NamespaceDefault, "class1").
 		WithControlPlaneMetadata(labels, annotations).
+		WithControlPlaneReadinessGates(clusterClassReadinessGates).
 		WithControlPlaneTemplate(controlPlaneTemplate).
 		WithControlPlaneNodeDrainTimeout(&metav1.Duration{Duration: clusterClassDuration}).
 		WithControlPlaneNodeVolumeDetachTimeout(&metav1.Duration{Duration: clusterClassDuration}).
@@ -328,6 +335,10 @@ func TestComputeControlPlane(t *testing.T) {
 	nodeDrainTimeout := metav1.Duration{Duration: topologyDuration}
 	nodeVolumeDetachTimeout := metav1.Duration{Duration: topologyDuration}
 	nodeDeletionTimeout := metav1.Duration{Duration: topologyDuration}
+	readinessGates := []clusterv1.MachineReadinessGate{
+		{ConditionType: "foo"},
+		{ConditionType: "bar"},
+	}
 	cluster := &clusterv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cluster1",
@@ -341,6 +352,7 @@ func TestComputeControlPlane(t *testing.T) {
 						Labels:      map[string]string{"l2": ""},
 						Annotations: map[string]string{"a2": ""},
 					},
+					ReadinessGates:          readinessGates,
 					Replicas:                &replicas,
 					NodeDrainTimeout:        &nodeDrainTimeout,
 					NodeVolumeDetachTimeout: &nodeVolumeDetachTimeout,
@@ -349,6 +361,15 @@ func TestComputeControlPlane(t *testing.T) {
 			},
 		},
 	}
+
+	jsonValue, err := json.Marshal(&clusterClassReadinessGates)
+	g.Expect(err).ToNot(HaveOccurred())
+	var expectedClusterClassReadinessGates []interface{}
+	g.Expect(json.Unmarshal(jsonValue, &expectedClusterClassReadinessGates)).ToNot(HaveOccurred())
+	jsonValue, err = json.Marshal(&readinessGates)
+	g.Expect(err).ToNot(HaveOccurred())
+	var expectedReadinessGates []interface{}
+	g.Expect(json.Unmarshal(jsonValue, &expectedReadinessGates)).ToNot(HaveOccurred())
 
 	t.Run("Generates the ControlPlane from the template", func(t *testing.T) {
 		g := NewWithT(t)
@@ -381,6 +402,7 @@ func TestComputeControlPlane(t *testing.T) {
 
 		assertNestedField(g, obj, version, contract.ControlPlane().Version().Path()...)
 		assertNestedField(g, obj, int64(replicas), contract.ControlPlane().Replicas().Path()...)
+		assertNestedField(g, obj, expectedReadinessGates, contract.ControlPlane().MachineTemplate().ReadinessGates().Path()...)
 		assertNestedField(g, obj, topologyDuration.String(), contract.ControlPlane().MachineTemplate().NodeDrainTimeout().Path()...)
 		assertNestedField(g, obj, topologyDuration.String(), contract.ControlPlane().MachineTemplate().NodeVolumeDetachTimeout().Path()...)
 		assertNestedField(g, obj, topologyDuration.String(), contract.ControlPlane().MachineTemplate().NodeDeletionTimeout().Path()...)
@@ -406,7 +428,7 @@ func TestComputeControlPlane(t *testing.T) {
 							Annotations: map[string]string{"a2": ""},
 						},
 						Replicas: &replicas,
-						// no values for NodeDrainTimeout, NodeVolumeDetachTimeout, NodeDeletionTimeout
+						// no values for ReadinessGates, NodeDrainTimeout, NodeVolumeDetachTimeout, NodeDeletionTimeout
 					},
 				},
 			},
@@ -429,6 +451,7 @@ func TestComputeControlPlane(t *testing.T) {
 		g.Expect(obj).ToNot(BeNil())
 
 		// checking only values from CC defaults
+		assertNestedField(g, obj, expectedClusterClassReadinessGates, contract.ControlPlane().MachineTemplate().ReadinessGates().Path()...)
 		assertNestedField(g, obj, clusterClassDuration.String(), contract.ControlPlane().MachineTemplate().NodeDrainTimeout().Path()...)
 		assertNestedField(g, obj, clusterClassDuration.String(), contract.ControlPlane().MachineTemplate().NodeVolumeDetachTimeout().Path()...)
 		assertNestedField(g, obj, clusterClassDuration.String(), contract.ControlPlane().MachineTemplate().NodeDeletionTimeout().Path()...)
@@ -469,6 +492,33 @@ func TestComputeControlPlane(t *testing.T) {
 		assertNestedField(g, obj, version, contract.ControlPlane().Version().Path()...)
 		assertNestedFieldUnset(g, obj, contract.ControlPlane().Replicas().Path()...)
 		assertNestedFieldUnset(g, obj, contract.ControlPlane().MachineTemplate().InfrastructureRef().Path()...)
+	})
+	t.Run("Skips setting readinessGates if not set in Cluster and ClusterClass", func(t *testing.T) {
+		g := NewWithT(t)
+
+		clusterClassWithoutReadinessGates := clusterClass.DeepCopy()
+		clusterClassWithoutReadinessGates.Spec.ControlPlane.ReadinessGates = nil
+
+		clusterWithoutReadinessGates := cluster.DeepCopy()
+		clusterWithoutReadinessGates.Spec.Topology.ControlPlane.ReadinessGates = nil
+
+		blueprint := &scope.ClusterBlueprint{
+			Topology:     clusterWithoutReadinessGates.Spec.Topology,
+			ClusterClass: clusterClassWithoutReadinessGates,
+			ControlPlane: &scope.ControlPlaneBlueprint{
+				Template: controlPlaneTemplate,
+			},
+		}
+
+		// aggregating current cluster objects into ClusterState (simulating getCurrentState)
+		scope := scope.New(clusterWithoutReadinessGates)
+		scope.Blueprint = blueprint
+
+		obj, err := (&generator{}).computeControlPlane(ctx, scope, nil)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(obj).ToNot(BeNil())
+
+		assertNestedFieldUnset(g, obj, contract.ControlPlane().MachineTemplate().ReadinessGates().Path()...)
 	})
 	t.Run("Generates the ControlPlane from the template and adds the infrastructure machine template if required", func(t *testing.T) {
 		g := NewWithT(t)
@@ -708,6 +758,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 			name                        string
 			hookResponse                *runtimehooksv1.BeforeClusterUpgradeResponse
 			topologyVersion             string
+			clusterModifier             func(c *clusterv1.Cluster)
 			controlPlaneObj             *unstructured.Unstructured
 			upgradingMachineDeployments []string
 			upgradingMachinePools       []string
@@ -757,9 +808,8 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 				expectedVersion: "v1.2.2",
 			},
 			{
-				// Control plane is considered scaling if controlplane.spec.replicas is not equal to any of
-				// controlplane.status.replicas, controlplane.status.readyReplicas, controlplane.status.updatedReplicas.
-				name:            "should return controlplane.spec.version if the control plane is scaling",
+				name:            "should return cluster.spec.topology.version if the control plane is scaling",
+				hookResponse:    nonBlockingBeforeClusterUpgradeResponse,
 				topologyVersion: "v1.2.3",
 				controlPlaneObj: builder.ControlPlane("test1", "cp1").
 					WithSpecFields(map[string]interface{}{
@@ -774,7 +824,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 						"status.unavailableReplicas": int64(0),
 					}).
 					Build(),
-				expectedVersion: "v1.2.2",
+				expectedVersion: "v1.2.3",
 			},
 			{
 				name:            "should return controlplane.spec.version if control plane is not upgrading and not scaling and one of the MachineDeployments and one of the MachinePools is upgrading",
@@ -818,7 +868,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 				expectedVersion:             "v1.2.3",
 			},
 			{
-				name:            "should return the controlplane.spec.version if the BeforeClusterUpgrade hooks returns a blocking response",
+				name:            "should return the controlplane.spec.version if a BeforeClusterUpgradeHook returns a blocking response",
 				hookResponse:    blockingBeforeClusterUpgradeResponse,
 				topologyVersion: "v1.2.3",
 				controlPlaneObj: builder.ControlPlane("test1", "cp1").
@@ -856,6 +906,30 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 				expectedVersion: "v1.2.2",
 				wantErr:         true,
 			},
+			{
+				name:            "should return the controlplane.spec.version if a BeforeClusterUpgradeHook annotation is set",
+				hookResponse:    nonBlockingBeforeClusterUpgradeResponse,
+				topologyVersion: "v1.2.3",
+				controlPlaneObj: builder.ControlPlane("test1", "cp1").
+					WithSpecFields(map[string]interface{}{
+						"spec.version":  "v1.2.2",
+						"spec.replicas": int64(2),
+					}).
+					WithStatusFields(map[string]interface{}{
+						"status.version":             "v1.2.2",
+						"status.replicas":            int64(2),
+						"status.updatedReplicas":     int64(2),
+						"status.readyReplicas":       int64(2),
+						"status.unavailableReplicas": int64(0),
+					}).
+					Build(),
+				clusterModifier: func(c *clusterv1.Cluster) {
+					c.Annotations = map[string]string{
+						clusterv1.BeforeClusterUpgradeHookAnnotationPrefix + "/test": "true",
+					}
+				},
+				expectedVersion: "v1.2.2",
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -879,6 +953,9 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 					},
 					UpgradeTracker:      scope.NewUpgradeTracker(),
 					HookResponseTracker: scope.NewHookResponseTracker(),
+				}
+				if tt.clusterModifier != nil {
+					tt.clusterModifier(s.Current.Cluster)
 				}
 				if len(tt.upgradingMachineDeployments) > 0 {
 					s.UpgradeTracker.MachineDeployments.MarkUpgrading(tt.upgradingMachineDeployments...)
@@ -1205,7 +1282,13 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 				}
 
 				_, err := r.computeControlPlaneVersion(ctx, tt.s)
-				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterControlPlaneUpgrade) == 1).To(Equal(tt.wantHookToBeCalled))
+
+				if tt.wantHookToBeCalled {
+					g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterControlPlaneUpgrade)).To(Equal(1), "Expected hook to be called once")
+				} else {
+					g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterControlPlaneUpgrade)).To(Equal(0), "Did not expect hook to be called")
+				}
+
 				g.Expect(hooks.IsPending(runtimehooksv1.AfterControlPlaneUpgrade, tt.s.Current.Cluster)).To(Equal(tt.wantIntentToCall))
 				g.Expect(err != nil).To(Equal(tt.wantErr))
 				if tt.wantHookToBeCalled && !tt.wantErr {
@@ -1360,6 +1443,9 @@ func TestComputeMachineDeployment(t *testing.T) {
 			MaxInFlight: ptr.To(intstr.FromInt32(5)),
 		},
 	}
+	clusterClassReadinessGates := []clusterv1.MachineReadinessGate{
+		{ConditionType: "foo"},
+	}
 	md1 := builder.MachineDeploymentClass("linux-worker").
 		WithLabels(labels).
 		WithAnnotations(annotations).
@@ -1369,6 +1455,7 @@ func TestComputeMachineDeployment(t *testing.T) {
 			UnhealthyConditions: unhealthyConditions,
 			NodeStartupTimeout:  nodeTimeoutDuration,
 		}).
+		WithReadinessGates(clusterClassReadinessGates).
 		WithFailureDomain(&clusterClassFailureDomain).
 		WithNodeDrainTimeout(&clusterClassDuration).
 		WithNodeVolumeDetachTimeout(&clusterClassDuration).
@@ -1425,6 +1512,10 @@ func TestComputeMachineDeployment(t *testing.T) {
 			MaxInFlight: ptr.To(intstr.FromInt32(5)),
 		},
 	}
+	readinessGates := []clusterv1.MachineReadinessGate{
+		{ConditionType: "foo"},
+		{ConditionType: "bar"},
+	}
 	mdTopology := clusterv1.MachineDeploymentTopology{
 		Metadata: clusterv1.ObjectMeta{
 			Labels: map[string]string{
@@ -1443,6 +1534,7 @@ func TestComputeMachineDeployment(t *testing.T) {
 		Name:                    "big-pool-of-machines",
 		Replicas:                &replicas,
 		FailureDomain:           &topologyFailureDomain,
+		ReadinessGates:          readinessGates,
 		NodeDrainTimeout:        &topologyDuration,
 		NodeVolumeDetachTimeout: &topologyDuration,
 		NodeDeletionTimeout:     &topologyDuration,
@@ -1482,6 +1574,7 @@ func TestComputeMachineDeployment(t *testing.T) {
 		g.Expect(*actualMd.Spec.Template.Spec.NodeDrainTimeout).To(Equal(topologyDuration))
 		g.Expect(*actualMd.Spec.Template.Spec.NodeVolumeDetachTimeout).To(Equal(topologyDuration))
 		g.Expect(*actualMd.Spec.Template.Spec.NodeDeletionTimeout).To(Equal(topologyDuration))
+		g.Expect(actualMd.Spec.Template.Spec.ReadinessGates).To(Equal(readinessGates))
 		g.Expect(actualMd.Spec.ClusterName).To(Equal("cluster1"))
 		g.Expect(actualMd.Name).To(ContainSubstring("cluster1"))
 		g.Expect(actualMd.Name).To(ContainSubstring("big-pool-of-machines"))
@@ -1523,7 +1616,7 @@ func TestComputeMachineDeployment(t *testing.T) {
 			Class:    "linux-worker",
 			Name:     "big-pool-of-machines",
 			Replicas: &replicas,
-			// missing FailureDomain, NodeDrainTimeout, NodeVolumeDetachTimeout, NodeDeletionTimeout, MinReadySeconds, Strategy
+			// missing ReadinessGates, FailureDomain, NodeDrainTimeout, NodeVolumeDetachTimeout, NodeDeletionTimeout, MinReadySeconds, Strategy
 		}
 
 		e := generator{}
@@ -1536,9 +1629,60 @@ func TestComputeMachineDeployment(t *testing.T) {
 		g.Expect(*actualMd.Spec.MinReadySeconds).To(Equal(clusterClassMinReadySeconds))
 		g.Expect(*actualMd.Spec.Strategy).To(BeComparableTo(clusterClassStrategy))
 		g.Expect(*actualMd.Spec.Template.Spec.FailureDomain).To(Equal(clusterClassFailureDomain))
+		g.Expect(actualMd.Spec.Template.Spec.ReadinessGates).To(Equal(clusterClassReadinessGates))
 		g.Expect(*actualMd.Spec.Template.Spec.NodeDrainTimeout).To(Equal(clusterClassDuration))
 		g.Expect(*actualMd.Spec.Template.Spec.NodeVolumeDetachTimeout).To(Equal(clusterClassDuration))
 		g.Expect(*actualMd.Spec.Template.Spec.NodeDeletionTimeout).To(Equal(clusterClassDuration))
+	})
+
+	t.Run("Skips setting readinessGates if not set in Cluster and ClusterClass", func(t *testing.T) {
+		g := NewWithT(t)
+
+		clusterClassWithoutReadinessGates := fakeClass.DeepCopy()
+		clusterClassWithoutReadinessGates.Spec.Workers.MachineDeployments[0].ReadinessGates = nil
+
+		blueprint := &scope.ClusterBlueprint{
+			Topology:     cluster.Spec.Topology,
+			ClusterClass: clusterClassWithoutReadinessGates,
+			MachineDeployments: map[string]*scope.MachineDeploymentBlueprint{
+				"linux-worker": {
+					Metadata: clusterv1.ObjectMeta{
+						Labels:      labels,
+						Annotations: annotations,
+					},
+					BootstrapTemplate:             workerBootstrapTemplate,
+					InfrastructureMachineTemplate: workerInfrastructureMachineTemplate,
+					MachineHealthCheck: &clusterv1.MachineHealthCheckClass{
+						UnhealthyConditions: unhealthyConditions,
+						NodeStartupTimeout: &metav1.Duration{
+							Duration: time.Duration(1),
+						},
+					},
+				},
+			},
+		}
+
+		scope := scope.New(cluster)
+		scope.Blueprint = blueprint
+
+		mdTopology := clusterv1.MachineDeploymentTopology{
+			Metadata: clusterv1.ObjectMeta{
+				Labels: map[string]string{"foo": "baz"},
+			},
+			Class:    "linux-worker",
+			Name:     "big-pool-of-machines",
+			Replicas: &replicas,
+			// missing ReadinessGates
+		}
+
+		e := generator{}
+
+		actual, err := e.computeMachineDeployment(ctx, scope, mdTopology)
+		g.Expect(err).ToNot(HaveOccurred())
+
+		// checking only values from CC defaults
+		actualMd := actual.Object
+		g.Expect(actualMd.Spec.Template.Spec.ReadinessGates).To(BeNil())
 	})
 
 	t.Run("If there is already a machine deployment, it preserves the object name and the reference names", func(t *testing.T) {
@@ -2159,7 +2303,6 @@ func TestComputeMachineDeploymentVersion(t *testing.T) {
 		upgradeConcurrency                   int
 		controlPlaneStartingUpgrade          bool
 		controlPlaneUpgrading                bool
-		controlPlaneScaling                  bool
 		controlPlaneProvisioning             bool
 		afterControlPlaneUpgradeHookBlocking bool
 		topologyVersion                      string
@@ -2178,8 +2321,8 @@ func TestComputeMachineDeploymentVersion(t *testing.T) {
 			expectPendingCreate: false,
 		},
 		{
-			name:                "should return cluster.spec.topology.version if creating a new machine deployment and if control plane is not stable - marked as pending create",
-			controlPlaneScaling: true,
+			name:                  "should return cluster.spec.topology.version if creating a new machine deployment and if control plane is not stable - marked as pending create",
+			controlPlaneUpgrading: true,
 			machineDeploymentTopology: clusterv1.MachineDeploymentTopology{
 				Name: "md-topology-1",
 			},
@@ -2218,16 +2361,6 @@ func TestComputeMachineDeploymentVersion(t *testing.T) {
 			currentMachineDeploymentState: currentMachineDeploymentState,
 			upgradingMachineDeployments:   []string{},
 			controlPlaneStartingUpgrade:   true,
-			topologyVersion:               "v1.2.3",
-			expectedVersion:               "v1.2.2",
-			expectPendingUpgrade:          true,
-		},
-		{
-			// Control plane is considered scaling if its spec.replicas is not equal to any of status.replicas, status.readyReplicas or status.updatedReplicas.
-			name:                          "should return machine deployment's spec.template.spec.version if control plane is scaling",
-			currentMachineDeploymentState: currentMachineDeploymentState,
-			upgradingMachineDeployments:   []string{},
-			controlPlaneScaling:           true,
 			topologyVersion:               "v1.2.3",
 			expectedVersion:               "v1.2.2",
 			expectPendingUpgrade:          true,
@@ -2297,7 +2430,6 @@ func TestComputeMachineDeploymentVersion(t *testing.T) {
 			}
 			s.UpgradeTracker.ControlPlane.IsStartingUpgrade = tt.controlPlaneStartingUpgrade
 			s.UpgradeTracker.ControlPlane.IsUpgrading = tt.controlPlaneUpgrading
-			s.UpgradeTracker.ControlPlane.IsScaling = tt.controlPlaneScaling
 			s.UpgradeTracker.ControlPlane.IsProvisioning = tt.controlPlaneProvisioning
 			s.UpgradeTracker.MachineDeployments.MarkUpgrading(tt.upgradingMachineDeployments...)
 
@@ -2340,7 +2472,6 @@ func TestComputeMachinePoolVersion(t *testing.T) {
 		upgradeConcurrency                   int
 		controlPlaneStartingUpgrade          bool
 		controlPlaneUpgrading                bool
-		controlPlaneScaling                  bool
 		controlPlaneProvisioning             bool
 		afterControlPlaneUpgradeHookBlocking bool
 		topologyVersion                      string
@@ -2359,8 +2490,8 @@ func TestComputeMachinePoolVersion(t *testing.T) {
 			expectPendingCreate: false,
 		},
 		{
-			name:                "should return cluster.spec.topology.version if creating a new MachinePool and if control plane is not stable - marked as pending create",
-			controlPlaneScaling: true,
+			name:                  "should return cluster.spec.topology.version if creating a new MachinePool and if control plane is not stable - marked as pending create",
+			controlPlaneUpgrading: true,
 			machinePoolTopology: clusterv1.MachinePoolTopology{
 				Name: "mp-topology-1",
 			},
@@ -2402,16 +2533,6 @@ func TestComputeMachinePoolVersion(t *testing.T) {
 			topologyVersion:             "v1.2.3",
 			expectedVersion:             "v1.2.2",
 			expectPendingUpgrade:        true,
-		},
-		{
-			// Control plane is considered scaling if its spec.replicas is not equal to any of status.replicas, status.readyReplicas or status.updatedReplicas.
-			name:                    "should return MachinePool's spec.template.spec.version if control plane is scaling",
-			currentMachinePoolState: currentMachinePoolState,
-			upgradingMachinePools:   []string{},
-			controlPlaneScaling:     true,
-			topologyVersion:         "v1.2.3",
-			expectedVersion:         "v1.2.2",
-			expectPendingUpgrade:    true,
 		},
 		{
 			name:                    "should return cluster.spec.topology.version if the control plane is not upgrading, not scaling, not ready to upgrade and none of the MachinePools are upgrading",
@@ -2478,7 +2599,6 @@ func TestComputeMachinePoolVersion(t *testing.T) {
 			}
 			s.UpgradeTracker.ControlPlane.IsStartingUpgrade = tt.controlPlaneStartingUpgrade
 			s.UpgradeTracker.ControlPlane.IsUpgrading = tt.controlPlaneUpgrading
-			s.UpgradeTracker.ControlPlane.IsScaling = tt.controlPlaneScaling
 			s.UpgradeTracker.ControlPlane.IsProvisioning = tt.controlPlaneProvisioning
 			s.UpgradeTracker.MachinePools.MarkUpgrading(tt.upgradingMachinePools...)
 
@@ -2689,7 +2809,7 @@ func TestTemplateToObject(t *testing.T) {
 			template:              template,
 			templateClonedFromRef: fakeRef1,
 			cluster:               cluster,
-			nameGenerator:         names.SimpleNameGenerator(cluster.Name),
+			nameGenerator:         topologynames.SimpleNameGenerator(cluster.Name),
 			currentObjectRef:      nil,
 		})
 		g.Expect(err).ToNot(HaveOccurred())
@@ -2709,7 +2829,7 @@ func TestTemplateToObject(t *testing.T) {
 			template:              template,
 			templateClonedFromRef: fakeRef1,
 			cluster:               cluster,
-			nameGenerator:         names.SimpleNameGenerator(cluster.Name),
+			nameGenerator:         topologynames.SimpleNameGenerator(cluster.Name),
 			currentObjectRef:      fakeRef2,
 		})
 		g.Expect(err).ToNot(HaveOccurred())
@@ -2750,7 +2870,7 @@ func TestTemplateToTemplate(t *testing.T) {
 			template:              template,
 			templateClonedFromRef: fakeRef1,
 			cluster:               cluster,
-			nameGenerator:         names.SimpleNameGenerator(cluster.Name),
+			nameGenerator:         topologynames.SimpleNameGenerator(cluster.Name),
 			currentObjectRef:      nil,
 		})
 		g.Expect(err).ToNot(HaveOccurred())
@@ -2769,7 +2889,7 @@ func TestTemplateToTemplate(t *testing.T) {
 			template:              template,
 			templateClonedFromRef: fakeRef1,
 			cluster:               cluster,
-			nameGenerator:         names.SimpleNameGenerator(cluster.Name),
+			nameGenerator:         topologynames.SimpleNameGenerator(cluster.Name),
 			currentObjectRef:      fakeRef2,
 		})
 		g.Expect(err).ToNot(HaveOccurred())

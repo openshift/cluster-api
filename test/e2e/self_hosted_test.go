@@ -24,7 +24,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass [ClusterClass]", func() {
+var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass [ClusterClass]", Label("ClusterClass"), func() {
 	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
 		return SelfHostedSpecInput{
 			E2EConfig:                e2eConfig,
@@ -33,14 +33,13 @@ var _ = Describe("When testing Cluster API working on self-hosted clusters using
 			ArtifactFolder:           artifactFolder,
 			SkipCleanup:              skipCleanup,
 			Flavor:                   "topology",
-			InfrastructureProvider:   ptr.To("docker"),
 			ControlPlaneMachineCount: ptr.To[int64](1),
 			WorkerMachineCount:       ptr.To[int64](1),
 		}
 	})
 })
 
-var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass with a HA control plane [ClusterClass]", func() {
+var _ = Describe("When testing Cluster API working on self-hosted clusters using ClusterClass with a HA control plane [ClusterClass]", Label("ClusterClass"), func() {
 	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
 		return SelfHostedSpecInput{
 			E2EConfig:                e2eConfig,
@@ -49,14 +48,13 @@ var _ = Describe("When testing Cluster API working on self-hosted clusters using
 			ArtifactFolder:           artifactFolder,
 			SkipCleanup:              skipCleanup,
 			Flavor:                   "topology",
-			InfrastructureProvider:   ptr.To("docker"),
 			ControlPlaneMachineCount: ptr.To[int64](3),
 			WorkerMachineCount:       ptr.To[int64](1),
 		}
 	})
 })
 
-var _ = Describe("When testing Cluster API working on single-node self-hosted clusters using ClusterClass [ClusterClass]", func() {
+var _ = Describe("When testing Cluster API working on single-node self-hosted clusters using ClusterClass [ClusterClass]", Label("ClusterClass"), func() {
 	SelfHostedSpec(ctx, func() SelfHostedSpecInput {
 		return SelfHostedSpecInput{
 			E2EConfig:                e2eConfig,
@@ -65,7 +63,6 @@ var _ = Describe("When testing Cluster API working on single-node self-hosted cl
 			ArtifactFolder:           artifactFolder,
 			SkipCleanup:              skipCleanup,
 			Flavor:                   "topology-no-workers",
-			InfrastructureProvider:   ptr.To("docker"),
 			ControlPlaneMachineCount: ptr.To[int64](1),
 			// Note: the used template is not using the corresponding variable.
 			WorkerMachineCount: ptr.To[int64](0),

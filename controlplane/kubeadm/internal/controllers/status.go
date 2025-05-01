@@ -162,13 +162,13 @@ func (r *KubeadmControlPlaneReconciler) updateV1Beta2Status(ctx context.Context,
 	setReplicas(ctx, controlPlane.KCP, controlPlane.Machines)
 	setInitializedCondition(ctx, controlPlane.KCP)
 	setRollingOutCondition(ctx, controlPlane.KCP, controlPlane.Machines)
-	setScalingUpCondition(ctx, controlPlane.KCP, controlPlane.Machines, controlPlane.InfraMachineTemplateIsNotFound, controlPlane.PreflightCheckResults)
-	setScalingDownCondition(ctx, controlPlane.KCP, controlPlane.Machines, controlPlane.PreflightCheckResults)
+	setScalingUpCondition(ctx, controlPlane.Cluster, controlPlane.KCP, controlPlane.Machines, controlPlane.InfraMachineTemplateIsNotFound, controlPlane.PreflightCheckResults)
+	setScalingDownCondition(ctx, controlPlane.Cluster, controlPlane.KCP, controlPlane.Machines, controlPlane.PreflightCheckResults)
 	setMachinesReadyCondition(ctx, controlPlane.KCP, controlPlane.Machines)
 	setMachinesUpToDateCondition(ctx, controlPlane.KCP, controlPlane.Machines)
 	setRemediatingCondition(ctx, controlPlane.KCP, controlPlane.MachinesToBeRemediatedByKCP(), controlPlane.UnhealthyMachines())
 	setDeletingCondition(ctx, controlPlane.KCP, controlPlane.DeletingReason, controlPlane.DeletingMessage)
-	setAvailableCondition(ctx, controlPlane.KCP, controlPlane.IsEtcdManaged(), controlPlane.EtcdMembers, controlPlane.EtcdMembersAgreeOnMemberList, controlPlane.EtcdMembersAgreeOnClusterID, controlPlane.EtcdMembersAndMachinesAreMatching, controlPlane.Machines)
+	setAvailableCondition(ctx, controlPlane.KCP, controlPlane.IsEtcdManaged(), controlPlane.EtcdMembers, controlPlane.EtcdMembersAndMachinesAreMatching, controlPlane.Machines)
 }
 
 func setReplicas(_ context.Context, kcp *controlplanev1.KubeadmControlPlane, machines collections.Machines) {
@@ -265,7 +265,7 @@ func setRollingOutCondition(_ context.Context, kcp *controlplanev1.KubeadmContro
 	})
 }
 
-func setScalingUpCondition(_ context.Context, kcp *controlplanev1.KubeadmControlPlane, machines collections.Machines, infrastructureObjectNotFound bool, preflightChecks internal.PreflightCheckResults) {
+func setScalingUpCondition(_ context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, machines collections.Machines, infrastructureObjectNotFound bool, preflightChecks internal.PreflightCheckResults) {
 	if kcp.Spec.Replicas == nil {
 		v1beta2conditions.Set(kcp, metav1.Condition{
 			Type:    controlplanev1.KubeadmControlPlaneScalingUpV1Beta2Condition,
@@ -300,7 +300,7 @@ func setScalingUpCondition(_ context.Context, kcp *controlplanev1.KubeadmControl
 
 	message := fmt.Sprintf("Scaling up from %d to %d replicas", currentReplicas, desiredReplicas)
 
-	additionalMessages := getPreflightMessages(preflightChecks)
+	additionalMessages := getPreflightMessages(cluster, preflightChecks)
 	if missingReferencesMessage != "" {
 		additionalMessages = append(additionalMessages, fmt.Sprintf("* %s", missingReferencesMessage))
 	}
@@ -317,7 +317,7 @@ func setScalingUpCondition(_ context.Context, kcp *controlplanev1.KubeadmControl
 	})
 }
 
-func setScalingDownCondition(_ context.Context, kcp *controlplanev1.KubeadmControlPlane, machines collections.Machines, preflightChecks internal.PreflightCheckResults) {
+func setScalingDownCondition(_ context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, machines collections.Machines, preflightChecks internal.PreflightCheckResults) {
 	if kcp.Spec.Replicas == nil {
 		v1beta2conditions.Set(kcp, metav1.Condition{
 			Type:    controlplanev1.KubeadmControlPlaneScalingDownV1Beta2Condition,
@@ -345,7 +345,7 @@ func setScalingDownCondition(_ context.Context, kcp *controlplanev1.KubeadmContr
 
 	message := fmt.Sprintf("Scaling down from %d to %d replicas", currentReplicas, desiredReplicas)
 
-	additionalMessages := getPreflightMessages(preflightChecks)
+	additionalMessages := getPreflightMessages(cluster, preflightChecks)
 	if staleMessage := aggregateStaleMachines(machines); staleMessage != "" {
 		additionalMessages = append(additionalMessages, fmt.Sprintf("* %s", staleMessage))
 	}
@@ -513,7 +513,7 @@ func setDeletingCondition(_ context.Context, kcp *controlplanev1.KubeadmControlP
 	})
 }
 
-func setAvailableCondition(_ context.Context, kcp *controlplanev1.KubeadmControlPlane, etcdIsManaged bool, etcdMembers []*etcd.Member, etcdMembersAgreeOnMemberList, etcdMembersAgreeOnClusterID, etcdMembersAndMachinesAreMatching bool, machines collections.Machines) {
+func setAvailableCondition(_ context.Context, kcp *controlplanev1.KubeadmControlPlane, etcdIsManaged bool, etcdMembers []*etcd.Member, etcdMembersAndMachinesAreMatching bool, machines collections.Machines) {
 	if !kcp.Status.Initialized {
 		v1beta2conditions.Set(kcp, metav1.Condition{
 			Type:    controlplanev1.KubeadmControlPlaneAvailableV1Beta2Condition,
@@ -545,26 +545,6 @@ func setAvailableCondition(_ context.Context, kcp *controlplanev1.KubeadmControl
 				Status:  metav1.ConditionUnknown,
 				Reason:  controlplanev1.KubeadmControlPlaneAvailableInspectionFailedV1Beta2Reason,
 				Message: "Failed to get etcd members",
-			})
-			return
-		}
-
-		if !etcdMembersAgreeOnMemberList {
-			v1beta2conditions.Set(kcp, metav1.Condition{
-				Type:    controlplanev1.KubeadmControlPlaneAvailableV1Beta2Condition,
-				Status:  metav1.ConditionFalse,
-				Reason:  controlplanev1.KubeadmControlPlaneNotAvailableV1Beta2Reason,
-				Message: "At least one etcd member reports a list of etcd members different than the list reported by other members",
-			})
-			return
-		}
-
-		if !etcdMembersAgreeOnClusterID {
-			v1beta2conditions.Set(kcp, metav1.Condition{
-				Type:    controlplanev1.KubeadmControlPlaneAvailableV1Beta2Condition,
-				Status:  metav1.ConditionFalse,
-				Reason:  controlplanev1.KubeadmControlPlaneNotAvailableV1Beta2Reason,
-				Message: "At least one etcd member reports a cluster ID different than the cluster ID reported by other members",
 			})
 			return
 		}
@@ -824,8 +804,12 @@ func minTime(t1, t2 time.Time) time.Time {
 	return t1
 }
 
-func getPreflightMessages(preflightChecks internal.PreflightCheckResults) []string {
+func getPreflightMessages(cluster *clusterv1.Cluster, preflightChecks internal.PreflightCheckResults) []string {
 	additionalMessages := []string{}
+	if preflightChecks.TopologyVersionMismatch {
+		additionalMessages = append(additionalMessages, fmt.Sprintf("* waiting for a version upgrade to %s to be propagated from Cluster.spec.topology", cluster.Spec.Topology.Version))
+	}
+
 	if preflightChecks.HasDeletingMachine {
 		additionalMessages = append(additionalMessages, "* waiting for a control plane Machine to complete deletion")
 	}

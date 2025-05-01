@@ -69,12 +69,8 @@ type ControlPlane struct {
 
 	// EtcdMembers is the list of members read while computing reconcileControlPlaneConditions; also additional info below
 	// comes from the same func.
-	// NOTE: Those info are computed based on the info KCP was able to collect during inspection (e.g. if on a 3 CP
-	// control plane one etcd member is down, those info are based on the answer collected from two members only).
 	// NOTE: Those info are specifically designed for computing KCP's Available condition.
 	EtcdMembers                       []*etcd.Member
-	EtcdMembersAgreeOnMemberList      bool
-	EtcdMembersAgreeOnClusterID       bool
 	EtcdMembersAndMachinesAreMatching bool
 
 	managementCluster ManagementCluster
@@ -95,6 +91,8 @@ type PreflightCheckResults struct {
 	ControlPlaneComponentsNotHealthy bool
 	// EtcdClusterNotHealthy reports true if preflight check detected that the etcd cluster is not fully healthy.
 	EtcdClusterNotHealthy bool
+	// TopologyVersionMismatch reports true if preflight check detected that the Cluster's topology version does not match the control plane's version
+	TopologyVersionMismatch bool
 }
 
 // NewControlPlane returns an instantiated ControlPlane.

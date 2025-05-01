@@ -34,8 +34,4 @@ spec:
       - class: default-worker
         name: md-0
         replicas: ${WORKER_MACHINE_COUNT}
-      machinePools:
-      - class: default-worker
-        name: mp-0
-        replicas: ${WORKER_MACHINE_COUNT}
 ---
