@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
@@ -45,6 +46,7 @@ import (
 	runtimeregistry "sigs.k8s.io/cluster-api/internal/runtime/registry"
 	fakev1alpha1 "sigs.k8s.io/cluster-api/internal/runtime/test/v1alpha1"
 	"sigs.k8s.io/cluster-api/util"
+	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
 )
 
 func TestExtensionReconciler_Reconcile(t *testing.T) {
@@ -106,7 +108,19 @@ func TestExtensionReconciler_Reconcile(t *testing.T) {
 		}
 		g.Expect(warmup.Start(ctx)).To(Succeed())
 
-		// Reconcile the extension and assert discovery has succeeded.
+		// Reconcile the extension and assert discovery has succeeded (the first reconcile adds the Paused condition).
+		_, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: util.ObjectKey(extensionConfig)})
+		g.Expect(err).ToNot(HaveOccurred())
+
+		// Wait until the ExtensionConfig in the cache has the Paused condition so the next Reconcile can do discovery.
+		g.Eventually(func(g Gomega) {
+			conf := &runtimev1.ExtensionConfig{}
+			g.Expect(env.Get(ctx, util.ObjectKey(extensionConfig), conf)).To(Succeed())
+			pausedCondition := v1beta2conditions.Get(conf, clusterv1.PausedV1Beta2Condition)
+			g.Expect(pausedCondition).ToNot(BeNil())
+			g.Expect(pausedCondition.ObservedGeneration).To(Equal(conf.Generation))
+		}).WithTimeout(10 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
 		_, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: util.ObjectKey(extensionConfig)})
 		g.Expect(err).ToNot(HaveOccurred())
 
@@ -124,6 +138,13 @@ func TestExtensionReconciler_Reconcile(t *testing.T) {
 		g.Expect(conditions).To(HaveLen(1))
 		g.Expect(conditions[0].Status).To(Equal(corev1.ConditionTrue))
 		g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredCondition))
+
+		v1beta2Conditions := config.GetV1Beta2Conditions()
+		g.Expect(v1beta2Conditions).To(HaveLen(2)) // Second condition is paused.
+		g.Expect(v1beta2Conditions[0].Type).To(Equal(runtimev1.ExtensionConfigDiscoveredV1Beta2Condition))
+		g.Expect(v1beta2Conditions[0].Status).To(Equal(metav1.ConditionTrue))
+		g.Expect(v1beta2Conditions[0].Reason).To(Equal(runtimev1.ExtensionConfigDiscoveredV1Beta2Reason))
+
 		_, err = registry.Get("first.ext1")
 		g.Expect(err).ToNot(HaveOccurred())
 		_, err = registry.Get("second.ext1")
@@ -157,7 +178,7 @@ func TestExtensionReconciler_Reconcile(t *testing.T) {
 				return errors.Errorf("URL not set on updated object: got: %s, want: %s", *conf.Spec.ClientConfig.URL, updatedServer.URL)
 			}
 			return nil
-		}, 30*time.Second, 100*time.Millisecond).Should(BeNil())
+		}, 30*time.Second, 100*time.Millisecond).Should(Succeed())
 
 		// Reconcile the extension and assert discovery has succeeded.
 		_, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: util.ObjectKey(extensionConfig)})
@@ -175,6 +196,12 @@ func TestExtensionReconciler_Reconcile(t *testing.T) {
 		g.Expect(conditions).To(HaveLen(1))
 		g.Expect(conditions[0].Status).To(Equal(corev1.ConditionTrue))
 		g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredCondition))
+
+		v1beta2Conditions := config.GetV1Beta2Conditions()
+		g.Expect(v1beta2Conditions).To(HaveLen(2)) // Second condition is paused.
+		g.Expect(v1beta2Conditions[0].Type).To(Equal(runtimev1.ExtensionConfigDiscoveredV1Beta2Condition))
+		g.Expect(v1beta2Conditions[0].Status).To(Equal(metav1.ConditionTrue))
+		g.Expect(v1beta2Conditions[0].Reason).To(Equal(runtimev1.ExtensionConfigDiscoveredV1Beta2Reason))
 
 		_, err = registry.Get("first.ext1")
 		g.Expect(err).ToNot(HaveOccurred())
@@ -236,6 +263,12 @@ func TestExtensionReconciler_discoverExtensionConfig(t *testing.T) {
 		g.Expect(conditions).To(HaveLen(1))
 		g.Expect(conditions[0].Status).To(Equal(corev1.ConditionTrue))
 		g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredCondition))
+
+		v1beta2Conditions := discoveredExtensionConfig.GetV1Beta2Conditions()
+		g.Expect(v1beta2Conditions).To(HaveLen(1))
+		g.Expect(v1beta2Conditions[0].Type).To(Equal(runtimev1.ExtensionConfigDiscoveredV1Beta2Condition))
+		g.Expect(v1beta2Conditions[0].Status).To(Equal(metav1.ConditionTrue))
+		g.Expect(v1beta2Conditions[0].Reason).To(Equal(runtimev1.ExtensionConfigDiscoveredV1Beta2Reason))
 	})
 	t.Run("fail discovery for non-running extension", func(*testing.T) {
 		cat := runtimecatalog.New()
@@ -269,6 +302,12 @@ func TestExtensionReconciler_discoverExtensionConfig(t *testing.T) {
 		g.Expect(conditions).To(HaveLen(1))
 		g.Expect(conditions[0].Status).To(Equal(corev1.ConditionFalse))
 		g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredCondition))
+
+		v1beta2Conditions := discoveredExtensionConfig.GetV1Beta2Conditions()
+		g.Expect(v1beta2Conditions).To(HaveLen(1))
+		g.Expect(v1beta2Conditions[0].Type).To(Equal(runtimev1.ExtensionConfigDiscoveredV1Beta2Condition))
+		g.Expect(v1beta2Conditions[0].Status).To(Equal(metav1.ConditionFalse))
+		g.Expect(v1beta2Conditions[0].Reason).To(Equal(runtimev1.ExtensionConfigNotDiscoveredV1Beta2Reason))
 	})
 }
 

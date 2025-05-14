@@ -27,7 +27,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-var _ = Describe("When performing cluster deletion with ClusterClass [ClusterClass]", func() {
+var _ = Describe("When performing cluster deletion with ClusterClass [ClusterClass]", Label("ClusterClass"), func() {
 	ClusterDeletionSpec(ctx, func() ClusterDeletionSpecInput {
 		return ClusterDeletionSpecInput{
 			E2EConfig:                e2eConfig,
@@ -37,7 +37,6 @@ var _ = Describe("When performing cluster deletion with ClusterClass [ClusterCla
 			SkipCleanup:              skipCleanup,
 			ControlPlaneMachineCount: ptr.To[int64](3),
 			Flavor:                   ptr.To("topology"),
-			InfrastructureProvider:   ptr.To("docker"),
 
 			ClusterDeletionPhases: []ClusterDeletionPhase{
 				{

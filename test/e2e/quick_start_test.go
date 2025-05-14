@@ -32,12 +32,11 @@ import (
 var _ = Describe("When following the Cluster API quick-start", func() {
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				// This check ensures that owner references are resilient - i.e. correctly re-reconciled - when removed.
 				By("Checking that owner references are resilient")
@@ -76,16 +75,15 @@ var _ = Describe("When following the Cluster API quick-start", func() {
 	})
 })
 
-var _ = Describe("When following the Cluster API quick-start with ClusterClass [PR-Blocking] [ClusterClass]", func() {
+var _ = Describe("When following the Cluster API quick-start with ClusterClass [PR-Blocking] [ClusterClass]", Label("PR-Blocking", "ClusterClass"), func() {
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			Flavor:                 ptr.To("topology"),
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                ptr.To("topology"),
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				// This check ensures that owner references are resilient - i.e. correctly re-reconciled - when removed.
 				By("Checking that owner references are resilient")
@@ -125,16 +123,15 @@ var _ = Describe("When following the Cluster API quick-start with ClusterClass [
 })
 
 // NOTE: This test requires an IPv6 management cluster (can be configured via IP_FAMILY=IPv6).
-var _ = Describe("When following the Cluster API quick-start with IPv6 [IPv6]", func() {
+var _ = Describe("When following the Cluster API quick-start with IPv6 [IPv6]", Label("IPv6"), func() {
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			Flavor:                 ptr.To("ipv6"),
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                ptr.To("ipv6"),
 		}
 	})
 })
@@ -142,27 +139,25 @@ var _ = Describe("When following the Cluster API quick-start with IPv6 [IPv6]", 
 var _ = Describe("When following the Cluster API quick-start with Ignition", func() {
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			Flavor:                 ptr.To("ignition"),
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                ptr.To("ignition"),
 		}
 	})
 })
 
-var _ = Describe("When following the Cluster API quick-start with dualstack and ipv4 primary [IPv6]", func() {
+var _ = Describe("When following the Cluster API quick-start with dualstack and ipv4 primary [IPv6]", Label("IPv6"), func() {
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			Flavor:                 ptr.To("topology-dualstack-ipv4-primary"),
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                ptr.To("topology-dualstack-ipv4-primary"),
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				By("Running kubetest dualstack tests")
 				// Start running the dualstack test suite from kubetest.
@@ -180,16 +175,15 @@ var _ = Describe("When following the Cluster API quick-start with dualstack and 
 	})
 })
 
-var _ = Describe("When following the Cluster API quick-start with dualstack and ipv6 primary [IPv6]", func() {
+var _ = Describe("When following the Cluster API quick-start with dualstack and ipv6 primary [IPv6]", Label("IPv6"), func() {
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			Flavor:                 ptr.To("topology-dualstack-ipv6-primary"),
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                ptr.To("topology-dualstack-ipv6-primary"),
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				By("Running kubetest dualstack tests")
 				// Start running the dualstack test suite from kubetest.
@@ -207,16 +201,15 @@ var _ = Describe("When following the Cluster API quick-start with dualstack and 
 	})
 })
 
-var _ = Describe("When following the Cluster API quick-start with ClusterClass without any worker definitions [ClusterClass]", func() {
+var _ = Describe("When following the Cluster API quick-start with ClusterClass without any worker definitions [ClusterClass]", Label("ClusterClass"), func() {
 	QuickStartSpec(ctx, func() QuickStartSpecInput {
 		return QuickStartSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			Flavor:                 ptr.To("topology-kcp-only"),
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                ptr.To("topology-kcp-only"),
 			// Note: the used template is not using the corresponding variable
 			WorkerMachineCount: ptr.To[int64](0),
 		}

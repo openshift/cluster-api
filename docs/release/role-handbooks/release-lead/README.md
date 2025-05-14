@@ -94,7 +94,7 @@ This comes down to changing occurrences of the old version to the new version, e
 
 Prior art:
 
-* 1.9 - https://github.com/kubernetes-sigs/cluster-api/pull/11059
+* 1.10 - https://github.com/kubernetes-sigs/cluster-api/pull/11647
 
 ### Create a new GitHub milestone for the next release
 
@@ -164,7 +164,7 @@ The goal of this task is to ensure we are always using the latest Go version for
 
 1. Keep track of new Go versions
 2. Bump the Go version in supported branches if necessary
-   <br>Prior art: [Bump to Go 1.19.5](https://github.com/kubernetes-sigs/cluster-api/pull/7981)
+   <br>Prior art: [Bump go to v1.23.7](https://github.com/kubernetes-sigs/cluster-api/pull/11981)
 
 Note: If the Go minor version of one of our supported branches goes out of supported, we should consider bumping
 to a newer Go minor version according to our [backport policy](./../../../../CONTRIBUTING.md#backporting-a-patch).

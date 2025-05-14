@@ -20,30 +20,21 @@ limitations under the License.
 package e2e
 
 import (
-	"github.com/blang/semver/v4"
 	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"k8s.io/utils/ptr"
 
 	clusterctlcluster "sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	"sigs.k8s.io/cluster-api/test/framework"
 )
 
-var _ = Describe("When upgrading a workload cluster using ClusterClass with RuntimeSDK [ClusterClass]", func() {
+var _ = Describe("When upgrading a workload cluster using ClusterClass with RuntimeSDK [ClusterClass]", Label("ClusterClass"), func() {
 	ClusterUpgradeWithRuntimeSDKSpec(ctx, func() ClusterUpgradeWithRuntimeSDKSpecInput {
-		version, err := semver.ParseTolerant(e2eConfig.GetVariable(KubernetesVersionUpgradeFrom))
-		Expect(err).ToNot(HaveOccurred(), "Invalid argument, KUBERNETES_VERSION_UPGRADE_FROM is not a valid version")
-		if version.LT(semver.MustParse("1.24.0")) {
-			Fail("This test only supports upgrades from Kubernetes >= v1.24.0")
-		}
-
 		return ClusterUpgradeWithRuntimeSDKSpecInput{
-			E2EConfig:              e2eConfig,
-			ClusterctlConfigPath:   clusterctlConfigPath,
-			BootstrapClusterProxy:  bootstrapClusterProxy,
-			ArtifactFolder:         artifactFolder,
-			SkipCleanup:            skipCleanup,
-			InfrastructureProvider: ptr.To("docker"),
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
 			PostUpgrade: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				// This check ensures that the resourceVersions are stable, i.e. it verifies there are no
 				// continuous reconciles when everything should be stable.

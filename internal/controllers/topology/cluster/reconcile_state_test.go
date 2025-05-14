@@ -51,7 +51,7 @@ import (
 	"sigs.k8s.io/cluster-api/internal/hooks"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/topology/clustershim"
-	"sigs.k8s.io/cluster-api/internal/topology/names"
+	topologynames "sigs.k8s.io/cluster-api/internal/topology/names"
 	"sigs.k8s.io/cluster-api/internal/topology/ownerrefs"
 	"sigs.k8s.io/cluster-api/internal/topology/selectors"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
@@ -62,6 +62,8 @@ import (
 var IgnoreNameGenerated = IgnorePaths{
 	"metadata.name",
 }
+
+const testController = "test-controller"
 
 func TestReconcileShim(t *testing.T) {
 	infrastructureCluster := builder.TestInfrastructureCluster(metav1.NamespaceDefault, "infrastructure-cluster1").Build()
@@ -95,7 +97,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -138,7 +140,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -188,7 +190,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -239,7 +241,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             env,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -280,7 +282,7 @@ func TestReconcileShim(t *testing.T) {
 		r := Reconciler{
 			Client:             nil,
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(nil, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(nil, ssa.NewCache(testController)),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -469,7 +471,13 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 			}
 
 			err := r.callAfterControlPlaneInitialized(ctx, s)
-			g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterControlPlaneInitialized) == 1).To(Equal(tt.wantHookToBeCalled))
+
+			if tt.wantHookToBeCalled {
+				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterControlPlaneInitialized)).To(Equal(1), "Expected hook to be called once")
+			} else {
+				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterControlPlaneInitialized)).To(Equal(0), "Did not expect hook to be called")
+			}
+
 			g.Expect(hooks.IsPending(runtimehooksv1.AfterControlPlaneInitialized, tt.cluster)).To(Equal(tt.wantMarked))
 			g.Expect(err != nil).To(Equal(tt.wantError))
 		})
@@ -613,7 +621,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			wantError:          false,
 		},
 		{
-			name: "hook should not be called if the control plane is scaling - hook is marked",
+			name: "hook should be called if the control plane is scaling - hook is not marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
 					Topology: &clusterv1.Topology{
@@ -631,7 +639,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
 							},
 						},
-						Spec: clusterv1.ClusterSpec{},
+						Spec: clusterv1.ClusterSpec{Topology: &clusterv1.Topology{}},
 					},
 					ControlPlane: &scope.ControlPlaneState{
 						Object: controlPlaneObj,
@@ -640,13 +648,12 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 				HookResponseTracker: scope.NewHookResponseTracker(),
 				UpgradeTracker: func() *scope.UpgradeTracker {
 					ut := scope.NewUpgradeTracker()
-					ut.ControlPlane.IsScaling = true
 					return ut
 				}(),
 			},
-			wantMarked:         true,
+			wantMarked:         false,
 			hookResponse:       successResponse,
-			wantHookToBeCalled: false,
+			wantHookToBeCalled: true,
 			wantError:          false,
 		},
 		{
@@ -1087,7 +1094,13 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			}
 
 			err := r.callAfterClusterUpgrade(ctx, tt.s)
-			g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterClusterUpgrade) == 1).To(Equal(tt.wantHookToBeCalled))
+
+			if tt.wantHookToBeCalled {
+				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterClusterUpgrade)).To(Equal(1), "Expected hook to be called once")
+			} else {
+				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterClusterUpgrade)).To(Equal(0), "Did not expect hook to be called")
+			}
+
 			g.Expect(hooks.IsPending(runtimehooksv1.AfterClusterUpgrade, tt.s.Current.Cluster)).To(Equal(tt.wantMarked))
 			g.Expect(err != nil).To(Equal(tt.wantError))
 		})
@@ -1156,7 +1169,7 @@ func TestReconcileCluster(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			err = r.reconcileCluster(ctx, s)
@@ -1283,7 +1296,7 @@ func TestReconcileInfrastructureCluster(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			created, err := r.reconcileInfrastructureCluster(ctx, s)
@@ -1557,7 +1570,7 @@ func TestReconcileControlPlane(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -1621,7 +1634,7 @@ func TestReconcileControlPlane(t *testing.T) {
 				// This check is just for the naming format uses by generated templates - here it's templateName-*
 				// This check is only performed when we had an initial template that has been changed
 				if gotRotation {
-					pattern := fmt.Sprintf("%s.*", names.ControlPlaneInfrastructureMachineTemplateNamePrefix(s.Current.Cluster.Name))
+					pattern := fmt.Sprintf("%s.*", topologynames.ControlPlaneInfrastructureMachineTemplateNamePrefix(s.Current.Cluster.Name))
 					ok, err := regexp.Match(pattern, []byte(gotInfrastructureMachineRef.Name))
 					g.Expect(err).ToNot(HaveOccurred())
 					g.Expect(ok).To(BeTrue())
@@ -1713,7 +1726,7 @@ func TestReconcileControlPlaneCleanup(t *testing.T) {
 
 		r := Reconciler{
 			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 			recorder:           env.GetEventRecorderFor("test"),
 		}
 		created, err := r.reconcileControlPlane(ctx, s)
@@ -1878,7 +1891,7 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -2177,7 +2190,7 @@ func TestReconcileMachineDeployments(t *testing.T) {
 			r := Reconciler{
 				Client:             env.GetClient(),
 				APIReader:          env.GetAPIReader(),
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			err = r.reconcileMachineDeployments(ctx, s)
@@ -2295,7 +2308,7 @@ func TestReconcileMachineDeploymentsCleanup(t *testing.T) {
 		r := Reconciler{
 			Client:             env.GetClient(),
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 			recorder:           env.GetEventRecorderFor("test"),
 		}
 		err = r.reconcileMachineDeployments(ctx, s)
@@ -2360,7 +2373,7 @@ func TestReconcileMachineDeploymentsCleanup(t *testing.T) {
 		r := Reconciler{
 			Client:             env.GetClient(),
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 			recorder:           env.GetEventRecorderFor("test"),
 		}
 		err = r.reconcileMachineDeployments(ctx, s)
@@ -2633,7 +2646,7 @@ func TestReconcileMachinePools(t *testing.T) {
 			r := Reconciler{
 				Client:             env.GetClient(),
 				APIReader:          env.GetAPIReader(),
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			err = r.reconcileMachinePools(ctx, s)
@@ -2753,7 +2766,7 @@ func TestReconcileMachinePoolsCleanup(t *testing.T) {
 		r := Reconciler{
 			Client:             env.GetClient(),
 			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 			recorder:           env.GetEventRecorderFor("test"),
 		}
 		err = r.reconcileMachinePools(ctx, s)
@@ -3184,7 +3197,7 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -3458,7 +3471,7 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 			r := Reconciler{
 				Client:             env.GetClient(),
 				APIReader:          env.GetAPIReader(),
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 
@@ -3527,7 +3540,7 @@ func TestReconcileState(t *testing.T) {
 
 		r := Reconciler{
 			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 			recorder:           env.GetEventRecorderFor("test"),
 		}
 		err = r.reconcileState(ctx, s)
@@ -3574,7 +3587,7 @@ func TestReconcileState(t *testing.T) {
 
 		r := Reconciler{
 			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 			recorder:           env.GetEventRecorderFor("test"),
 		}
 		err = r.reconcileState(ctx, s)
@@ -3627,7 +3640,7 @@ func TestReconcileState(t *testing.T) {
 
 		r := Reconciler{
 			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 			recorder:           env.GetEventRecorderFor("test"),
 		}
 		err = r.reconcileState(ctx, s)
@@ -3799,7 +3812,7 @@ func TestReconciler_reconcileMachineHealthCheck(t *testing.T) {
 
 			r := Reconciler{
 				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache()),
+				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
 				recorder:           env.GetEventRecorderFor("test"),
 			}
 			if tt.current != nil {
