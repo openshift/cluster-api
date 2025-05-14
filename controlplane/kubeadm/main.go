@@ -41,15 +41,18 @@ import (
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/controllers/crdmigrator"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	kubeadmcontrolplanecontrollers "sigs.k8s.io/cluster-api/controlplane/kubeadm/controllers"
@@ -91,12 +94,12 @@ var (
 	managerOptions              = flags.ManagerOptions{}
 	logOptions                  = logs.NewOptions()
 	// KCP specific flags.
-	remoteConditionsGracePeriod     time.Duration
-	kubeadmControlPlaneConcurrency  int
-	clusterCacheConcurrency         int
-	etcdDialTimeout                 time.Duration
-	etcdCallTimeout                 time.Duration
-	useDeprecatedInfraMachineNaming bool
+	remoteConditionsGracePeriod    time.Duration
+	kubeadmControlPlaneConcurrency int
+	clusterCacheConcurrency        int
+	skipCRDMigrationPhases         []string
+	etcdDialTimeout                time.Duration
+	etcdCallTimeout                time.Duration
 )
 
 func init() {
@@ -145,6 +148,9 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&kubeadmControlPlaneConcurrency, "kubeadmcontrolplane-concurrency", 10,
 		"Number of kubeadm control planes to process simultaneously")
 
+	fs.StringSliceVar(&skipCRDMigrationPhases, "skip-crd-migration-phases", []string{},
+		"List of CRD migration phases to skip. Valid values are: StorageVersionMigration, CleanupManagedFields.")
+
 	fs.IntVar(&clusterCacheConcurrency, "clustercache-concurrency", 100,
 		"Number of clusters to process simultaneously")
 
@@ -184,10 +190,6 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&etcdCallTimeout, "etcd-call-timeout-duration", etcd.DefaultCallTimeout,
 		"Duration that the etcd client waits at most for read and write operations to etcd.")
 
-	fs.BoolVar(&useDeprecatedInfraMachineNaming, "use-deprecated-infra-machine-naming", false,
-		"Use the deprecated naming convention for infra machines where they are named after the InfraMachineTemplate.")
-	_ = fs.MarkDeprecated("use-deprecated-infra-machine-naming", "This flag will be removed in v1.9.")
-
 	flags.AddManagerOptions(fs, &managerOptions)
 
 	feature.MutableGates.AddFlag(fs)
@@ -196,8 +198,13 @@ func InitFlags(fs *pflag.FlagSet) {
 // Add RBAC for the authorized diagnostics endpoint.
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+// ADD CRD RBAC for CRD Migrator.
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions;customresourcedefinitions/status,verbs=update;patch,resourceNames=kubeadmcontrolplanes.controlplane.cluster.x-k8s.io;kubeadmcontrolplanetemplates.controlplane.cluster.x-k8s.io
 
 func main() {
+	setupLog.Info(fmt.Sprintf("Version: %+v", version.Get().String()))
+
 	InitFlags(pflag.CommandLine)
 	pflag.CommandLine.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
@@ -252,6 +259,9 @@ func main() {
 	clusterSecretCacheSelector := labels.NewSelector().Add(*req)
 
 	ctrlOptions := ctrl.Options{
+		Controller: config.Controller{
+			UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+		},
 		Scheme:                     scheme,
 		LeaderElection:             enableLeaderElection,
 		LeaderElectionID:           "kubeadm-control-plane-manager-leader-election-capi",
@@ -387,15 +397,35 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		os.Exit(1)
 	}
 
+	crdMigratorSkipPhases := []crdmigrator.Phase{}
+	for _, p := range skipCRDMigrationPhases {
+		crdMigratorSkipPhases = append(crdMigratorSkipPhases, crdmigrator.Phase(p))
+	}
+	if err := (&crdmigrator.CRDMigrator{
+		Client:                 mgr.GetClient(),
+		APIReader:              mgr.GetAPIReader(),
+		SkipCRDMigrationPhases: crdMigratorSkipPhases,
+		// Note: The kubebuilder RBAC markers above has to be kept in sync
+		// with the CRDs that should be migrated by this provider.
+		Config: map[client.Object]crdmigrator.ByObjectConfig{
+			&controlplanev1.KubeadmControlPlane{}:         {UseCache: true, UseStatusForStorageVersionMigration: true},
+			&controlplanev1.KubeadmControlPlaneTemplate{}: {UseCache: false},
+		},
+		// The CRDMigrator is run with only concurrency 1 to ensure we don't overwhelm the apiserver by patching a
+		// lot of CRs concurrently.
+	}).SetupWithManager(ctx, mgr, concurrency(1)); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "CRDMigrator")
+		os.Exit(1)
+	}
+
 	if err := (&kubeadmcontrolplanecontrollers.KubeadmControlPlaneReconciler{
-		Client:                       mgr.GetClient(),
-		SecretCachingClient:          secretCachingClient,
-		ClusterCache:                 clusterCache,
-		WatchFilterValue:             watchFilterValue,
-		EtcdDialTimeout:              etcdDialTimeout,
-		EtcdCallTimeout:              etcdCallTimeout,
-		RemoteConditionsGracePeriod:  remoteConditionsGracePeriod,
-		DeprecatedInfraMachineNaming: useDeprecatedInfraMachineNaming,
+		Client:                      mgr.GetClient(),
+		SecretCachingClient:         secretCachingClient,
+		ClusterCache:                clusterCache,
+		WatchFilterValue:            watchFilterValue,
+		EtcdDialTimeout:             etcdDialTimeout,
+		EtcdCallTimeout:             etcdCallTimeout,
+		RemoteConditionsGracePeriod: remoteConditionsGracePeriod,
 	}).SetupWithManager(ctx, mgr, concurrency(kubeadmControlPlaneConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KubeadmControlPlane")
 		os.Exit(1)

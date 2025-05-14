@@ -38,7 +38,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
-	"sigs.k8s.io/cluster-api/internal/topology/names"
+	topologynames "sigs.k8s.io/cluster-api/internal/topology/names"
 	"sigs.k8s.io/cluster-api/internal/util/kubeadm"
 	"sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/version"
@@ -47,7 +47,7 @@ import (
 func (webhook *KubeadmControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(&controlplanev1.KubeadmControlPlane{}).
-		WithDefaulter(webhook).
+		WithDefaulter(webhook, admission.DefaulterRemoveUnknownOrOmitableFields).
 		WithValidator(webhook).
 		Complete()
 }
@@ -142,6 +142,7 @@ const (
 	skipPhases           = "skipPhases"
 	patches              = "patches"
 	directory            = "directory"
+	bootCommands         = "bootCommands"
 	preKubeadmCommands   = "preKubeadmCommands"
 	postKubeadmCommands  = "postKubeadmCommands"
 	files                = "files"
@@ -208,6 +209,7 @@ func (webhook *KubeadmControlPlane) ValidateUpdate(_ context.Context, oldObj, ne
 		{spec, kubeadmConfigSpec, joinConfiguration, "discovery"},
 		{spec, kubeadmConfigSpec, joinConfiguration, "discovery", "*"},
 		// spec.kubeadmConfigSpec
+		{spec, kubeadmConfigSpec, bootCommands},
 		{spec, kubeadmConfigSpec, preKubeadmCommands},
 		{spec, kubeadmConfigSpec, postKubeadmCommands},
 		{spec, kubeadmConfigSpec, files},
@@ -473,9 +475,8 @@ func validateNamingStrategy(machineNamingStrategy *controlplanev1.MachineNamingS
 					machineNamingStrategy.Template,
 					"invalid template, {{ .random }} is missing",
 				))
-			return allErrs
 		}
-		name, err := names.KCPMachineNameGenerator(machineNamingStrategy.Template, "cluster", "kubeadmcontrolplane").GenerateName()
+		name, err := topologynames.KCPMachineNameGenerator(machineNamingStrategy.Template, "cluster", "kubeadmcontrolplane").GenerateName()
 		if err != nil {
 			allErrs = append(allErrs,
 				field.Invalid(

@@ -22,6 +22,7 @@ import (
 
 // KubeadmControlPlaneTemplateSpec defines the desired state of KubeadmControlPlaneTemplate.
 type KubeadmControlPlaneTemplateSpec struct {
+	// template defines the desired state of KubeadmControlPlaneTemplate.
 	Template KubeadmControlPlaneTemplateResource `json:"template"`
 }
 
@@ -35,9 +36,12 @@ type KubeadmControlPlaneTemplateSpec struct {
 //
 // Deprecated: This type will be removed in one of the next releases.
 type KubeadmControlPlaneTemplate struct {
-	metav1.TypeMeta   `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard object's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
+	// spec is the desired state of KubeadmControlPlaneTemplate.
 	Spec KubeadmControlPlaneTemplateSpec `json:"spec,omitempty"`
 }
 
@@ -48,8 +52,11 @@ type KubeadmControlPlaneTemplate struct {
 // Deprecated: This type will be removed in one of the next releases.
 type KubeadmControlPlaneTemplateList struct {
 	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard list's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#lists-and-simple-kinds
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []KubeadmControlPlaneTemplate `json:"items"`
+	// items is the list of KubeadmControlPlaneTemplates.
+	Items []KubeadmControlPlaneTemplate `json:"items"`
 }
 
 func init() {
@@ -58,5 +65,6 @@ func init() {
 
 // KubeadmControlPlaneTemplateResource describes the data needed to create a KubeadmControlPlane from a template.
 type KubeadmControlPlaneTemplateResource struct {
+	// spec is the desired state of KubeadmControlPlane.
 	Spec KubeadmControlPlaneSpec `json:"spec"`
 }

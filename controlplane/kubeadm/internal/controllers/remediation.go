@@ -34,6 +34,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -167,6 +168,28 @@ func (r *KubeadmControlPlaneReconciler) reconcileUnhealthyMachines(ctx context.C
 
 	// Before starting remediation, run preflight checks in order to verify it is safe to remediate.
 	// If any of the following checks fails, we'll surface the reason in the MachineOwnerRemediated condition.
+
+	if feature.Gates.Enabled(feature.ClusterTopology) {
+		// Skip remediation when we expect an upgrade to be propagated from the cluster topology.
+		if controlPlane.Cluster.Spec.Topology != nil && controlPlane.Cluster.Spec.Topology.Version != controlPlane.KCP.Spec.Version {
+			message := fmt.Sprintf("KubeadmControlPlane can't remediate while waiting for a version upgrade to %s to be propagated from Cluster.spec.topology", controlPlane.Cluster.Spec.Topology.Version)
+			log.Info(fmt.Sprintf("A control plane machine needs remediation, but %s. Skipping remediation", message))
+			conditions.MarkFalse(machineToBeRemediated,
+				clusterv1.MachineOwnerRemediatedCondition,
+				clusterv1.WaitingForRemediationReason,
+				clusterv1.ConditionSeverityWarning,
+				message)
+
+			v1beta2conditions.Set(machineToBeRemediated, metav1.Condition{
+				Type:    clusterv1.MachineOwnerRemediatedV1Beta2Condition,
+				Status:  metav1.ConditionFalse,
+				Reason:  controlplanev1.KubeadmControlPlaneMachineRemediationDeferredV1Beta2Reason,
+				Message: message,
+			})
+
+			return ctrl.Result{}, nil
+		}
+	}
 
 	// Check if KCP is allowed to remediate considering retry limits:
 	// - Remediation cannot happen because retryPeriod is not yet expired.
@@ -347,6 +370,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileUnhealthyMachines(ctx context.C
 // Gets the machine to be remediated, which is the "most broken" among the unhealthy machines, determined as the machine
 // having the highest priority issue that other machines have not.
 // The following issues are considered (from highest to lowest priority):
+// - machine with RemediateMachineAnnotation annotation
 // - machine without .status.nodeRef
 // - machine with etcd issue or etcd status unknown (etcd member, etcd pod)
 // - machine with control plane component issue or status unknown (API server, controller manager, scheduler)
@@ -373,6 +397,14 @@ func getMachineToBeRemediated(unhealthyMachines collections.Machines, isEtcdMana
 
 // pickMachineToBeRemediated returns true if machine i should be remediated before machine j.
 func pickMachineToBeRemediated(i, j *clusterv1.Machine, isEtcdManaged bool) bool {
+	// If one machine has the RemediateMachineAnnotation annotation, remediate first.
+	if annotations.HasRemediateMachine(i) && !annotations.HasRemediateMachine(j) {
+		return true
+	}
+	if !annotations.HasRemediateMachine(i) && annotations.HasRemediateMachine(j) {
+		return false
+	}
+
 	// if one machine does not have a node ref, we assume that provisioning failed and there is no CP components at all,
 	// so remediate first; also without a node, it is not possible to get further info about status.
 	if i.Status.NodeRef == nil && j.Status.NodeRef != nil {

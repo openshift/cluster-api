@@ -26,7 +26,10 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
@@ -38,14 +41,17 @@ import (
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/controllers/crdmigrator"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
@@ -60,11 +66,15 @@ import (
 	expcontrollers "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/controllers"
 	infraexpwebhooks "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/webhooks"
 	infrawebhooks "sigs.k8s.io/cluster-api/test/infrastructure/docker/webhooks"
+	cloudv1 "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/cloud/api/v1alpha1"
+	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
+	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
 	"sigs.k8s.io/cluster-api/util/flags"
 	"sigs.k8s.io/cluster-api/version"
 )
 
 var (
+	inmemoryScheme = runtime.NewScheme()
 	scheme         = runtime.NewScheme()
 	setupLog       = ctrl.Log.WithName("setup")
 	controllerName = "cluster-api-docker-controller-manager"
@@ -93,10 +103,12 @@ var (
 	// CAPD specific flags.
 	concurrency             int
 	clusterCacheConcurrency int
+	skipCRDMigrationPhases  []string
 )
 
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
+	_ = apiextensionsv1.AddToScheme(scheme)
 	_ = infrav1alpha3.AddToScheme(scheme)
 	_ = infrav1alpha4.AddToScheme(scheme)
 	_ = infrav1.AddToScheme(scheme)
@@ -105,6 +117,12 @@ func init() {
 	_ = infraexpv1.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
 	_ = expv1.AddToScheme(scheme)
+
+	// scheme used for operating on the cloud resource.
+	_ = cloudv1.AddToScheme(inmemoryScheme)
+	_ = corev1.AddToScheme(inmemoryScheme)
+	_ = appsv1.AddToScheme(inmemoryScheme)
+	_ = rbacv1.AddToScheme(inmemoryScheme)
 }
 
 // InitFlags initializes the flags.
@@ -140,6 +158,9 @@ func InitFlags(fs *pflag.FlagSet) {
 
 	fs.IntVar(&clusterCacheConcurrency, "clustercache-concurrency", 100,
 		"Number of clusters to process simultaneously")
+
+	fs.StringSliceVar(&skipCRDMigrationPhases, "skip-crd-migration-phases", []string{},
+		"List of CRD migration phases to skip. Valid values are: StorageVersionMigration, CleanupManagedFields.")
 
 	fs.DurationVar(&syncPeriod, "sync-period", 10*time.Minute,
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
@@ -179,8 +200,16 @@ func InitFlags(fs *pflag.FlagSet) {
 // Add RBAC for the authorized diagnostics endpoint.
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+// ADD CRD RBAC for CRD Migrator.
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions;customresourcedefinitions/status,verbs=update;patch,resourceNames=devclusters.infrastructure.cluster.x-k8s.io;devclustertemplates.infrastructure.cluster.x-k8s.io;devmachines.infrastructure.cluster.x-k8s.io;devmachinetemplates.infrastructure.cluster.x-k8s.io;dockerclusters.infrastructure.cluster.x-k8s.io;dockerclustertemplates.infrastructure.cluster.x-k8s.io;dockermachinepools.infrastructure.cluster.x-k8s.io;dockermachinepooltemplates.infrastructure.cluster.x-k8s.io;dockermachines.infrastructure.cluster.x-k8s.io;dockermachinetemplates.infrastructure.cluster.x-k8s.io
+// ADD CR RBAC for CRD Migrator.
+// +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=dockerclustertemplates;dockermachinetemplates;dockermachinepooltemplates,verbs=get;list;watch;patch;update
+// +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devclustertemplates;devmachinetemplates,verbs=get;list;watch;patch;update
 
 func main() {
+	setupLog.Info(fmt.Sprintf("Version: %+v", version.Get().String()))
+
 	if _, err := os.ReadDir("/tmp/"); err != nil {
 		setupLog.Error(err, "Unable to start manager")
 		os.Exit(1)
@@ -230,6 +259,9 @@ func main() {
 	clusterSecretCacheSelector := labels.NewSelector().Add(*req)
 
 	ctrlOptions := ctrl.Options{
+		Controller: config.Controller{
+			UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+		},
 		Scheme:                     scheme,
 		LeaderElection:             enableLeaderElection,
 		LeaderElectionID:           "controller-leader-election-capd",
@@ -348,6 +380,53 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		os.Exit(1)
 	}
 
+	// Note: The kubebuilder RBAC markers above has to be kept in sync
+	// with the CRDs that should be migrated by this provider.
+	crdMigratorConfig := map[client.Object]crdmigrator.ByObjectConfig{
+		&infrav1.DockerCluster{}:         {UseCache: true, UseStatusForStorageVersionMigration: true},
+		&infrav1.DockerClusterTemplate{}: {UseCache: false},
+		&infrav1.DockerMachine{}:         {UseCache: true, UseStatusForStorageVersionMigration: true},
+		&infrav1.DockerMachineTemplate{}: {UseCache: false},
+		&infrav1.DevCluster{}:            {UseCache: true, UseStatusForStorageVersionMigration: true},
+		&infrav1.DevClusterTemplate{}:    {UseCache: false},
+		&infrav1.DevMachine{}:            {UseCache: true, UseStatusForStorageVersionMigration: true},
+		&infrav1.DevMachineTemplate{}:    {UseCache: false},
+	}
+	if feature.Gates.Enabled(feature.MachinePool) {
+		crdMigratorConfig[&infraexpv1.DockerMachinePool{}] = crdmigrator.ByObjectConfig{UseCache: true}
+		crdMigratorConfig[&infraexpv1.DockerMachinePoolTemplate{}] = crdmigrator.ByObjectConfig{UseCache: false}
+	}
+	crdMigratorSkipPhases := []crdmigrator.Phase{}
+	for _, p := range skipCRDMigrationPhases {
+		crdMigratorSkipPhases = append(crdMigratorSkipPhases, crdmigrator.Phase(p))
+	}
+	if err := (&crdmigrator.CRDMigrator{
+		Client:                 mgr.GetClient(),
+		APIReader:              mgr.GetAPIReader(),
+		SkipCRDMigrationPhases: crdMigratorSkipPhases,
+		Config:                 crdMigratorConfig,
+		// The CRDMigrator is run with only concurrency 1 to ensure we don't overwhelm the apiserver by patching a
+		// lot of CRs concurrently.
+	}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "CRDMigrator")
+		os.Exit(1)
+	}
+
+	// Start in memory manager
+	inMemoryManager := inmemoryruntime.NewManager(inmemoryScheme)
+	if err := inMemoryManager.Start(ctx); err != nil {
+		setupLog.Error(err, "Unable to start a in memory manager")
+		os.Exit(1)
+	}
+
+	// Start an http server
+	podIP := os.Getenv("POD_IP")
+	apiServerMux, err := inmemoryserver.NewWorkloadClustersMux(inMemoryManager, podIP)
+	if err != nil {
+		setupLog.Error(err, "Unable to create workload clusters mux")
+		os.Exit(1)
+	}
+
 	if err := (&controllers.DockerMachineReconciler{
 		Client:           mgr.GetClient(),
 		ContainerRuntime: runtimeClient,
@@ -379,6 +458,31 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 			os.Exit(1)
 		}
 	}
+
+	if err := (&controllers.DevMachineReconciler{
+		Client:           mgr.GetClient(),
+		WatchFilterValue: watchFilterValue,
+		ContainerRuntime: runtimeClient,
+		ClusterCache:     clusterCache,
+		InMemoryManager:  inMemoryManager,
+		APIServerMux:     apiServerMux,
+	}).SetupWithManager(ctx, mgr, controller.Options{
+		MaxConcurrentReconciles: concurrency,
+	}); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "DevMachine")
+		os.Exit(1)
+	}
+
+	if err := (&controllers.DevClusterReconciler{
+		Client:           mgr.GetClient(),
+		WatchFilterValue: watchFilterValue,
+		ContainerRuntime: runtimeClient,
+		InMemoryManager:  inMemoryManager,
+		APIServerMux:     apiServerMux,
+	}).SetupWithManager(ctx, mgr, controller.Options{}); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "DevCluster")
+		os.Exit(1)
+	}
 }
 
 func setupWebhooks(mgr ctrl.Manager) {
@@ -402,5 +506,25 @@ func setupWebhooks(mgr ctrl.Manager) {
 			setupLog.Error(err, "Unable to create webhook", "webhook", "DockerMachinePool")
 			os.Exit(1)
 		}
+	}
+
+	if err := (&infrawebhooks.DevMachine{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create webhook", "webhook", "DevMachine")
+		os.Exit(1)
+	}
+
+	if err := (&infrawebhooks.DevMachineTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create webhook", "webhook", "DevMachineTemplate")
+		os.Exit(1)
+	}
+
+	if err := (&infrawebhooks.DevCluster{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create webhook", "webhook", "DevCluster")
+		os.Exit(1)
+	}
+
+	if err := (&infrawebhooks.DevClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create webhook", "webhook", "DevClusterTemplate")
+		os.Exit(1)
 	}
 }

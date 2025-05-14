@@ -91,9 +91,6 @@ type KubeadmControlPlaneReconciler struct {
 
 	RemoteConditionsGracePeriod time.Duration
 
-	// Deprecated: DeprecatedInfraMachineNaming. Name the InfraStructureMachines after the InfraMachineTemplate.
-	DeprecatedInfraMachineNaming bool
-
 	managementCluster         internal.ManagementCluster
 	managementClusterUncached internal.ManagementCluster
 	ssaCache                  ssa.Cache
@@ -125,7 +122,10 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mg
 				predicates.All(mgr.GetScheme(), predicateLog,
 					predicates.ResourceIsChanged(mgr.GetScheme(), predicateLog),
 					predicates.ResourceHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue),
-					predicates.ClusterPausedTransitionsOrInfrastructureReady(mgr.GetScheme(), predicateLog),
+					predicates.Any(mgr.GetScheme(), predicateLog,
+						predicates.ClusterPausedTransitionsOrInfrastructureReady(mgr.GetScheme(), predicateLog),
+						predicates.ClusterTopologyVersionChanged(mgr.GetScheme(), predicateLog),
+					),
 				),
 			),
 		).
@@ -138,7 +138,7 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(ctx context.Context, mg
 
 	r.controller = c
 	r.recorder = mgr.GetEventRecorderFor("kubeadmcontrolplane-controller")
-	r.ssaCache = ssa.NewCache()
+	r.ssaCache = ssa.NewCache("kubeadmcontrolplane")
 
 	if r.managementCluster == nil {
 		r.managementCluster = &internal.Management{
@@ -189,15 +189,15 @@ func (r *KubeadmControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.
 	log = log.WithValues("Cluster", klog.KObj(cluster))
 	ctx = ctrl.LoggerInto(ctx, log)
 
-	if isPaused, conditionChanged, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, kcp); err != nil || isPaused || conditionChanged {
-		return ctrl.Result{}, err
-	}
-
 	// Initialize the patch helper.
 	patchHelper, err := patch.NewHelper(kcp, r.Client)
 	if err != nil {
 		log.Error(err, "Failed to configure the patch helper")
 		return ctrl.Result{Requeue: true}, nil
+	}
+
+	if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, kcp); err != nil || isPaused || requeue {
+		return ctrl.Result{}, err
 	}
 
 	// Initialize the control plane scope; this includes also checking for orphan machines and
@@ -258,21 +258,11 @@ func (r *KubeadmControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	if !kcp.ObjectMeta.DeletionTimestamp.IsZero() {
 		// Handle deletion reconciliation loop.
-		res, err = r.reconcileDelete(ctx, controlPlane)
-		if errors.Is(err, clustercache.ErrClusterNotConnected) {
-			log.V(5).Info("Requeuing because connection to the workload cluster is down")
-			return ctrl.Result{RequeueAfter: time.Minute}, nil
-		}
-		return res, err
+		return r.reconcileDelete(ctx, controlPlane)
 	}
 
 	// Handle normal reconciliation loop.
-	res, err = r.reconcile(ctx, controlPlane)
-	if errors.Is(err, clustercache.ErrClusterNotConnected) {
-		log.V(5).Info("Requeuing because connection to the workload cluster is down")
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
-	}
-	return res, err
+	return r.reconcile(ctx, controlPlane)
 }
 
 // initControlPlaneScope initializes the control plane scope; this includes also checking for orphan machines and
@@ -347,6 +337,7 @@ func patchKubeadmControlPlane(ctx context.Context, patchHelper *patch.Helper, kc
 			controlplanev1.CertificatesAvailableCondition,
 		}},
 		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
+			clusterv1.PausedV1Beta2Condition,
 			controlplanev1.KubeadmControlPlaneAvailableV1Beta2Condition,
 			controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
 			controlplanev1.KubeadmControlPlaneCertificatesAvailableV1Beta2Condition,
@@ -1100,11 +1091,6 @@ func (r *KubeadmControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context
 
 	// If there is no KCP-owned control-plane machines, then control-plane has not been initialized yet.
 	if controlPlane.Machines.Len() == 0 {
-		return nil
-	}
-
-	// No op if there are potential issues affecting the list of etcdMembers
-	if !controlPlane.EtcdMembersAgreeOnMemberList || !controlPlane.EtcdMembersAgreeOnClusterID {
 		return nil
 	}
 

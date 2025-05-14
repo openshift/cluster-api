@@ -58,7 +58,7 @@ type NodeDrainTimeoutSpecInput struct {
 
 	// Flavor, if specified, must refer to a template that uses a Cluster with ClusterClass.
 	// The cluster must use a KubeadmControlPlane and a MachineDeployment.
-	// If not specified, "node-drain" is used.
+	// If not specified, "topology" is used.
 	Flavor *string
 
 	// Allows to inject a function to be run after test namespace is created.
@@ -93,8 +93,9 @@ type NodeDrainTimeoutSpecInput struct {
 // * Verify Node drains for control plane and MachineDeployment Machines are blocked by WaitCompleted Pods
 // * Force deleting the WaitCompleted Pods
 // * Verify Node drains for control plane and MachineDeployment Machines are blocked by PDBs
-// * Set NodeDrainTimeout to 1s to unblock Node drain
+// * Delete the unevictable pod PDBs
 // * Verify machine deletion is blocked by waiting for volume detachment (only if VerifyNodeVolumeDetach is enabled)
+// * Set NodeDrainTimeout to 1s to unblock Node drain
 // * Unblocks waiting for volume detachment (only if VerifyNodeVolumeDetach is enabled)
 // * Verify scale down succeeded because Node drains were unblocked.
 func NodeDrainTimeoutSpec(ctx context.Context, inputGetter func() NodeDrainTimeoutSpecInput) {
@@ -142,10 +143,10 @@ func NodeDrainTimeoutSpec(ctx context.Context, inputGetter func() NodeDrainTimeo
 				ClusterctlConfigPath:     input.ClusterctlConfigPath,
 				KubeconfigPath:           input.BootstrapClusterProxy.GetKubeconfigPath(),
 				InfrastructureProvider:   infrastructureProvider,
-				Flavor:                   ptr.Deref(input.Flavor, "node-drain"),
+				Flavor:                   ptr.Deref(input.Flavor, "topology"),
 				Namespace:                namespace.Name,
 				ClusterName:              clusterName,
-				KubernetesVersion:        input.E2EConfig.GetVariable(KubernetesVersion),
+				KubernetesVersion:        input.E2EConfig.MustGetVariable(KubernetesVersion),
 				ControlPlaneMachineCount: ptr.To[int64](int64(controlPlaneReplicas)),
 				WorkerMachineCount:       ptr.To[int64](1),
 			},
@@ -526,26 +527,19 @@ func NodeDrainTimeoutSpec(ctx context.Context, inputGetter func() NodeDrainTimeo
 			}, input.E2EConfig.GetIntervals(specName, "wait-machine-deleted")...).Should(Succeed())
 		}
 
-		By("Set NodeDrainTimeout to 1s to unblock Node drain")
-		// Note: This also verifies that KCP & MachineDeployments are still propagating changes to NodeDrainTimeout down to
-		// Machines that already have a deletionTimestamp.
-		drainTimeout := &metav1.Duration{Duration: time.Duration(1) * time.Second}
-		modifyControlPlaneViaClusterAndWait(ctx, modifyControlPlaneViaClusterAndWaitInput{
-			ClusterProxy: input.BootstrapClusterProxy,
-			Cluster:      cluster,
-			ModifyControlPlaneTopology: func(topology *clusterv1.ControlPlaneTopology) {
-				topology.NodeDrainTimeout = drainTimeout
-			},
-			WaitForControlPlane: input.E2EConfig.GetIntervals(specName, "wait-control-plane"),
+		By("Delete PDB for all unevictable pods to let drain succeed")
+		framework.DeletePodDisruptionBudget(ctx, framework.DeletePodDisruptionBudgetInput{
+			ClientSet: workloadClusterProxy.GetClientSet(),
+			Budget:    cpDeploymentWithPDBName(),
+			Namespace: "unevictable-workload",
 		})
-		modifyMachineDeploymentViaClusterAndWait(ctx, modifyMachineDeploymentViaClusterAndWaitInput{
-			ClusterProxy: input.BootstrapClusterProxy,
-			Cluster:      cluster,
-			ModifyMachineDeploymentTopology: func(topology *clusterv1.MachineDeploymentTopology) {
-				topology.NodeDrainTimeout = drainTimeout
-			},
-			WaitForMachineDeployments: input.E2EConfig.GetIntervals(specName, "wait-worker-nodes"),
-		})
+		for _, md := range machineDeployments {
+			framework.DeletePodDisruptionBudget(ctx, framework.DeletePodDisruptionBudgetInput{
+				ClientSet: workloadClusterProxy.GetClientSet(),
+				Budget:    mdDeploymentWithPDBName(md.Name),
+				Namespace: "unevictable-workload",
+			})
+		}
 
 		if input.VerifyNodeVolumeDetach {
 			By("Verify Node removal for control plane and MachineDeployment Machines are blocked (only by volume detachments)")
@@ -574,6 +568,21 @@ func NodeDrainTimeoutSpec(ctx context.Context, inputGetter func() NodeDrainTimeo
 			By("Executing input.UnblockNodeVolumeDetachment to unblock waiting for volume detachments")
 			input.UnblockNodeVolumeDetachment(ctx, input.BootstrapClusterProxy, cluster)
 		}
+
+		// Set NodeDrainTimeout and NodeVolumeDetachTimeout to let the second ControlPlane Node get deleted without requiring manual intervention.
+		By("Set NodeDrainTimeout and NodeVolumeDetachTimeout for ControlPlanes to 1s to unblock Node drain")
+		// Note: This also verifies that KCP & MachineDeployments are still propagating changes to NodeDrainTimeout down to
+		// Machines that already have a deletionTimestamp.
+		drainTimeout := &metav1.Duration{Duration: time.Duration(1) * time.Second}
+		modifyControlPlaneViaClusterAndWait(ctx, modifyControlPlaneViaClusterAndWaitInput{
+			ClusterProxy: input.BootstrapClusterProxy,
+			Cluster:      cluster,
+			ModifyControlPlaneTopology: func(topology *clusterv1.ControlPlaneTopology) {
+				topology.NodeDrainTimeout = drainTimeout
+				topology.NodeVolumeDetachTimeout = drainTimeout
+			},
+			WaitForControlPlane: input.E2EConfig.GetIntervals(specName, "wait-control-plane"),
+		})
 
 		By("Verify scale down succeeded because Node drains and Volume detachments were unblocked")
 		// When we scale down the KCP, controlplane machines are deleted one by one, so it requires more time
@@ -604,7 +613,7 @@ func NodeDrainTimeoutSpec(ctx context.Context, inputGetter func() NodeDrainTimeo
 
 	AfterEach(func() {
 		// Dumps all the resources in the spec namespace, then cleanups the cluster object and the spec namespace itself.
-		framework.DumpSpecResourcesAndCleanup(ctx, specName, input.BootstrapClusterProxy, input.ArtifactFolder, namespace, cancelWatches, clusterResources.Cluster, input.E2EConfig.GetIntervals, input.SkipCleanup)
+		framework.DumpSpecResourcesAndCleanup(ctx, specName, input.BootstrapClusterProxy, input.ClusterctlConfigPath, input.ArtifactFolder, namespace, cancelWatches, clusterResources.Cluster, input.E2EConfig.GetIntervals, input.SkipCleanup)
 	})
 }
 

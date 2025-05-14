@@ -17,20 +17,28 @@ limitations under the License.
 package machineset
 
 import (
+	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	. "github.com/onsi/gomega"
+	gomegatypes "github.com/onsi/gomega/types"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -1283,7 +1291,7 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 	// for Machines, InfrastructureMachines and BootstrapConfigs.
 	reconciler := &Reconciler{
 		Client:   env,
-		ssaCache: ssa.NewCache(),
+		ssaCache: ssa.NewCache("test-controller"),
 	}
 	s := &scope{
 		machineSet: ms,
@@ -1704,7 +1712,8 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		machines := []*clusterv1.Machine{unhealthyMachine, healthyMachine}
 		fakeClient := fake.NewClientBuilder().WithObjects(controlPlaneUpgrading, unhealthyMachine, healthyMachine).WithStatusSubresource(&clusterv1.Machine{}).Build()
 		r := &Reconciler{
-			Client: fakeClient,
+			Client:          fakeClient,
+			PreflightChecks: sets.Set[clusterv1.MachineSetPreflightCheck]{}.Insert(clusterv1.MachineSetPreflightCheckAll),
 		}
 		s := &scope{
 			cluster:    cluster,
@@ -2317,7 +2326,8 @@ func TestMachineSetReconciler_syncReplicas(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().WithObjects(controlPlaneUpgrading, machineSet).WithStatusSubresource(&clusterv1.MachineSet{}).Build()
 		r := &Reconciler{
-			Client: fakeClient,
+			Client:          fakeClient,
+			PreflightChecks: sets.Set[clusterv1.MachineSetPreflightCheck]{}.Insert(clusterv1.MachineSetPreflightCheckAll),
 		}
 		s := &scope{
 			cluster:    cluster,
@@ -2346,9 +2356,185 @@ func TestMachineSetReconciler_syncReplicas(t *testing.T) {
 	})
 }
 
+func TestMachineSetReconciler_syncReplicas_WithErrors(t *testing.T) {
+	t.Run("should hold off on sync replicas when create Infrastructure of machine failed ", func(t *testing.T) {
+		g := NewWithT(t)
+		scheme := runtime.NewScheme()
+		g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects().WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				// simulate scenarios where infra object creation fails
+				if obj.GetObjectKind().GroupVersionKind().Kind == "GenericInfrastructureMachine" {
+					return fmt.Errorf("inject error for create machineInfrastructure")
+				}
+				return client.Create(ctx, obj, opts...)
+			},
+		}).Build()
+
+		r := &Reconciler{
+			Client: fakeClient,
+		}
+		testCluster := &clusterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster",
+				Namespace: "default",
+			},
+		}
+
+		duration10m := &metav1.Duration{Duration: 10 * time.Minute}
+		machineSet := &clusterv1.MachineSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "machineset1",
+				Namespace:  metav1.NamespaceDefault,
+				Finalizers: []string{"block-deletion"},
+			},
+			Spec: clusterv1.MachineSetSpec{
+				Replicas:    ptr.To[int32](1),
+				ClusterName: "test-cluster",
+				Template: clusterv1.MachineTemplateSpec{
+					Spec: clusterv1.MachineSpec{
+						ClusterName: testCluster.Name,
+						Version:     ptr.To("v1.14.2"),
+						Bootstrap: clusterv1.Bootstrap{
+							ConfigRef: &corev1.ObjectReference{
+								APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+								Kind:       "GenericBootstrapConfigTemplate",
+								Name:       "ms-template",
+								Namespace:  metav1.NamespaceDefault,
+							},
+						},
+						InfrastructureRef: corev1.ObjectReference{
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+							Kind:       "GenericInfrastructureMachineTemplate",
+							Name:       "ms-template",
+							Namespace:  metav1.NamespaceDefault,
+						},
+						NodeDrainTimeout:        duration10m,
+						NodeDeletionTimeout:     duration10m,
+						NodeVolumeDetachTimeout: duration10m,
+					},
+				},
+			},
+		}
+
+		// Create bootstrap template resource.
+		bootstrapResource := map[string]interface{}{
+			"kind":       "GenericBootstrapConfig",
+			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+			"metadata": map[string]interface{}{
+				"annotations": map[string]interface{}{
+					"precedence": "GenericBootstrapConfig",
+				},
+			},
+		}
+
+		bootstrapTmpl := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"template": bootstrapResource,
+				},
+			},
+		}
+		bootstrapTmpl.SetKind("GenericBootstrapConfigTemplate")
+		bootstrapTmpl.SetAPIVersion("bootstrap.cluster.x-k8s.io/v1beta1")
+		bootstrapTmpl.SetName("ms-template")
+		bootstrapTmpl.SetNamespace(metav1.NamespaceDefault)
+		g.Expect(r.Client.Create(context.TODO(), bootstrapTmpl)).To(Succeed())
+
+		// Create infrastructure template resource.
+		infraResource := map[string]interface{}{
+			"kind":       "GenericInfrastructureMachine",
+			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"metadata": map[string]interface{}{
+				"annotations": map[string]interface{}{
+					"precedence": "GenericInfrastructureMachineTemplate",
+				},
+			},
+			"spec": map[string]interface{}{
+				"size": "3xlarge",
+			},
+		}
+		infraTmpl := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"template": infraResource,
+				},
+			},
+		}
+		infraTmpl.SetKind("GenericInfrastructureMachineTemplate")
+		infraTmpl.SetAPIVersion("infrastructure.cluster.x-k8s.io/v1beta1")
+		infraTmpl.SetName("ms-template")
+		infraTmpl.SetNamespace(metav1.NamespaceDefault)
+		g.Expect(r.Client.Create(context.TODO(), infraTmpl)).To(Succeed())
+
+		s := &scope{
+			cluster:    testCluster,
+			machineSet: machineSet,
+			machines:   []*clusterv1.Machine{},
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+		}
+		_, err := r.syncReplicas(ctx, s)
+		g.Expect(err).To(HaveOccurred())
+
+		// Verify the proper condition is set on the MachineSet.
+		condition := clusterv1.MachinesCreatedCondition
+		g.Expect(conditions.Has(machineSet, condition)).To(BeTrue(), "MachineSet should have the %s condition set", condition)
+
+		machinesCreatedCondition := conditions.Get(machineSet, condition)
+		g.Expect(machinesCreatedCondition.Status).
+			To(Equal(corev1.ConditionFalse), "%s condition status should be %s", condition, corev1.ConditionFalse)
+		g.Expect(machinesCreatedCondition.Reason).
+			To(Equal(clusterv1.InfrastructureTemplateCloningFailedReason), "%s condition reason should be %s", condition, clusterv1.InfrastructureTemplateCloningFailedReason)
+
+		// Verify no new Machines are created.
+		machineList := &clusterv1.MachineList{}
+		g.Expect(r.Client.List(ctx, machineList)).To(Succeed())
+		g.Expect(machineList.Items).To(BeEmpty(), "There should not be any machines")
+
+		// Verify no boostrap object created
+		bootstrapList := &unstructured.UnstructuredList{}
+		bootstrapList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   bootstrapTmpl.GetObjectKind().GroupVersionKind().Group,
+			Version: bootstrapTmpl.GetObjectKind().GroupVersionKind().Version,
+			Kind:    strings.TrimSuffix(bootstrapTmpl.GetObjectKind().GroupVersionKind().Kind, clusterv1.TemplateSuffix),
+		})
+		g.Expect(r.Client.List(ctx, bootstrapList)).To(Succeed())
+		g.Expect(bootstrapList.Items).To(BeEmpty(), "There should not be any bootstrap object")
+
+		// Verify no infra object created
+		infraList := &unstructured.UnstructuredList{}
+		infraList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   infraTmpl.GetObjectKind().GroupVersionKind().Group,
+			Version: infraTmpl.GetObjectKind().GroupVersionKind().Version,
+			Kind:    strings.TrimSuffix(infraTmpl.GetObjectKind().GroupVersionKind().Kind, clusterv1.TemplateSuffix),
+		})
+		g.Expect(r.Client.List(ctx, infraList)).To(Succeed())
+		g.Expect(infraList.Items).To(BeEmpty(), "There should not be any infra object")
+	})
+}
+
+type computeDesiredMachineTestCase struct {
+	name            string
+	ms              *clusterv1.MachineSet
+	existingMachine *clusterv1.Machine
+	wantMachine     *clusterv1.Machine
+	wantName        []gomegatypes.GomegaMatcher
+}
+
 func TestComputeDesiredMachine(t *testing.T) {
 	duration5s := &metav1.Duration{Duration: 5 * time.Second}
 	duration10s := &metav1.Duration{Duration: 10 * time.Second}
+
+	namingTemplateKey := "-md"
+	mdName := "testmd"
+	msName := "ms1"
+	testCluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: metav1.NamespaceDefault,
+		},
+	}
 
 	infraRef := corev1.ObjectReference{
 		Kind:       "GenericInfrastructureMachineTemplate",
@@ -2361,53 +2547,37 @@ func TestComputeDesiredMachine(t *testing.T) {
 		APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
 	}
 
-	ms := &clusterv1.MachineSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "default",
-			Name:      "ms1",
-			Labels: map[string]string{
-				clusterv1.MachineDeploymentNameLabel: "md1",
-			},
+	machineTemplateSpec := clusterv1.MachineTemplateSpec{
+		ObjectMeta: clusterv1.ObjectMeta{
+			Labels:      map[string]string{"machine-label1": "machine-value1"},
+			Annotations: map[string]string{"machine-annotation1": "machine-value1"},
 		},
-		Spec: clusterv1.MachineSetSpec{
-			ClusterName:     "test-cluster",
-			Replicas:        ptr.To[int32](3),
-			MinReadySeconds: 10,
-			Selector: metav1.LabelSelector{
-				MatchLabels: map[string]string{"k1": "v1"},
+		Spec: clusterv1.MachineSpec{
+			ClusterName:       testClusterName,
+			Version:           ptr.To("v1.25.3"),
+			InfrastructureRef: infraRef,
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: &bootstrapRef,
 			},
-			Template: clusterv1.MachineTemplateSpec{
-				ObjectMeta: clusterv1.ObjectMeta{
-					Labels:      map[string]string{"machine-label1": "machine-value1"},
-					Annotations: map[string]string{"machine-annotation1": "machine-value1"},
-				},
-				Spec: clusterv1.MachineSpec{
-					Version:           ptr.To("v1.25.3"),
-					InfrastructureRef: infraRef,
-					Bootstrap: clusterv1.Bootstrap{
-						ConfigRef: &bootstrapRef,
-					},
-					NodeDrainTimeout:        duration10s,
-					NodeVolumeDetachTimeout: duration10s,
-					NodeDeletionTimeout:     duration10s,
-				},
-			},
+			NodeDrainTimeout:        duration10s,
+			NodeVolumeDetachTimeout: duration10s,
+			NodeDeletionTimeout:     duration10s,
 		},
 	}
 
 	skeletonMachine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "default",
+			Namespace: metav1.NamespaceDefault,
 			Labels: map[string]string{
 				"machine-label1":                     "machine-value1",
-				clusterv1.MachineSetNameLabel:        "ms1",
-				clusterv1.MachineDeploymentNameLabel: "md1",
+				clusterv1.MachineSetNameLabel:        msName,
+				clusterv1.MachineDeploymentNameLabel: mdName,
 			},
 			Annotations: map[string]string{"machine-annotation1": "machine-value1"},
 			Finalizers:  []string{clusterv1.MachineFinalizer},
 		},
 		Spec: clusterv1.MachineSpec{
-			ClusterName:             "test-cluster",
+			ClusterName:             testClusterName,
 			Version:                 ptr.To("v1.25.3"),
 			NodeDrainTimeout:        duration10s,
 			NodeVolumeDetachTimeout: duration10s,
@@ -2448,34 +2618,200 @@ func TestComputeDesiredMachine(t *testing.T) {
 	expectedUpdatedMachine.Spec.InfrastructureRef = *existingMachine.Spec.InfrastructureRef.DeepCopy()
 	expectedUpdatedMachine.Spec.Bootstrap.ConfigRef = existingMachine.Spec.Bootstrap.ConfigRef.DeepCopy()
 
-	tests := []struct {
-		name            string
-		existingMachine *clusterv1.Machine
-		want            *clusterv1.Machine
-	}{
+	tests := []computeDesiredMachineTestCase{
 		{
-			name:            "creating a new Machine",
+			name: "should return the correct Machine object when creating a new Machine",
+			ms: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: metav1.NamespaceDefault,
+					Name:      msName,
+					Labels: map[string]string{
+						clusterv1.MachineDeploymentNameLabel: mdName,
+					},
+				},
+				Spec: clusterv1.MachineSetSpec{
+					ClusterName:     testClusterName,
+					Replicas:        ptr.To[int32](3),
+					MinReadySeconds: 10,
+					Selector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"k1": "v1"},
+					},
+					MachineNamingStrategy: &clusterv1.MachineNamingStrategy{
+						Template: "{{ .machineSet.name }}" + namingTemplateKey + "-{{ .random }}",
+					},
+					Template: machineTemplateSpec,
+				},
+			},
 			existingMachine: nil,
-			want:            expectedNewMachine,
+			wantMachine:     expectedNewMachine,
+			wantName: []gomegatypes.GomegaMatcher{
+				HavePrefix(msName + namingTemplateKey + "-"),
+				Not(HaveSuffix("-")),
+			},
 		},
 		{
-			name:            "updating an existing Machine",
+			name: "should return error when creating a new Machine when '.random' is not added in template",
+			ms: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: metav1.NamespaceDefault,
+					Name:      msName,
+					Labels: map[string]string{
+						clusterv1.MachineDeploymentNameLabel: mdName,
+					},
+				},
+				Spec: clusterv1.MachineSetSpec{
+					ClusterName:     testClusterName,
+					Replicas:        ptr.To[int32](3),
+					MinReadySeconds: 10,
+					Selector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"k1": "v1"},
+					},
+					MachineNamingStrategy: &clusterv1.MachineNamingStrategy{
+						Template: "{{ .machineSet.name }}" + namingTemplateKey,
+					},
+					Template: machineTemplateSpec,
+				},
+			},
+			existingMachine: nil,
+			wantMachine:     nil,
+		},
+		{
+			name: "should not return error when creating a new Machine when the generated name exceeds 63",
+			ms: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: metav1.NamespaceDefault,
+					Name:      msName,
+					Labels: map[string]string{
+						clusterv1.MachineDeploymentNameLabel: mdName,
+					},
+				},
+				Spec: clusterv1.MachineSetSpec{
+					ClusterName:     testClusterName,
+					Replicas:        ptr.To[int32](3),
+					MinReadySeconds: 10,
+					Selector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"k1": "v1"},
+					},
+					MachineNamingStrategy: &clusterv1.MachineNamingStrategy{
+						Template: "{{ .random }}" + fmt.Sprintf("%059d", 0),
+					},
+					Template: machineTemplateSpec,
+				},
+			},
+			existingMachine: nil,
+			wantMachine:     expectedNewMachine,
+			wantName: []gomegatypes.GomegaMatcher{
+				ContainSubstring(fmt.Sprintf("%053d", 0)),
+				Not(HaveSuffix("00000")),
+			},
+		},
+		{
+			name: "should return error when creating a new Machine with invalid template",
+			ms: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: metav1.NamespaceDefault,
+					Name:      msName,
+					Labels: map[string]string{
+						clusterv1.MachineDeploymentNameLabel: mdName,
+					},
+				},
+				Spec: clusterv1.MachineSetSpec{
+					ClusterName:     testClusterName,
+					Replicas:        ptr.To[int32](3),
+					MinReadySeconds: 10,
+					Selector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"k1": "v1"},
+					},
+					MachineNamingStrategy: &clusterv1.MachineNamingStrategy{
+						Template: "some-hardcoded-name-{{ .doesnotexistindata }}-{{ .random }}", // invalid template
+					},
+					Template: machineTemplateSpec,
+				},
+			},
+			existingMachine: nil,
+			wantMachine:     nil,
+		},
+		{
+			name: "should return the correct Machine object when creating a new Machine with default templated name",
+			ms: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: metav1.NamespaceDefault,
+					Name:      msName,
+					Labels: map[string]string{
+						clusterv1.MachineDeploymentNameLabel: mdName,
+					},
+				},
+				Spec: clusterv1.MachineSetSpec{
+					ClusterName:     testClusterName,
+					Replicas:        ptr.To[int32](3),
+					MinReadySeconds: 10,
+					Selector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"k1": "v1"},
+					},
+					Template: machineTemplateSpec,
+				},
+			},
+			existingMachine: nil,
+			wantMachine:     expectedNewMachine,
+			wantName: []gomegatypes.GomegaMatcher{
+				HavePrefix(msName),
+			},
+		},
+		{
+			name: "updating an existing Machine",
+			ms: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: metav1.NamespaceDefault,
+					Name:      msName,
+					Labels: map[string]string{
+						clusterv1.MachineDeploymentNameLabel: mdName,
+					},
+				},
+				Spec: clusterv1.MachineSetSpec{
+					ClusterName:     testClusterName,
+					Replicas:        ptr.To[int32](3),
+					MinReadySeconds: 10,
+					Selector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"k1": "v1"},
+					},
+					Template: machineTemplateSpec,
+				},
+			},
 			existingMachine: existingMachine,
-			want:            expectedUpdatedMachine,
+			wantMachine:     expectedUpdatedMachine,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			got := (&Reconciler{}).computeDesiredMachine(ms, tt.existingMachine)
-			assertMachine(g, got, tt.want)
+			var got *clusterv1.Machine
+			var err error
+			msr := &Reconciler{
+				Client: fake.NewClientBuilder().WithObjects(
+					testCluster,
+					tt.ms,
+				).WithStatusSubresource(&clusterv1.MachineSet{}).Build(),
+				recorder: record.NewFakeRecorder(32),
+			}
+			got, err = msr.computeDesiredMachine(tt.ms, tt.existingMachine)
+
+			if tt.wantMachine == nil {
+				g.Expect(err).To(HaveOccurred())
+				return
+			}
+			assertMachine(g, got, tt.wantMachine, tt.existingMachine, tt.wantName)
 		})
 	}
 }
 
-func assertMachine(g *WithT, actualMachine *clusterv1.Machine, expectedMachine *clusterv1.Machine) {
+func assertMachine(g *WithT, actualMachine *clusterv1.Machine, expectedMachine *clusterv1.Machine, existingMachine *clusterv1.Machine, nameMatches []gomegatypes.GomegaMatcher) {
 	// Check Name
+	if existingMachine == nil {
+		for _, matcher := range nameMatches {
+			g.Expect(actualMachine.Name).To(matcher)
+		}
+	}
 	if expectedMachine.Name != "" {
 		g.Expect(actualMachine.Name).Should(Equal(expectedMachine.Name))
 	}
@@ -2805,4 +3141,115 @@ func TestNewMachineUpToDateCondition(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSortMachinesToRemediate(t *testing.T) {
+	unhealthyMachinesWithAnnotations := []*clusterv1.Machine{}
+	for i := range 4 {
+		unhealthyMachinesWithAnnotations = append(unhealthyMachinesWithAnnotations, &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              fmt.Sprintf("unhealthy-annotated-machine-%d", i),
+				Namespace:         "default",
+				CreationTimestamp: metav1.Time{Time: metav1.Now().Add(time.Duration(i) * time.Second)},
+				Annotations: map[string]string{
+					clusterv1.RemediateMachineAnnotation: "",
+				},
+			},
+			Status: clusterv1.MachineStatus{
+				Conditions: []clusterv1.Condition{
+					{
+						Type:   clusterv1.MachineOwnerRemediatedCondition,
+						Status: corev1.ConditionFalse,
+					},
+					{
+						Type:   clusterv1.MachineHealthCheckSucceededCondition,
+						Status: corev1.ConditionFalse,
+					},
+				},
+				V1Beta2: &clusterv1.MachineV1Beta2Status{
+					Conditions: []metav1.Condition{
+						{
+							Type:    clusterv1.MachineOwnerRemediatedV1Beta2Condition,
+							Status:  metav1.ConditionFalse,
+							Reason:  clusterv1.MachineOwnerRemediatedWaitingForRemediationV1Beta2Reason,
+							Message: "Waiting for remediation",
+						},
+						{
+							Type:    clusterv1.MachineHealthCheckSucceededV1Beta2Condition,
+							Status:  metav1.ConditionFalse,
+							Reason:  clusterv1.MachineHealthCheckHasRemediateAnnotationV1Beta2Reason,
+							Message: "Marked for remediation via cluster.x-k8s.io/remediate-machine annotation",
+						},
+					},
+				},
+			},
+		})
+	}
+
+	unhealthyMachines := []*clusterv1.Machine{}
+	for i := range 4 {
+		unhealthyMachines = append(unhealthyMachines, &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              fmt.Sprintf("unhealthy-machine-%d", i),
+				Namespace:         "default",
+				CreationTimestamp: metav1.Time{Time: metav1.Now().Add(time.Duration(i) * time.Second)},
+			},
+			Status: clusterv1.MachineStatus{
+				Conditions: []clusterv1.Condition{
+					{
+						Type:   clusterv1.MachineOwnerRemediatedCondition,
+						Status: corev1.ConditionFalse,
+					},
+					{
+						Type:   clusterv1.MachineHealthCheckSucceededCondition,
+						Status: corev1.ConditionFalse,
+					},
+				},
+				V1Beta2: &clusterv1.MachineV1Beta2Status{
+					Conditions: []metav1.Condition{
+						{
+							Type:    clusterv1.MachineOwnerRemediatedV1Beta2Condition,
+							Status:  metav1.ConditionFalse,
+							Reason:  clusterv1.MachineOwnerRemediatedWaitingForRemediationV1Beta2Reason,
+							Message: "Waiting for remediation",
+						},
+						{
+							Type:    clusterv1.MachineHealthCheckSucceededV1Beta2Condition,
+							Status:  metav1.ConditionFalse,
+							Reason:  clusterv1.MachineHealthCheckHasRemediateAnnotationV1Beta2Reason,
+							Message: "Marked for remediation via cluster.x-k8s.io/remediate-machine annotation",
+						},
+					},
+				},
+			},
+		})
+	}
+
+	t.Run("remediation machines should be sorted with newest first", func(t *testing.T) {
+		g := NewWithT(t)
+		machines := make([]*clusterv1.Machine, len(unhealthyMachines))
+		copy(machines, unhealthyMachines)
+		sortMachinesToRemediate(machines)
+		sort.SliceStable(unhealthyMachines, func(i, j int) bool {
+			return unhealthyMachines[i].CreationTimestamp.After(unhealthyMachines[j].CreationTimestamp.Time)
+		})
+		g.Expect(unhealthyMachines).To(Equal(machines))
+	})
+
+	t.Run("remediation machines with annotation should be prioritised over other machines", func(t *testing.T) {
+		g := NewWithT(t)
+
+		machines := make([]*clusterv1.Machine, len(unhealthyMachines))
+		copy(machines, unhealthyMachines)
+		machines = append(machines, unhealthyMachinesWithAnnotations...)
+		sortMachinesToRemediate(machines)
+
+		sort.SliceStable(unhealthyMachines, func(i, j int) bool {
+			return unhealthyMachines[i].CreationTimestamp.After(unhealthyMachines[j].CreationTimestamp.Time)
+		})
+		sort.SliceStable(unhealthyMachinesWithAnnotations, func(i, j int) bool {
+			return unhealthyMachinesWithAnnotations[i].CreationTimestamp.After(unhealthyMachinesWithAnnotations[j].CreationTimestamp.Time)
+		})
+		g.Expect(machines).To(Equal(append(unhealthyMachinesWithAnnotations, unhealthyMachines...)))
+	})
 }

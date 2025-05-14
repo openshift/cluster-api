@@ -44,27 +44,30 @@ import (
 	"k8s.io/component-base/logs"
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	bootstrapwebhooks "sigs.k8s.io/cluster-api/bootstrap/kubeadm/webhooks"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	controlplanewebhooks "sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks"
-	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
-	addonswebhooks "sigs.k8s.io/cluster-api/exp/addons/webhooks"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 	expipamwebhooks "sigs.k8s.io/cluster-api/exp/ipam/webhooks"
 	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
 	expapiwebhooks "sigs.k8s.io/cluster-api/exp/webhooks"
+	"sigs.k8s.io/cluster-api/feature"
 	internalwebhooks "sigs.k8s.io/cluster-api/internal/webhooks"
 	runtimewebhooks "sigs.k8s.io/cluster-api/internal/webhooks/runtime"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
@@ -107,18 +110,19 @@ func init() {
 	utilruntime.Must(clusterv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(bootstrapv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(expv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(addonsv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(controlplanev1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(admissionv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(runtimev1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(ipamv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(builder.AddTransitionV1Beta2ToScheme(scheme.Scheme))
+	utilruntime.Must(addonsv1.AddToScheme(scheme.Scheme))
 }
 
 // RunInput is the input for Run.
 type RunInput struct {
 	M                   *testing.M
 	ManagerUncachedObjs []client.Object
+	ManagerCacheOptions cache.Options
 	SetupIndexes        func(ctx context.Context, mgr ctrl.Manager)
 	SetupReconcilers    func(ctx context.Context, mgr ctrl.Manager)
 	SetupEnv            func(e *Environment)
@@ -144,9 +148,9 @@ func Run(ctx context.Context, input RunInput) int {
 	}
 
 	// Bootstrapping test environment
-	env := newEnvironment(input.ManagerUncachedObjs...)
+	env := newEnvironment(input.ManagerCacheOptions, input.ManagerUncachedObjs...)
 
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancelCause(ctx)
 	env.cancelManager = cancel
 
 	if input.SetupIndexes != nil {
@@ -222,14 +226,14 @@ type Environment struct {
 	Config *rest.Config
 
 	env           *envtest.Environment
-	cancelManager context.CancelFunc
+	cancelManager context.CancelCauseFunc
 }
 
 // newEnvironment creates a new environment spinning up a local api-server.
 //
 // This function should be called only once for each package you're running tests within,
 // usually the environment is initialized in a suite_test.go file within a `BeforeSuite` ginkgo block.
-func newEnvironment(uncachedObjs ...client.Object) *Environment {
+func newEnvironment(managerCacheOptions cache.Options, uncachedObjs ...client.Object) *Environment {
 	// Get the root of the current file to use in CRD paths.
 	_, filename, _, _ := goruntime.Caller(0) //nolint:dogsled
 	root := path.Join(path.Dir(filename), "..", "..", "..")
@@ -289,6 +293,9 @@ func newEnvironment(uncachedObjs ...client.Object) *Environment {
 	}
 
 	options := manager.Options{
+		Controller: config.Controller{
+			UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+		},
 		Scheme: scheme.Scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: "0",
@@ -307,6 +314,7 @@ func newEnvironment(uncachedObjs ...client.Object) *Environment {
 				Host:    host,
 			},
 		),
+		Cache: managerCacheOptions,
 	}
 
 	mgr, err := ctrl.NewManager(env.Config, options)
@@ -350,10 +358,10 @@ func newEnvironment(uncachedObjs ...client.Object) *Environment {
 	if err := (&controlplanewebhooks.KubeadmControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook: %+v", err)
 	}
-	if err := (&addonswebhooks.ClusterResourceSet{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.ClusterResourceSet{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for crs: %+v", err)
 	}
-	if err := (&addonswebhooks.ClusterResourceSetBinding{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.ClusterResourceSetBinding{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for ClusterResourceSetBinding: %+v", err)
 	}
 	if err := (&expapiwebhooks.MachinePool{}).SetupWebhookWithManager(mgr); err != nil {
@@ -392,7 +400,7 @@ func (e *Environment) start(ctx context.Context) {
 // stop stops the test environment.
 func (e *Environment) stop() error {
 	fmt.Println("Stopping the test environment")
-	e.cancelManager()
+	e.cancelManager(errors.New("test environment stopped"))
 	return e.env.Stop()
 }
 

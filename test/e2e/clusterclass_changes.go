@@ -55,7 +55,7 @@ type ClusterClassChangesSpecInput struct {
 	// InfrastructureProviders specifies the infrastructure to use for clusterctl
 	// operations (Example: get cluster templates).
 	// Note: In most cases this need not be specified. It only needs to be specified when
-	// multiple infrastructure providers (ex: CAPD + in-memory) are installed on the cluster as clusterctl will not be
+	// multiple infrastructure providers are installed on the cluster as clusterctl will not be
 	// able to identify the default.
 	InfrastructureProvider *string
 	// Flavor is the cluster-template flavor used to create the Cluster for testing.
@@ -150,7 +150,7 @@ func ClusterClassChangesSpec(ctx context.Context, inputGetter func() ClusterClas
 		Expect(input.BootstrapClusterProxy).ToNot(BeNil(), "Invalid argument. input.BootstrapClusterProxy can't be nil when calling %s spec", specName)
 		Expect(os.MkdirAll(input.ArtifactFolder, 0750)).To(Succeed(), "Invalid argument. input.ArtifactFolder can't be created for %s spec", specName)
 		Expect(input.E2EConfig.Variables).To(HaveKey(KubernetesVersion))
-		Expect(input.E2EConfig.Variables).To(HaveValidVersion(input.E2EConfig.GetVariable(KubernetesVersion)))
+		Expect(input.E2EConfig.Variables).To(HaveValidVersion(input.E2EConfig.MustGetVariable(KubernetesVersion)))
 		Expect(input.ModifyControlPlaneFields).ToNot(BeEmpty(), "Invalid argument. input.ModifyControlPlaneFields can't be empty when calling %s spec", specName)
 
 		// Set up a Namespace where to host objects for this spec and create a watcher for the namespace events.
@@ -176,7 +176,7 @@ func ClusterClassChangesSpec(ctx context.Context, inputGetter func() ClusterClas
 				Flavor:                   input.Flavor,
 				Namespace:                namespace.Name,
 				ClusterName:              fmt.Sprintf("%s-%s", specName, util.RandomString(6)),
-				KubernetesVersion:        input.E2EConfig.GetVariable(KubernetesVersion),
+				KubernetesVersion:        input.E2EConfig.MustGetVariable(KubernetesVersion),
 				ControlPlaneMachineCount: ptr.To[int64](1),
 				WorkerMachineCount:       ptr.To[int64](1),
 			},
@@ -281,7 +281,7 @@ func ClusterClassChangesSpec(ctx context.Context, inputGetter func() ClusterClas
 
 	AfterEach(func() {
 		// Dumps all the resources in the spec namespace, then cleanups the cluster object and the spec namespace itself.
-		framework.DumpSpecResourcesAndCleanup(ctx, specName, input.BootstrapClusterProxy, input.ArtifactFolder, namespace, cancelWatches, clusterResources.Cluster, input.E2EConfig.GetIntervals, input.SkipCleanup)
+		framework.DumpSpecResourcesAndCleanup(ctx, specName, input.BootstrapClusterProxy, input.ClusterctlConfigPath, input.ArtifactFolder, namespace, cancelWatches, clusterResources.Cluster, input.E2EConfig.GetIntervals, input.SkipCleanup)
 
 		if !input.SkipCleanup {
 			Byf("Deleting namespace used for hosting the %q test spec ClusterClass", specName)
@@ -370,7 +370,7 @@ func modifyControlPlaneViaClusterClassAndWait(ctx context.Context, input modifyC
 		g.Expect(scaling).To(BeFalse())
 
 		return nil
-	}, input.WaitForControlPlane...).Should(BeNil())
+	}, input.WaitForControlPlane...).Should(Succeed())
 }
 
 // assertControlPlaneTopologyFields asserts that all fields set in the ControlPlaneTopology have been set on the ControlPlane.
@@ -523,7 +523,7 @@ func modifyMachineDeploymentViaClusterClassAndWait(ctx context.Context, input mo
 					g.Expect(currentValue).To(Equal(expectedValue), fmt.Sprintf("field %q should be equal", fieldPath))
 				}
 				return nil
-			}, input.WaitForMachineDeployments...).Should(BeNil())
+			}, input.WaitForMachineDeployments...).Should(Succeed())
 		}
 	}
 }
@@ -649,7 +649,7 @@ func modifyMachinePoolViaClusterClassAndWait(ctx context.Context, input modifyMa
 					g.Expect(currentValue).To(Equal(expectedValue), fmt.Sprintf("field %q should be equal", fieldPath))
 				}
 				return nil
-			}, input.WaitForMachinePools...).Should(BeNil())
+			}, input.WaitForMachinePools...).Should(Succeed())
 		}
 	}
 }
@@ -833,7 +833,7 @@ func rebaseClusterClassAndWait(ctx context.Context, input rebaseClusterClassAndW
 			}
 
 			return nil
-		}, input.WaitForMachineDeployments...).Should(BeNil())
+		}, input.WaitForMachineDeployments...).Should(Succeed())
 	}
 
 	if input.ControlPlaneChanged {
@@ -927,5 +927,5 @@ func deleteMachineDeploymentTopologyAndWait(ctx context.Context, input deleteMac
 			return errors.Errorf("expected no MachineDeployment for topology %q, but got %d", mdTopologyToDelete.Name, len(mdList.Items))
 		}
 		return nil
-	}, input.WaitForMachineDeployments...).Should(BeNil())
+	}, input.WaitForMachineDeployments...).Should(Succeed())
 }

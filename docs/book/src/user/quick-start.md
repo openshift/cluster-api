@@ -150,11 +150,11 @@ a target [management cluster] on the selected [infrastructure provider].
    #### Install the Calico CNI
    Now we'll need to install a CNI. In this example, we're using calico, but other CNIs should work as well. Please see
    [calico installation guide](https://projectcalico.docs.tigera.io/getting-started/kubernetes/self-managed-onprem/onpremises#install-calico)
-   for more details (use the "Manifest" tab). Below is an example of how to install calico version v3.24.4.
+   for more details (use the "Manifest" tab). Below is an example of how to install calico version v3.29.1.
 
    Use the Calico manifest to create the required resources; e.g.:
    ```bash
-   kubectl create -f  https://raw.githubusercontent.com/projectcalico/calico/v3.24.4/manifests/calico.yaml
+   kubectl create -f  https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/calico.yaml
    ```
 
    {{#/tab }}
@@ -281,7 +281,7 @@ Additional documentation about experimental features can be found in [Experiment
 Depending on the infrastructure provider you are planning to use, some additional prerequisites should be satisfied
 before getting started with Cluster API. See below for the expected settings for common providers.
 
-{{#tabs name:"tab-installation-infrastructure" tabs:"Akamai (Linode),AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,Harvester,Hetzner,Hivelocity,IBM Cloud,IONOS Cloud,K0smotron,KubeKey,KubeVirt,Metal3,Nutanix,OCI,OpenStack,Outscale,Proxmox,VCD,vcluster,Virtink,vSphere,Vultr"}}
+{{#tabs name:"tab-installation-infrastructure" tabs:"Akamai (Linode),AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,Harvester,Hetzner,Hivelocity,Huawei,IBM Cloud,IONOS Cloud,K0smotron,KubeKey,KubeVirt,Metal3,Nutanix,OCI,OpenNebula,OpenStack,Outscale,Proxmox,VCD,vcluster,Virtink,vSphere,Vultr"}}
 {{#tab Akamai (Linode)}}
 
 ```bash
@@ -593,6 +593,18 @@ Please visit the [Hetzner project][Hetzner provider].
 Please visit the [Hivelocity project][Hivelocity provider].
 
 {{#/tab }}
+{{#tab Huawei}}
+
+```bash
+# Please ensure that the values for `CLOUD_SDK_AK` and `CLOUD_SDK_SK` are base64 encoded.
+export CLOUD_SDK_AK=$( echo $AccessKey | base64 | tr -d '\n' )
+export CLOUD_SDK_SK=$( echo $SecretKey | base64 | tr -d '\n' )
+
+# Finally, initialize the management cluster
+clusterctl init --infrastructure huawei
+```
+
+{{#/tab }}
 {{#tab IBM Cloud}}
 
 In order to initialize the IBM Cloud Provider you have to expose the environment
@@ -652,12 +664,13 @@ kubectl wait pods -n metallb-system -l app=metallb,component=controller --for=co
 kubectl wait pods -n metallb-system -l app=metallb,component=speaker --for=condition=Ready --timeout=2m
 ```
 
-Now, we'll create the `IPAddressPool` and the `L2Advertisement` custom resources. The script below creates the CRs with
-the right addresses, that match to the kind cluster addresses:
+Now, we'll create the `IPAddressPool` and the `L2Advertisement` custom resources. For that, we'll need to set the IP
+range. First, we'll read the `kind` network in order to find its subnet:
 ```bash
-GW_IP=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' kind)
-NET_IP=$(echo ${GW_IP} | sed -E 's|^([0-9]+\.[0-9]+)\..*$|\1|g')
-cat <<EOF | sed -E "s|172.19|${NET_IP}|g" | kubectl apply -f -
+SUBNET=$(docker network inspect -f '{{range .IPAM.Config}}{{if .Gateway}}{{.Subnet}}{{end}}{{end}}' kind)
+PREFIX=$(echo $SUBNET | sed -E 's|^([0-9]+\.[0-9]+)\..*$|\1|g')
+
+cat <<EOF | kubectl apply -f -
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -665,7 +678,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-  - 172.19.255.200-172.19.255.250
+  - ${PREFIX}.255.200-${PREFIX}.255.250
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
@@ -674,6 +687,16 @@ metadata:
   namespace: metallb-system
 EOF
 ```
+
+<aside class="note warning">
+
+<h1>Notice</h1>
+
+The example above is based on the Docker container runtime. The output of `docker network inspect` may be different when
+using another runtime. In such a case, the IPAddressPool's `spec.addresses` field should be populated manually,
+according to the specific network.
+
+</aside>
 
 #### Install KubeVirt on the kind cluster
 ```bash
@@ -705,6 +728,16 @@ Please follow the Cluster API Provider for [Nutanix Getting Started Guide](https
 {{#tab OCI}}
 
 Please follow the Cluster API Provider for [Oracle Cloud Infrastructure (OCI) Getting Started Guide][oci-provider]
+
+{{#/tab }}
+{{#tab OpenNebula}}
+
+```bash
+# Initialize the management cluster
+clusterctl init --infrastructure opennebula
+```
+
+Please visit [OpenNebula Cluster API Provider Wiki][CAPONE Wiki].
 
 {{#/tab }}
 {{#tab OpenStack}}
@@ -809,10 +842,10 @@ project][vSphere getting started guide].
 {{#tab Vultr}}
 
 ```bash
-export VULTR_API_KEY=<your_api_key>
+export VULTR_API_KEY="$(echo -n "${VULTR_API_KEY}" | base64 | tr -d '\n')"
 
 # initialize the management cluster
-clusterctl init --infrastructure vultr
+clusterctl init --infrastructure vultr-vultr
 ```
 {{#/tab }}
 {{#/tabs }}
@@ -883,7 +916,7 @@ before configuring a cluster with Cluster API. Instructions are provided for com
 Otherwise, you can look at the `clusterctl generate cluster` [command][clusterctl generate cluster] documentation for details about how to
 discover the list of variables required by a cluster templates.
 
-{{#tabs name:"tab-configuration-infrastructure" tabs:"Akamai (Linode),AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,Harvester,IBM Cloud,IONOS Cloud,K0smotron,KubeKey,KubeVirt,Metal3,Nutanix,OpenStack,Outscale,Proxmox,Tinkerbell,VCD,vcluster,Virtink,vSphere,Vultr"}}
+{{#tabs name:"tab-configuration-infrastructure" tabs:"Akamai (Linode),AWS,Azure,CloudStack,DigitalOcean,Docker,Equinix Metal,GCP,Harvester,Huawei,IBM Cloud,IONOS Cloud,K0smotron,KubeKey,KubeVirt,Metal3,Nutanix,OpenNebula,OpenStack,Outscale,Proxmox,Tinkerbell,VCD,vcluster,Virtink,vSphere,Vultr"}}
 {{#tab Akamai (Linode)}}
 
 ```bash
@@ -1103,6 +1136,31 @@ export WORKER_MACHINE_COUNT=2
 See the [Harvester provider] for more information.
 
 {{#/tab }}
+{{#tab Huawei}}
+
+
+```bash
+# huawei cloud region
+export HC_REGION="cn-east-1"
+# ECS SSH key name
+export HC_SSH_KEY_NAME="default"
+# kubernetes version
+export KUBERNETES_VERSION="1.32.0"
+# number of control plane machines
+export CONTROL_PLANE_MACHINE_COUNT="1"
+# number of worker machines
+export WORKER_MACHINE_COUNT="1"
+# control plane machine type
+export HC_CONTROL_PLANE_MACHINE_TYPE="x1e.2u.4g"
+# worker node machine type
+export HC_NODE_MACHINE_TYPE="x1e.2u.4g"
+# ECS image ID
+export ECS_IMAGE_ID="218ca5t7-bxf3-5dg0-852p-y703c9fe1a52"
+```
+
+See the [Huawei Cloud provider] for more information.
+
+{{#/tab }}
 {{#tab IBM Cloud}}
 
 ```bash
@@ -1184,12 +1242,25 @@ Please visit the [KubeKey provider] for more information.
 {{#/tab }}
 {{#tab KubeVirt}}
 
+In this example, we'll use the image for Kubernetes v1.32.1: 
 ```bash
-export CAPK_GUEST_K8S_VERSION="v1.23.10"
-export CRI_PATH="/var/run/containerd/containerd.sock"
-export NODE_VM_IMAGE_TEMPLATE="quay.io/capk/ubuntu-2004-container-disk:${CAPK_GUEST_K8S_VERSION}"
+export NODE_VM_IMAGE_TEMPLATE="quay.io/capk/ubuntu-2404-container-disk:v1.32.1"
+export CAPK_GUEST_K8S_VERSION="${NODE_VM_IMAGE_TEMPLATE/:*/}"
+export CRI_PATH="unix:///var/run/containerd/containerd.sock"
 ```
 Please visit the [KubeVirt project][KubeVirt provider] for more information.
+
+<aside class="note">
+
+<h1>Note</h1>
+
+Find additional images under [quay.io/capk/ubuntu-2404-container-disk](https://quay.io/capk/ubuntu-2404-container-disk), 
+[quay.io/capk/ubuntu-2204-container-disk](https://quay.io/capk/ubuntu-2204-container-disk), 
+or [quay.io/capk/ubuntu-2004-container-disk](https://quay.io/capk/ubuntu-2004-container-disk).
+
+Alternatively, create your own image; see [here](https://github.com/kubernetes-sigs/image-builder).
+
+</aside>
 
 {{#/tab }}
 {{#tab Metal3}}
@@ -1230,6 +1301,35 @@ To see all required Nutanix environment variables execute:
 ```bash
 clusterctl generate cluster --infrastructure nutanix --list-variables capi-quickstart
 ```
+
+{{#/tab }}
+{{#tab OpenNebula}}
+
+```bash
+# OpenNebula API endpoint and credentials
+export ONE_XMLRPC='http://10.2.11.40:2633/RPC2'
+export ONE_AUTH='oneadmin:opennebula'
+
+# VM and VR templates to construct workload clusters from
+export MACHINE_TEMPLATE_NAME='capone131'
+export ROUTER_TEMPLATE_NAME='capone131-vr'
+
+# VNs to deploy workload clusters into
+export PUBLIC_NETWORK_NAME='service'
+export PRIVATE_NETWORK_NAME='private'
+
+# Name of the new workload cluster
+export CLUSTER_NAME='one'
+
+# Cloud-Provider image to deploy inside the new workload cluster
+export CCM_IMG='ghcr.io/opennebula/cloud-provider-opennebula:latest'
+
+# Initial size of the new workload cluster
+export CONTROL_PLANE_MACHINE_COUNT='1'
+export WORKER_MACHINE_COUNT='1'
+```
+
+Please visit [OpenNebula Cluster API Provider Wiki][CAPONE Wiki].
 
 {{#/tab }}
 {{#tab OpenStack}}
@@ -1448,6 +1548,8 @@ clusterctl generate cluster capi-quickstart --flavor development \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
 ```
+
+Note: If you want to use MachinePools use flavor `development-mp`.
 
 {{#/tab }}
 {{#tab vcluster}}
@@ -1682,6 +1784,15 @@ let's check the status using `kubectl get nodes`:
 ```bash
 kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
 ```
+```bash
+NAME                                          STATUS   ROLES           AGE    VERSION
+capi-quickstart-vs89t-gmbld                   Ready    control-plane   5m33s  v1.32.0
+capi-quickstart-vs89t-kf9l5                   Ready    control-plane   6m20s  v1.32.0
+capi-quickstart-vs89t-t8cfn                   Ready    control-plane   7m10s  v1.32.0
+capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          6m5s   v1.32.0
+capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          6m9s   v1.32.0
+capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          6m9s   v1.32.0
+```
 
 {{#/tab }}
 {{#tab vcluster}}
@@ -1727,7 +1838,7 @@ are enough for these two CNI to work on (actually) the same environment.
 
 The following script downloads the Calico manifest and modifies the required field. The CIDR and the port values are examples.
 ```bash
-curl https://raw.githubusercontent.com/projectcalico/calico/v3.24.4/manifests/calico.yaml -o calico-workload.yaml
+curl https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/calico.yaml -o calico-workload.yaml
 
 sed -i -E 's|^( +)# (- name: CALICO_IPV4POOL_CIDR)$|\1\2|g;'\
 's|^( +)# (  value: )"192.168.0.0/16"|\1\2"10.243.0.0/16"|g;'\
@@ -1747,6 +1858,33 @@ After a short while, our nodes should be running and in `Ready` state, let’s c
 ```bash
 kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
 ```
+
+{{#/tab }}
+{{#tab Other providers...}}
+
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig \
+  apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+```
+
+After a short while, our nodes should be running and in `Ready` state,
+let's check the status using `kubectl get nodes`:
+
+```bash
+kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
+```
+```bash
+NAME                                          STATUS   ROLES           AGE    VERSION
+capi-quickstart-vs89t-gmbld                   Ready    control-plane   5m33s  v1.32.0
+capi-quickstart-vs89t-kf9l5                   Ready    control-plane   6m20s  v1.32.0
+capi-quickstart-vs89t-t8cfn                   Ready    control-plane   7m10s  v1.32.0
+capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          6m5s   v1.32.0
+capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          6m9s   v1.32.0
+capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          6m9s   v1.32.0
+```
+
+{{#/tab }}
+{{#/tabs }}
 
 <aside class="note">
 
@@ -1805,35 +1943,7 @@ kube-proxy-b9g5m                                              1/1     Running   
 kube-proxy-p6xx8                                              1/1     Running   0          3m49s
 kube-scheduler-capi-quickstart-control-plane-kjjbb            1/1     Running   0          3m57s
 ```
-
 </aside>
-
-{{#/tab }}
-{{#tab Other providers...}}
-
-```bash
-kubectl --kubeconfig=./capi-quickstart.kubeconfig \
-  apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
-```
-
-After a short while, our nodes should be running and in `Ready` state,
-let's check the status using `kubectl get nodes`:
-
-```bash
-kubectl --kubeconfig=./capi-quickstart.kubeconfig get nodes
-```
-```bash
-NAME                                          STATUS   ROLES           AGE    VERSION
-capi-quickstart-vs89t-gmbld                   Ready    control-plane   5m33s  v1.32.0
-capi-quickstart-vs89t-kf9l5                   Ready    control-plane   6m20s  v1.32.0
-capi-quickstart-vs89t-t8cfn                   Ready    control-plane   7m10s  v1.32.0
-capi-quickstart-md-0-55x6t-5649968bd7-8tq9v   Ready    <none>          6m5s   v1.32.0
-capi-quickstart-md-0-55x6t-5649968bd7-glnjd   Ready    <none>          6m9s   v1.32.0
-capi-quickstart-md-0-55x6t-5649968bd7-sfzp6   Ready    <none>          6m9s   v1.32.0
-```
-
-{{#/tab }}
-{{#/tabs }}
 
 ### Clean Up
 
@@ -1876,6 +1986,7 @@ kind delete cluster
 [Harvester provider]: https://github.com/rancher-sandbox/cluster-api-provider-harvester
 [Hetzner provider]: https://github.com/syself/cluster-api-provider-hetzner
 [Hivelocity provider]: https://github.com/hivelocity/cluster-api-provider-hivelocity
+[Huawei Cloud provider]: https://github.com/HuaweiCloudDeveloper/cluster-api-provider-huawei
 [IBM Cloud provider]: https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud
 [infrastructure provider]: ../reference/glossary.md#infrastructure-provider
 [ionoscloud provider]: https://github.com/ionos-cloud/cluster-api-provider-ionoscloud
@@ -1885,7 +1996,7 @@ kind delete cluster
 [management cluster]: ../reference/glossary.md#management-cluster
 [Metal3 getting started guide]: https://github.com/metal3-io/cluster-api-provider-metal3/blob/master/docs/getting-started.md
 [Metal3 provider]: https://github.com/metal3-io/cluster-api-provider-metal3/
-[K0smotron provider]: https://github.com/k0sproject/k0smotron
+[K0smotron provider]: https://github.com/k0smotron/k0smotron
 [KubeKey provider]: https://github.com/kubesphere/kubekey
 [KubeVirt provider]: https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/
 [KubeVirt]: https://kubevirt.io/
@@ -1899,3 +2010,4 @@ kind delete cluster
 [CAPI Operator quickstart]: ./quick-start-operator.md
 [Proxmox getting started guide]: https://github.com/ionos-cloud/cluster-api-provider-proxmox/blob/main/docs/Usage.md
 [Tinkerbell getting started guide]: https://github.com/tinkerbell/cluster-api-provider-tinkerbell/blob/main/docs/QUICK-START.md
+[CAPONE Wiki]: https://github.com/OpenNebula/cluster-api-provider-opennebula/wiki
