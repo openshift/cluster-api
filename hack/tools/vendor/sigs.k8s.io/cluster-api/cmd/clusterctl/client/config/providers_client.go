@@ -73,6 +73,7 @@ const (
 	IonosCloudProviderName     = "ionoscloud-ionoscloud"
 	VultrProviderName          = "vultr-vultr"
 	OpenNebulaProviderName     = "opennebula"
+	ScalewayProviderName       = "scaleway"
 )
 
 // Bootstrap providers.
@@ -339,6 +340,11 @@ func (p *providersClient) defaults() []Provider {
 			url:          "https://github.com/OpenNebula/cluster-api-provider-opennebula/releases/latest/infrastructure-components.yaml",
 			providerType: clusterctlv1.InfrastructureProviderType,
 		},
+		&provider{
+			name:         ScalewayProviderName,
+			url:          "https://github.com/scaleway/cluster-api-provider-scaleway/releases/latest/infrastructure-components.yaml",
+			providerType: clusterctlv1.InfrastructureProviderType,
+		},
 
 		// Bootstrap providers
 		&provider{
@@ -530,6 +536,10 @@ func (p *providersClient) Get(name string, providerType clusterctlv1.ProviderTyp
 func validateProvider(r Provider) error {
 	if r.Name() == "" {
 		return errors.New("name value cannot be empty")
+	}
+
+	if r.Name() != strings.ToLower(r.Name()) {
+		return errors.Errorf("provider name %s must be in lower case", r.Name())
 	}
 
 	if (r.Name() == ClusterAPIProviderName) != (r.Type() == clusterctlv1.CoreProviderType) {
