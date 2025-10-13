@@ -19,10 +19,13 @@ package client
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -37,11 +40,11 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimeclient "sigs.k8s.io/cluster-api/exp/runtime/client"
-	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	runtimeregistry "sigs.k8s.io/cluster-api/internal/runtime/registry"
 	fakev1alpha1 "sigs.k8s.io/cluster-api/internal/runtime/test/v1alpha1"
 	fakev1alpha2 "sigs.k8s.io/cluster-api/internal/runtime/test/v1alpha2"
@@ -196,7 +199,7 @@ func TestClient_httpCall(t *testing.T) {
 				defer srv.Close()
 
 				// set url to srv for in tt.opts
-				tt.opts.config.URL = ptr.To(srv.URL)
+				tt.opts.config.URL = srv.URL
 				tt.opts.config.CABundle = testcerts.CACert
 			}
 
@@ -256,7 +259,7 @@ func TestURLForExtension(t *testing.T) {
 			name: "ClientConfig using service should have correct URL values",
 			args: args{
 				config: runtimev1.ClientConfig{
-					Service: &runtimev1.ServiceReference{
+					Service: runtimev1.ServiceReference{
 						Namespace: "test1",
 						Name:      "extension-service",
 						Port:      ptr.To[int32](8443),
@@ -276,7 +279,7 @@ func TestURLForExtension(t *testing.T) {
 			name: "ClientConfig using service and CAbundle should have correct URL values",
 			args: args{
 				config: runtimev1.ClientConfig{
-					Service: &runtimev1.ServiceReference{
+					Service: runtimev1.ServiceReference{
 						Namespace: "test1",
 						Name:      "extension-service",
 						Port:      ptr.To[int32](8443),
@@ -297,7 +300,7 @@ func TestURLForExtension(t *testing.T) {
 			name: "ClientConfig using URL should have correct URL values",
 			args: args{
 				config: runtimev1.ClientConfig{
-					URL: ptr.To("https://extension-host.com"),
+					URL: "https://extension-host.com",
 				},
 				gvh:                  gvh,
 				extensionHandlerName: "test-handler",
@@ -398,7 +401,7 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "error with Timeout of over 30 seconds",
+			name: "error with TimeoutSeconds of over 30 seconds",
 			discovery: &runtimehooksv1.DiscoveryResponse{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "DiscoveryResponse",
@@ -416,7 +419,7 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "error with Timeout of less than 0",
+			name: "error with TimeoutSeconds of less than 0",
 			discovery: &runtimehooksv1.DiscoveryResponse{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "DiscoveryResponse",
@@ -541,8 +544,6 @@ func TestClient_CallExtension(t *testing.T) {
 			Name: "foo",
 		},
 	}
-	fpFail := runtimev1.FailurePolicyFail
-	fpIgnore := runtimev1.FailurePolicyIgnore
 
 	validExtensionHandlerWithFailPolicy := runtimev1.ExtensionConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -551,7 +552,7 @@ func TestClient_CallExtension(t *testing.T) {
 		Spec: runtimev1.ExtensionConfigSpec{
 			ClientConfig: runtimev1.ClientConfig{
 				// Set a fake URL, in test cases where we start the test server the URL will be overridden.
-				URL:      ptr.To("https://127.0.0.1/"),
+				URL:      "https://127.0.0.1/",
 				CABundle: testcerts.CACert,
 			},
 			NamespaceSelector: &metav1.LabelSelector{},
@@ -564,8 +565,8 @@ func TestClient_CallExtension(t *testing.T) {
 						APIVersion: fakev1alpha1.GroupVersion.String(),
 						Hook:       "FakeHook",
 					},
-					TimeoutSeconds: ptr.To[int32](1),
-					FailurePolicy:  &fpFail,
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
 				},
 			},
 		},
@@ -577,7 +578,7 @@ func TestClient_CallExtension(t *testing.T) {
 		Spec: runtimev1.ExtensionConfigSpec{
 			ClientConfig: runtimev1.ClientConfig{
 				// Set a fake URL, in test cases where we start the test server the URL will be overridden.
-				URL:      ptr.To("https://127.0.0.1/"),
+				URL:      "https://127.0.0.1/",
 				CABundle: testcerts.CACert,
 			},
 			NamespaceSelector: &metav1.LabelSelector{}},
@@ -589,8 +590,8 @@ func TestClient_CallExtension(t *testing.T) {
 						APIVersion: fakev1alpha1.GroupVersion.String(),
 						Hook:       "FakeHook",
 					},
-					TimeoutSeconds: ptr.To[int32](1),
-					FailurePolicy:  &fpIgnore,
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyIgnore,
 				},
 			},
 		},
@@ -776,7 +777,7 @@ func TestClient_CallExtension(t *testing.T) {
 
 				// Set the URL to the real address of the test server.
 				for i := range tt.registeredExtensionConfigs {
-					tt.registeredExtensionConfigs[i].Spec.ClientConfig.URL = ptr.To(fmt.Sprintf("https://%s/", srv.Listener.Addr().String()))
+					tt.registeredExtensionConfigs[i].Spec.ClientConfig.URL = fmt.Sprintf("https://%s/", srv.Listener.Addr().String())
 				}
 			}
 
@@ -840,6 +841,102 @@ func TestClient_CallExtension(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
+	ns := &corev1.Namespace{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Namespace",
+			APIVersion: corev1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "foo",
+		},
+	}
+
+	validExtensionHandlerWithFailPolicy := runtimev1.ExtensionConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			ResourceVersion: "15",
+		},
+		Spec: runtimev1.ExtensionConfigSpec{
+			ClientConfig: runtimev1.ClientConfig{
+				// Set a fake URL, in test cases where we start the test server the URL will be overridden.
+				URL:      "https://127.0.0.1/",
+				CABundle: testcerts.CACert,
+			},
+			NamespaceSelector: &metav1.LabelSelector{},
+		},
+		Status: runtimev1.ExtensionConfigStatus{
+			Handlers: []runtimev1.ExtensionHandler{
+				{
+					Name: "valid-extension",
+					RequestHook: runtimev1.GroupVersionHook{
+						APIVersion: fakev1alpha1.GroupVersion.String(),
+						Hook:       "FakeHook",
+					},
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
+				},
+			},
+		},
+	}
+
+	g := NewWithT(t)
+
+	tmpDir := t.TempDir()
+	clientCertFile := filepath.Join(tmpDir, "tls.crt")
+	g.Expect(os.WriteFile(clientCertFile, testcerts.ClientCert, 0600)).To(Succeed())
+	clientKeyFile := filepath.Join(tmpDir, "tls.key")
+	g.Expect(os.WriteFile(clientKeyFile, testcerts.ClientKey, 0600)).To(Succeed())
+
+	var serverCallCount int
+	srv := createSecureTestServer(testServerConfig{
+		start: true,
+		responses: map[string]testServerResponse{
+			"/*": response(runtimehooksv1.ResponseStatusSuccess),
+		},
+	}, func() {
+		serverCallCount++
+	})
+
+	// Setup the runtime extension server so it requires client authentication with certificates signed by a given CA.
+	certpool := x509.NewCertPool()
+	certpool.AppendCertsFromPEM(testcerts.CACert)
+	srv.TLS.ClientAuth = tls.RequireAndVerifyClientCert
+	srv.TLS.ClientCAs = certpool
+
+	srv.StartTLS()
+	defer srv.Close()
+
+	// Set the URL to the real address of the test server.
+	validExtensionHandlerWithFailPolicy.Spec.ClientConfig.URL = fmt.Sprintf("https://%s/", srv.Listener.Addr().String())
+
+	cat := runtimecatalog.New()
+	_ = fakev1alpha1.AddToCatalog(cat)
+	_ = fakev1alpha2.AddToCatalog(cat)
+	fakeClient := fake.NewClientBuilder().
+		WithObjects(ns).
+		Build()
+
+	c := New(Options{
+		// Add client authentication credentials to the client
+		CertFile: clientCertFile,
+		KeyFile:  clientKeyFile,
+		Catalog:  cat,
+		Registry: registry([]runtimev1.ExtensionConfig{validExtensionHandlerWithFailPolicy}),
+		Client:   fakeClient,
+	})
+
+	obj := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster",
+			Namespace: "foo",
+		},
+	}
+	// Call once without caching.
+	err := c.CallExtension(context.Background(), fakev1alpha1.FakeHook, obj, "valid-extension", &fakev1alpha1.FakeRequest{}, &fakev1alpha1.FakeResponse{})
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(serverCallCount).To(Equal(1))
 }
 
 func cacheKeyFunc(extensionName, extensionConfigResourceVersion string, request runtimehooksv1.RequestObject) string {
@@ -940,13 +1037,12 @@ func TestClient_CallAllExtensions(t *testing.T) {
 			Name: "foo",
 		},
 	}
-	fpFail := runtimev1.FailurePolicyFail
 
 	extensionConfig := runtimev1.ExtensionConfig{
 		Spec: runtimev1.ExtensionConfigSpec{
 			ClientConfig: runtimev1.ClientConfig{
 				// Set a fake URL, in test cases where we start the test server the URL will be overridden.
-				URL:      ptr.To("https://127.0.0.1/"),
+				URL:      "https://127.0.0.1/",
 				CABundle: testcerts.CACert,
 			},
 			NamespaceSelector: &metav1.LabelSelector{},
@@ -959,8 +1055,8 @@ func TestClient_CallAllExtensions(t *testing.T) {
 						APIVersion: fakev1alpha1.GroupVersion.String(),
 						Hook:       "FakeHook",
 					},
-					TimeoutSeconds: ptr.To[int32](1),
-					FailurePolicy:  &fpFail,
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
 				},
 				{
 					Name: "second-extension",
@@ -968,8 +1064,8 @@ func TestClient_CallAllExtensions(t *testing.T) {
 						APIVersion: fakev1alpha1.GroupVersion.String(),
 						Hook:       "FakeHook",
 					},
-					TimeoutSeconds: ptr.To[int32](1),
-					FailurePolicy:  &fpFail,
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
 				},
 				{
 					Name: "third-extension",
@@ -977,8 +1073,8 @@ func TestClient_CallAllExtensions(t *testing.T) {
 						APIVersion: fakev1alpha1.GroupVersion.String(),
 						Hook:       "FakeHook",
 					},
-					TimeoutSeconds: ptr.To[int32](1),
-					FailurePolicy:  &fpFail,
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
 				},
 			},
 		},
@@ -1102,7 +1198,7 @@ func TestClient_CallAllExtensions(t *testing.T) {
 
 				// Set the URL to the real address of the test server.
 				for i := range tt.registeredExtensionConfigs {
-					tt.registeredExtensionConfigs[i].Spec.ClientConfig.URL = ptr.To(fmt.Sprintf("https://%s/", srv.Listener.Addr().String()))
+					tt.registeredExtensionConfigs[i].Spec.ClientConfig.URL = fmt.Sprintf("https://%s/", srv.Listener.Addr().String())
 				}
 			}
 

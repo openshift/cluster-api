@@ -2,7 +2,7 @@
 
 clusterctl_cmd = "./bin/clusterctl"
 kubectl_cmd = "kubectl"
-kubernetes_version = "v1.33.0"
+kubernetes_version = "v1.34.0"
 
 load("ext://uibutton", "cmd_button", "location", "text_input")
 
@@ -172,9 +172,9 @@ def load_provider_tilt_files():
 
 tilt_helper_dockerfile_header = """
 # Tilt image
-FROM golang:1.23.8 as tilt-helper
+FROM golang:1.24.7 as tilt-helper
 # Install delve. Note this should be kept in step with the Go release minor version.
-RUN go install github.com/go-delve/delve/cmd/dlv@v1.23
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.24
 # Support live reloading with Tilt
 RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/restart.sh  && \
     wget --output-document /start.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/start.sh && \
@@ -183,7 +183,7 @@ RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com
 """
 
 tilt_dockerfile_header = """
-FROM golang:1.23.8 as tilt
+FROM golang:1.24.7 as tilt
 WORKDIR /
 COPY --from=tilt-helper /process.txt .
 COPY --from=tilt-helper /start.sh .
@@ -558,7 +558,7 @@ def deploy_clusterclass(clusterclass_name, label, filename, substitutions):
         clusterclass_name + ".clusterclass:apply",
         argv = ["bash", "-c", apply_clusterclass_cmd],
         env = dictionary_to_list_of_string(substitutions),
-        resource = clusterclass_name,
+        resource = clusterclass_name + ".clusterclass",
         icon_name = "note_add",
         text = "Apply `" + clusterclass_name + "` ClusterClass",
         inputs = [
@@ -570,7 +570,7 @@ def deploy_clusterclass(clusterclass_name, label, filename, substitutions):
         clusterclass_name + ".clusterclass:delete",
         argv = ["bash", "-c", delete_clusterclass_cmd],
         env = dictionary_to_list_of_string(substitutions),
-        resource = clusterclass_name,
+        resource = clusterclass_name + ".clusterclass",
         icon_name = "delete_forever",
         text = "Delete `" + clusterclass_name + "` ClusterClass",
         inputs = [

@@ -30,7 +30,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/test/e2e/internal/log"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -116,7 +116,7 @@ var _ = Describe("When upgrading a workload cluster using ClusterClass with a HA
 					var upgradedAndHealthy int64
 					deletingMachines := []clusterv1.Machine{}
 					for _, m := range machines {
-						if *m.Spec.Version == cluster.Spec.Topology.Version && conditions.IsTrue(&m, clusterv1.MachineNodeHealthyCondition) {
+						if m.Spec.Version == cluster.Spec.Topology.Version && conditions.IsTrue(&m, clusterv1.MachineNodeHealthyCondition) {
 							upgradedAndHealthy++
 						}
 						if !m.DeletionTimestamp.IsZero() {

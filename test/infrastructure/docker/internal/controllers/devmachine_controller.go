@@ -28,12 +28,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/controllers/backends"
 	dockerbackend "sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/controllers/backends/docker"
 	inmemorybackend "sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/controllers/backends/inmemory"
@@ -91,7 +92,7 @@ func (r *DevMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 			handler.EnqueueRequestsFromMapFunc(clusterToDevMachines),
 			builder.WithPredicates(predicates.All(mgr.GetScheme(), predicateLog,
 				predicates.ResourceIsChanged(mgr.GetScheme(), predicateLog),
-				predicates.ClusterPausedTransitionsOrInfrastructureReady(mgr.GetScheme(), predicateLog),
+				predicates.ClusterPausedTransitionsOrInfrastructureProvisioned(mgr.GetScheme(), predicateLog),
 			)),
 		).
 		WatchesRawSource(r.ClusterCache.GetClusterSource("devmachine", clusterToDevMachines)).
@@ -114,7 +115,7 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Fetch the DevMachine instance.
 	devMachine := &infrav1.DevMachine{}
-	if err := r.Client.Get(ctx, req.NamespacedName, devMachine); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, devMachine); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -139,6 +140,17 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	if machine == nil {
+		if !devMachine.DeletionTimestamp.IsZero() {
+			if controllerutil.ContainsFinalizer(devMachine, infrav1.MachineFinalizer) {
+				devMachineWithoutFinalizer := devMachine.DeepCopy()
+				controllerutil.RemoveFinalizer(devMachineWithoutFinalizer, infrav1.MachineFinalizer)
+				if err := r.Client.Patch(ctx, devMachineWithoutFinalizer, client.MergeFrom(devMachine)); err != nil {
+					return ctrl.Result{}, errors.Wrapf(err, "failed to patch DevMachine %s", klog.KObj(devMachine))
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+
 		log.Info("Waiting for Machine Controller to set OwnerRef on DevMachine")
 		return ctrl.Result{}, nil
 	}
@@ -170,7 +182,7 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	if cluster.Spec.InfrastructureRef == nil {
+	if !cluster.Spec.InfrastructureRef.IsDefined() {
 		log.Info("Cluster infrastructureRef is not available yet")
 		return ctrl.Result{}, nil
 	}
@@ -181,7 +193,7 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		Namespace: devMachine.Namespace,
 		Name:      cluster.Spec.InfrastructureRef.Name,
 	}
-	if err := r.Client.Get(ctx, devClusterName, devCluster); err != nil {
+	if err := r.Get(ctx, devClusterName, devCluster); err != nil {
 		log.Info("DevCluster is not available yet")
 		return ctrl.Result{}, nil
 	}
@@ -196,7 +208,7 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}()
 
 	// Handle deleted machines
-	if !devMachine.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !devMachine.DeletionTimestamp.IsZero() {
 		return backendReconciler.ReconcileDelete(ctx, cluster, devCluster, machine, devMachine)
 	}
 
@@ -238,7 +250,7 @@ func (r *DevMachineReconciler) DevClusterToDevMachines(ctx context.Context, o cl
 
 	labels := map[string]string{clusterv1.ClusterNameLabel: cluster.Name}
 	machineList := &clusterv1.MachineList{}
-	if err := r.Client.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
+	if err := r.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
 		return nil
 	}
 	for _, m := range machineList.Items {

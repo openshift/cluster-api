@@ -1,4 +1,4 @@
-# clusterctl Provider Contract
+# clusterctl Provider Contract (contract version v1beta2)
 
 The `clusterctl` command is designed to work with all the providers compliant with the following rules.
 
@@ -57,7 +57,7 @@ This is the process to add a new provider to the pre-defined list of providers s
 - As soon as possible, create an issue to the [Cluster API repository](https://sigs.k8s.io/cluster-api) declaring the intent to add a new provider;
   each provider must have a unique name & type in the pre-defined list of providers shipped with `clusterctl`; the provider's name
   must be declared in the issue above and abide to the following naming convention:
-  - The name must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character.
+  - The name must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character. If the name includes upper case alphanumeric characters, clusterctl enforces it lower case it.
   - The name length should not exceed 63 characters.
   - For providers not in the kubernetes-sigs org, in order to prevent conflicts the `clusterctl` name must be prefixed with
     the provider's GitHub org name followed by `-` (see note below).
@@ -131,7 +131,9 @@ A provider url should be in the form
 * The components YAML, the metadata YAML and eventually the workload cluster templates are included into the same package version
 
 See the [GitLab docs](https://docs.gitlab.com/ee/user/packages/generic_packages/) for more information
-about how to create a generic package.
+about how to create a generic package. 
+
+If you are hosting a private Gitlab repository, you can use a [personal access token](https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html) or [project access token](https://docs.gitlab.com/user/project/settings/project_access_tokens.html) to access the provider artifacts by adding the `gitlab-access-token` variable to the `clusterctl` configuration in order to authenticate against the GitLab API.
 
 This can be used in conjunction with [GitLabracadabra](https://gitlab.com/gitlabracadabra/gitlabracadabra/)
 to avoid direct internet access from `clusterctl`, and use GitLab as artifacts repository. For example,
@@ -168,6 +170,8 @@ for the core provider:
 Limitation: Provider artifacts hosted on GitLab don't support getting all versions.
 As a consequence, you need to set version explicitly for upgrades.
 
+
+
 #### Creating a local provider repository
 
 clusterctl supports reading from a repository defined on the local file system.
@@ -200,6 +204,21 @@ releaseSeries:
   minor: 2
   contract: v1alpha2
 ```
+
+#### Validation Rules
+
+Starting from clusterctl v1.11, the metadata YAML file is subject to strict validation to ensure consistency and prevent configuration errors. The following validation rules are enforced:
+
+1. **apiVersion**: Must be set to `clusterctl.cluster.x-k8s.io/v1alpha3`
+   * This ensures compatibility with the current clusterctl metadata format
+
+2. **kind**: Must be set to `Metadata`
+   * This identifies the resource type correctly
+
+3. **releaseSeries**: Must contain at least one entry
+   * This ensures providers properly document their version compatibility
+
+These validation rules help catch configuration issues early and provide clear error messages to assist in troubleshooting.
 
 <aside class="note">
 
@@ -335,7 +354,7 @@ providers.
 | CAPONE        | cluster.x-k8s.io/provider=infrastructure-opennebula   |
 | CAPO          | cluster.x-k8s.io/provider=infrastructure-openstack    |
 | CAPOCI        | cluster.x-k8s.io/provider=infrastructure-oci          |
-| CAPP          | cluster.x-k8s.io/provider=infrastructure-packet       |
+| CAPS          | cluster.x-k8s.io/provider=infrastructure-scaleway     |
 | CAPT          | cluster.x-k8s.io/provider=infrastructure-tinkerbell   |
 | CAPV          | cluster.x-k8s.io/provider=infrastructure-vsphere      |
 | CAPVC         | cluster.x-k8s.io/provider=infrastructure-vcluster     |
@@ -346,6 +365,7 @@ providers.
 | CAPK0S        | cluster.x-k8s.io/provider=infrastructure-k0smotron    |
 | CAIPAMIC      | cluster.x-k8s.io/provider=ipam-in-cluster             |
 | CAIPAMX       | cluster.x-k8s.io/provider=ipam-nutanix                |
+| CAIPAM3       | cluster.x-k8s.io/provider=ipam-metal3                 |
 | CAREX         | cluster.x-k8s.io/provider=runtime-extensions-nutanix  |
 
 ### Workload cluster templates

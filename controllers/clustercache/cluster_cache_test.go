@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/rest/fake"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -43,9 +44,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 func TestReconcile(t *testing.T) {
@@ -56,13 +58,20 @@ func TestReconcile(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 	clusterKey := client.ObjectKeyFromObject(testCluster)
 	g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
 	defer func() { g.Expect(client.IgnoreNotFound(env.CleanupAndWait(ctx, testCluster))).To(Succeed()) }()
 
 	opts := Options{
-		SecretClient: env.Manager.GetClient(),
+		SecretClient: env.GetClient(),
 		Client: ClientOptions{
 			UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
 			Timeout:   10 * time.Second,
@@ -71,10 +80,10 @@ func TestReconcile(t *testing.T) {
 			Indexes: []CacheOptionsIndex{NodeProviderIDIndex},
 		},
 	}
-	accessorConfig := buildClusterAccessorConfig(env.Manager.GetScheme(), opts, nil)
+	accessorConfig := buildClusterAccessorConfig(env.GetScheme(), opts, nil)
 	cc := &clusterCache{
 		// Use APIReader to avoid cache issues when reading the Cluster object.
-		client:                env.Manager.GetAPIReader(),
+		client:                env.GetAPIReader(),
 		clusterAccessorConfig: accessorConfig,
 		clusterAccessors:      make(map[client.ObjectKey]*clusterAccessor),
 		cacheCtx:              context.Background(),
@@ -98,7 +107,7 @@ func TestReconcile(t *testing.T) {
 
 	// Set Cluster.Status.InfrastructureReady == true
 	patch := client.MergeFrom(testCluster.DeepCopy())
-	testCluster.Status.InfrastructureReady = true
+	testCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, testCluster, patch)).To(Succeed())
 
 	// Reconcile, kubeconfig Secret doesn't exist
@@ -120,11 +129,11 @@ func TestReconcile(t *testing.T) {
 	g.Expect(res.RequeueAfter >= accessorConfig.ConnectionCreationRetryInterval-2*time.Second).To(BeTrue())
 	g.Expect(res.RequeueAfter <= accessorConfig.ConnectionCreationRetryInterval).To(BeTrue())
 
-	// Set lastConnectionCreationErrorTimestamp to now - ConnectionCreationRetryInterval to skip over rate-limiting
-	cc.getClusterAccessor(clusterKey).lockedState.lastConnectionCreationErrorTimestamp = time.Now().Add(-1 * accessorConfig.ConnectionCreationRetryInterval)
+	// Set lastConnectionCreationErrorTime to now - ConnectionCreationRetryInterval to skip over rate-limiting
+	cc.getClusterAccessor(clusterKey).lockedState.lastConnectionCreationErrorTime = time.Now().Add(-1 * accessorConfig.ConnectionCreationRetryInterval)
 
 	// Reconcile again, accessor.Connect works now
-	// => because accessor.Connect just set the lastProbeTimestamp we expect a retry with
+	// => because accessor.Connect just set the lastProbeTime we expect a retry with
 	//    slightly less than HealthProbe.Interval
 	res, err = cc.Reconcile(ctx, reconcile.Request{NamespacedName: clusterKey})
 	g.Expect(err).ToNot(HaveOccurred())
@@ -139,9 +148,9 @@ func TestReconcile(t *testing.T) {
 	g.Expect(res.RequeueAfter >= accessorConfig.HealthProbe.Interval-2*time.Second).To(BeTrue())
 	g.Expect(res.RequeueAfter <= accessorConfig.HealthProbe.Interval).To(BeTrue())
 
-	// Set last probe timestamps to now - accessorConfig.HealthProbe.Interval to skip over rate-limiting
-	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeTimestamp = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
-	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeSuccessTimestamp = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
+	// Set last probe times to now - accessorConfig.HealthProbe.Interval to skip over rate-limiting
+	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeTime = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
+	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeSuccessTime = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
 
 	// Reconcile again, now the health probe will be run successfully
 	// => so we expect a retry with slightly less than HealthProbe.Interval
@@ -161,9 +170,9 @@ func TestReconcile(t *testing.T) {
 			Body:       objBody(&apierrors.NewUnauthorized("authorization failed").ErrStatus),
 		},
 	}
-	// Set last probe timestamps to now - accessorConfig.HealthProbe.Interval to skip over rate-limiting
-	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeTimestamp = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
-	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeSuccessTimestamp = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
+	// Set last probe times to now - accessorConfig.HealthProbe.Interval to skip over rate-limiting
+	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeTime = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
+	cc.getClusterAccessor(clusterKey).lockedState.healthChecking.lastProbeSuccessTime = time.Now().Add(-1 * accessorConfig.HealthProbe.Interval)
 
 	// Reconcile again, now the health probe will fail
 	// => so we expect a disconnect and an immediate retry.
@@ -517,7 +526,7 @@ func TestClusterCacheConcurrency(t *testing.T) {
 
 	// Set up ClusterCache.
 	cc, err := SetupWithManager(ctx, env.Manager, Options{
-		SecretClient: env.Manager.GetClient(),
+		SecretClient: env.GetClient(),
 		Cache: CacheOptions{
 			Indexes: []CacheOptionsIndex{NodeProviderIDIndex},
 		},
@@ -578,7 +587,7 @@ func TestClusterCacheConcurrency(t *testing.T) {
 			accessor := internalClusterCache.getClusterAccessor(tc.cluster)
 			g.Expect(accessor).ToNot(BeNil())
 			if tc.brokenRESTConfig {
-				g.Expect(accessor.GetLastConnectionCreationErrorTimestamp(ctx).IsZero()).To(BeFalse())
+				g.Expect(accessor.GetLastConnectionCreationErrorTime(ctx).IsZero()).To(BeFalse())
 			} else {
 				g.Expect(accessor.Connected(ctx)).To(BeTrue())
 			}
@@ -626,8 +635,8 @@ func TestClusterCacheConcurrency(t *testing.T) {
 						continue
 					}
 
-					lastConnectionCreationErrorTimestamp := accessor.GetLastConnectionCreationErrorTimestamp(ctx)
-					if time.Since(lastConnectionCreationErrorTimestamp) > (internalClusterCache.clusterAccessorConfig.ConnectionCreationRetryInterval * 120 / 100) {
+					lastConnectionCreationErrorTime := accessor.GetLastConnectionCreationErrorTime(ctx)
+					if time.Since(lastConnectionCreationErrorTime) > (internalClusterCache.clusterAccessorConfig.ConnectionCreationRetryInterval * 120 / 100) {
 						errChan <- pkgerrors.Wrapf(err, "cluster %s: connection creation wasn't tried within the connection creation retry interval", tc.cluster)
 						continue
 					}
@@ -654,8 +663,8 @@ func TestClusterCacheConcurrency(t *testing.T) {
 						continue
 					}
 
-					lastProbeSuccessTimestamp := cc.GetLastProbeSuccessTimestamp(ctx, tc.cluster)
-					if time.Since(lastProbeSuccessTimestamp) > (internalClusterCache.clusterAccessorConfig.HealthProbe.Interval * 120 / 100) {
+					lastProbeSuccessTime := cc.GetHealthCheckingState(ctx, tc.cluster).LastProbeSuccessTime
+					if time.Since(lastProbeSuccessTime) > (internalClusterCache.clusterAccessorConfig.HealthProbe.Interval * 120 / 100) {
 						errChan <- pkgerrors.Wrapf(err, "cluster %s: health probe wasn't run successfully within the health probe interval", tc.cluster)
 						continue
 					}
@@ -731,6 +740,13 @@ func createCluster(g Gomega, testCluster testCluster) {
 			Name:      testCluster.cluster.Name,
 			Namespace: testCluster.cluster.Namespace,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 	g.Expect(env.CreateAndWait(ctx, cluster)).To(Succeed())
 
@@ -749,7 +765,7 @@ func createCluster(g Gomega, testCluster testCluster) {
 	}
 
 	patch := client.MergeFrom(cluster.DeepCopy())
-	cluster.Status.InfrastructureReady = true
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, cluster, patch)).To(Succeed())
 }
 

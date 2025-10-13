@@ -32,11 +32,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/api/v1beta1/index"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	clustercontroller "sigs.k8s.io/cluster-api/internal/controllers/cluster"
 	machinecontroller "sigs.k8s.io/cluster-api/internal/controllers/machine"
 	machinesetcontroller "sigs.k8s.io/cluster-api/internal/controllers/machineset"
 	"sigs.k8s.io/cluster-api/internal/test/envtest"
@@ -89,14 +88,6 @@ func TestMain(m *testing.M) {
 		clusterCache.(interface{ SetConnectionCreationRetryInterval(time.Duration) }).
 			SetConnectionCreationRetryInterval(2 * time.Second)
 
-		if err := (&clustercontroller.Reconciler{
-			Client:                      mgr.GetClient(),
-			APIReader:                   mgr.GetClient(),
-			ClusterCache:                clusterCache,
-			RemoteConnectionGracePeriod: 50 * time.Second,
-		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
-			panic(fmt.Sprintf("Failed to start ClusterReconciler: %v", err))
-		}
 		if err := (&Reconciler{
 			Client:       mgr.GetClient(),
 			ClusterCache: clusterCache,

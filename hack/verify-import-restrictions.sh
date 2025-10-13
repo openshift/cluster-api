@@ -25,16 +25,11 @@ set -o pipefail
 
 sub_packages=(
   "api"
-  "api/addons"
-  "exp/api"
-  "bootstrap/kubeadm/api"
   "cmd/clusterctl/api"
-  "controlplane/kubeadm/api"
-  "exp/ipam/api"
-  "exp/runtime/api"
+  "test/extension"
   "test/infrastructure/docker/api"
   "test/infrastructure/docker/exp/api"
-  "test/infrastructure/inmemory/api"
+  "test/infrastructure/inmemory/pkg/cloud/api"
 )
 
 packages=()
@@ -43,7 +38,7 @@ visit() {
   for file in "$1"/* ; do
     if [ -d "$file" ]; then
       visit "$file"
-    elif [ -f "$file" ]; then
+    elif [ -f "$file" ] && [[ "$file" = *.go ]]; then
       ((count += 1))
     fi
   done

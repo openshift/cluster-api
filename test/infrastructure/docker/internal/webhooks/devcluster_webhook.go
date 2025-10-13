@@ -19,15 +19,18 @@ package webhooks
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 )
 
 // DevCluster implements a validating and defaulting webhook for DevCluster.
@@ -36,12 +39,12 @@ type DevCluster struct{}
 func (webhook *DevCluster) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(&infrav1.DevCluster{}).
-		WithDefaulter(webhook, admission.DefaulterRemoveUnknownOrOmitableFields).
+		WithDefaulter(webhook).
 		WithValidator(webhook).
 		Complete()
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/mutate-infrastructure-cluster-x-k8s-io-v1beta1-devcluster,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=devclusters,versions=v1beta1,name=default.devcluster.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/mutate-infrastructure-cluster-x-k8s-io-v1beta2-devcluster,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=devclusters,versions=v1beta2,name=default.devcluster.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 var _ webhook.CustomDefaulter = &DevCluster{}
 
@@ -55,7 +58,7 @@ func (webhook *DevCluster) Default(_ context.Context, obj runtime.Object) error 
 	return nil
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/validate-infrastructure-cluster-x-k8s-io-v1beta1-devcluster,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=devclusters,versions=v1beta1,name=validation.devcluster.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/validate-infrastructure-cluster-x-k8s-io-v1beta2-devcluster,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=devclusters,versions=v1beta2,name=validation.devcluster.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 var _ webhook.CustomValidator = &DevCluster{}
 
@@ -72,7 +75,14 @@ func (webhook *DevCluster) ValidateCreate(_ context.Context, obj runtime.Object)
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (webhook *DevCluster) ValidateUpdate(_ context.Context, _, _ runtime.Object) (admission.Warnings, error) {
+func (webhook *DevCluster) ValidateUpdate(_ context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
+	cluster, ok := newObj.(*infrav1.DevCluster)
+	if !ok {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a DevCluster but got a %T", newObj))
+	}
+	if allErrs := validateDevClusterSpec(cluster.Spec); len(allErrs) > 0 {
+		return nil, apierrors.NewInvalid(infrav1.GroupVersion.WithKind("DevCluster").GroupKind(), cluster.Name, allErrs)
+	}
 	return nil, nil
 }
 
@@ -91,9 +101,30 @@ func defaultDevClusterSpec(s *infrav1.DevClusterSpec) {
 		if s.ControlPlaneEndpoint.Port == 0 {
 			s.ControlPlaneEndpoint.Port = 6443
 		}
+
+		for i, fd := range s.Backend.Docker.FailureDomains {
+			if fd.ControlPlane == nil {
+				fd.ControlPlane = ptr.To(false)
+			}
+			s.Backend.Docker.FailureDomains[i] = fd
+		}
 	}
 }
 
-func validateDevClusterSpec(_ infrav1.DevClusterSpec) field.ErrorList {
+func validateDevClusterSpec(spec infrav1.DevClusterSpec) field.ErrorList {
+	// Only validate the Docker backend if it is set.
+	if spec.Backend.Docker == nil {
+		return nil
+	}
+	domainNames := make([]string, 0, len(spec.Backend.Docker.FailureDomains))
+	for _, fd := range spec.Backend.Docker.FailureDomains {
+		domainNames = append(domainNames, fd.Name)
+	}
+	originalDomainNames := slices.Clone(domainNames)
+	sort.Strings(domainNames)
+	if !slices.Equal(originalDomainNames, domainNames) {
+		return field.ErrorList{field.Invalid(field.NewPath("spec", "backend", "docker", "failureDomains"), spec.Backend.Docker.FailureDomains, "failure domains must be sorted by name")}
+	}
+
 	return nil
 }

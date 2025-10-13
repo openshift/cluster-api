@@ -17,35 +17,41 @@ limitations under the License.
 package cluster
 
 import (
+	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	. "sigs.k8s.io/controller-runtime/pkg/envtest/komega"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
-	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/external"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
-	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/exp/topology/desiredstate"
 	"sigs.k8s.io/cluster-api/exp/topology/scope"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/structuredmerge"
 	"sigs.k8s.io/cluster-api/internal/hooks"
@@ -56,14 +62,13 @@ import (
 	"sigs.k8s.io/cluster-api/internal/topology/selectors"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/internal/webhooks"
+	"sigs.k8s.io/cluster-api/util/conversion"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 var IgnoreNameGenerated = IgnorePaths{
 	"metadata.name",
 }
-
-const testController = "test-controller"
 
 func TestReconcileShim(t *testing.T) {
 	infrastructureCluster := builder.TestInfrastructureCluster(metav1.NamespaceDefault, "infrastructure-cluster1").Build()
@@ -95,9 +100,8 @@ func TestReconcileShim(t *testing.T) {
 
 		// Run reconcileClusterShim.
 		r := Reconciler{
-			Client:             env,
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
+			Client:    env,
+			APIReader: env.GetAPIReader(),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -138,9 +142,8 @@ func TestReconcileShim(t *testing.T) {
 
 		// Run reconcileClusterShim.
 		r := Reconciler{
-			Client:             env,
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
+			Client:    env,
+			APIReader: env.GetAPIReader(),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -188,9 +191,8 @@ func TestReconcileShim(t *testing.T) {
 
 		// Run reconcileClusterShim.
 		r := Reconciler{
-			Client:             env,
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
+			Client:    env,
+			APIReader: env.GetAPIReader(),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -239,9 +241,8 @@ func TestReconcileShim(t *testing.T) {
 
 		// Run reconcileClusterShim.
 		r := Reconciler{
-			Client:             env,
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
+			Client:    env,
+			APIReader: env.GetAPIReader(),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -280,9 +281,8 @@ func TestReconcileShim(t *testing.T) {
 
 		// Run reconcileClusterShim using a nil client, so an error will be triggered if any operation is attempted
 		r := Reconciler{
-			Client:             nil,
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(nil, ssa.NewCache(testController)),
+			Client:    nil,
+			APIReader: env.GetAPIReader(),
 		}
 		err = r.reconcileClusterShim(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -292,6 +292,27 @@ func TestReconcileShim(t *testing.T) {
 }
 
 func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
+	var testGVKs = []schema.GroupVersionKind{
+		{
+			Group:   "refAPIGroup1",
+			Kind:    "refKind1",
+			Version: "v1beta4",
+		},
+	}
+
+	apiVersionGetter := func(gk schema.GroupKind) (string, error) {
+		for _, gvk := range testGVKs {
+			if gvk.GroupKind() == gk {
+				return schema.GroupVersion{
+					Group:   gk.Group,
+					Version: gvk.Version,
+				}.String(), nil
+			}
+		}
+		return "", fmt.Errorf("unknown GroupVersionKind: %v", gk)
+	}
+	clusterv1beta1.SetAPIVersionGetter(apiVersionGetter)
+
 	catalog := runtimecatalog.New()
 	_ = runtimehooksv1.AddToCatalog(catalog)
 
@@ -344,15 +365,20 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 					},
 				},
 				Spec: clusterv1.ClusterSpec{
-					ControlPlaneRef:   &corev1.ObjectReference{},
-					InfrastructureRef: &corev1.ObjectReference{},
+					ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
 				},
 				Status: clusterv1.ClusterStatus{
-					Conditions: clusterv1.Conditions{
-						clusterv1.Condition{
-							Type:   clusterv1.ControlPlaneInitializedCondition,
-							Status: corev1.ConditionTrue,
-						},
+					Conditions: []metav1.Condition{
+						{Type: clusterv1.ClusterControlPlaneInitializedCondition, Status: metav1.ConditionTrue},
 					},
 				},
 			},
@@ -372,15 +398,20 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 					},
 				},
 				Spec: clusterv1.ClusterSpec{
-					ControlPlaneRef:   &corev1.ObjectReference{},
-					InfrastructureRef: &corev1.ObjectReference{},
+					ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
 				},
 				Status: clusterv1.ClusterStatus{
-					Conditions: clusterv1.Conditions{
-						clusterv1.Condition{
-							Type:   clusterv1.ControlPlaneInitializedCondition,
-							Status: corev1.ConditionTrue,
-						},
+					Conditions: []metav1.Condition{
+						{Type: clusterv1.ClusterControlPlaneInitializedCondition, Status: metav1.ConditionTrue},
 					},
 				},
 			},
@@ -400,15 +431,20 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 					},
 				},
 				Spec: clusterv1.ClusterSpec{
-					ControlPlaneRef:   &corev1.ObjectReference{},
-					InfrastructureRef: &corev1.ObjectReference{},
+					ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
 				},
 				Status: clusterv1.ClusterStatus{
-					Conditions: clusterv1.Conditions{
-						clusterv1.Condition{
-							Type:   clusterv1.ControlPlaneInitializedCondition,
-							Status: corev1.ConditionFalse,
-						},
+					Conditions: []metav1.Condition{
+						{Type: clusterv1.ClusterControlPlaneInitializedCondition, Status: metav1.ConditionFalse},
 					},
 				},
 			},
@@ -425,15 +461,20 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 					Namespace: "test-ns",
 				},
 				Spec: clusterv1.ClusterSpec{
-					ControlPlaneRef:   &corev1.ObjectReference{},
-					InfrastructureRef: &corev1.ObjectReference{},
+					ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "refAPIGroup1",
+						Kind:     "refKind1",
+						Name:     "refName1",
+					},
 				},
 				Status: clusterv1.ClusterStatus{
-					Conditions: clusterv1.Conditions{
-						clusterv1.Condition{
-							Type:   clusterv1.ControlPlaneInitializedCondition,
-							Status: corev1.ConditionTrue,
-						},
+					Conditions: []metav1.Condition{
+						{Type: clusterv1.ClusterControlPlaneInitializedCondition, Status: metav1.ConditionTrue},
 					},
 				},
 			},
@@ -455,10 +496,28 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 				HookResponseTracker: scope.NewHookResponseTracker(),
 			}
 
+			// Add managedFields and annotations that should be cleaned up before the Cluster is sent to the RuntimeExtension.
+			tt.cluster.SetManagedFields([]metav1.ManagedFieldsEntry{
+				{
+					APIVersion: builder.InfrastructureGroupVersion.String(),
+					Manager:    "manager",
+					Operation:  "op",
+					Time:       ptr.To(metav1.Now()),
+					FieldsType: "FieldsV1",
+					FieldsV1:   &metav1.FieldsV1{},
+				},
+			})
+			if tt.cluster.Annotations == nil {
+				tt.cluster.Annotations = map[string]string{}
+			}
+			tt.cluster.Annotations[corev1.LastAppliedConfigAnnotation] = "should be cleaned up"
+			tt.cluster.Annotations[conversion.DataAnnotation] = "should be cleaned up"
+
 			fakeRuntimeClient := fakeruntimeclient.NewRuntimeClientBuilder().
 				WithCallAllExtensionResponses(map[runtimecatalog.GroupVersionHook]runtimehooksv1.ResponseObject{
 					afterControlPlaneInitializedGVH: tt.hookResponse,
 				}).
+				WithCallAllExtensionValidations(validateClusterParameter(tt.cluster)).
 				WithCatalog(catalog).
 				Build()
 
@@ -471,6 +530,11 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 			}
 
 			err := r.callAfterControlPlaneInitialized(ctx, s)
+			if tt.wantError {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).ToNot(HaveOccurred())
+			}
 
 			if tt.wantHookToBeCalled {
 				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterControlPlaneInitialized)).To(Equal(1), "Expected hook to be called once")
@@ -479,7 +543,6 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 			}
 
 			g.Expect(hooks.IsPending(runtimehooksv1.AfterControlPlaneInitialized, tt.cluster)).To(Equal(tt.wantMarked))
-			g.Expect(err != nil).To(Equal(tt.wantError))
 		})
 	}
 }
@@ -520,7 +583,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if it is not marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -550,7 +613,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is starting a new upgrade - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -587,7 +650,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is upgrading - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -624,7 +687,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should be called if the control plane is scaling - hook is not marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -639,7 +702,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
 							},
 						},
-						Spec: clusterv1.ClusterSpec{Topology: &clusterv1.Topology{}},
+						Spec: clusterv1.ClusterSpec{Topology: clusterv1.Topology{}},
 					},
 					ControlPlane: &scope.ControlPlaneState{
 						Object: controlPlaneObj,
@@ -660,7 +723,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is pending an upgrade - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -697,7 +760,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MDs are upgrading - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -735,7 +798,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MPs are upgrading - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -773,7 +836,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MDs are pending create - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -811,7 +874,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MPs are pending create - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -849,7 +912,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MDs are pending upgrade - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -887,7 +950,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MPs are pending upgrade - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -925,7 +988,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MDs upgrade is deferred - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -963,7 +1026,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should not be called if the control plane is stable at desired version but MPs upgrade is deferred - hook is marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -1001,7 +1064,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should be called if the control plane, MDs, and MPs are stable at the topology version - success response should unmark the hook",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -1017,7 +1080,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 							},
 						},
 						Spec: clusterv1.ClusterSpec{
-							Topology: &clusterv1.Topology{
+							Topology: clusterv1.Topology{
 								Version: topologyVersion,
 							},
 						},
@@ -1038,7 +1101,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			name: "hook should be called if the control plane, MDs, and MPs are stable at the topology version - failure response should leave the hook marked",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						ControlPlane: clusterv1.ControlPlaneTopology{
 							Replicas: ptr.To[int32](2),
 						},
@@ -1054,7 +1117,7 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 							},
 						},
 						Spec: clusterv1.ClusterSpec{
-							Topology: &clusterv1.Topology{
+							Topology: clusterv1.Topology{
 								Version: topologyVersion,
 							},
 						},
@@ -1077,10 +1140,28 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
+			// Add managedFields and annotations that should be cleaned up before the Cluster is sent to the RuntimeExtension.
+			tt.s.Current.Cluster.SetManagedFields([]metav1.ManagedFieldsEntry{
+				{
+					APIVersion: builder.InfrastructureGroupVersion.String(),
+					Manager:    "manager",
+					Operation:  "op",
+					Time:       ptr.To(metav1.Now()),
+					FieldsType: "FieldsV1",
+					FieldsV1:   &metav1.FieldsV1{},
+				},
+			})
+			if tt.s.Current.Cluster.Annotations == nil {
+				tt.s.Current.Cluster.Annotations = map[string]string{}
+			}
+			tt.s.Current.Cluster.Annotations[corev1.LastAppliedConfigAnnotation] = "should be cleaned up"
+			tt.s.Current.Cluster.Annotations[conversion.DataAnnotation] = "should be cleaned up"
+
 			fakeRuntimeClient := fakeruntimeclient.NewRuntimeClientBuilder().
 				WithCallAllExtensionResponses(map[runtimecatalog.GroupVersionHook]runtimehooksv1.ResponseObject{
 					afterClusterUpgradeGVH: tt.hookResponse,
 				}).
+				WithCallAllExtensionValidations(validateClusterParameter(tt.s.Current.Cluster)).
 				WithCatalog(catalog).
 				Build()
 
@@ -1094,6 +1175,11 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			}
 
 			err := r.callAfterClusterUpgrade(ctx, tt.s)
+			if tt.wantError {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).ToNot(HaveOccurred())
+			}
 
 			if tt.wantHookToBeCalled {
 				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterClusterUpgrade)).To(Equal(1), "Expected hook to be called once")
@@ -1102,14 +1188,23 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			}
 
 			g.Expect(hooks.IsPending(runtimehooksv1.AfterClusterUpgrade, tt.s.Current.Cluster)).To(Equal(tt.wantMarked))
-			g.Expect(err != nil).To(Equal(tt.wantError))
 		})
 	}
 }
 
 func TestReconcileCluster(t *testing.T) {
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
+
 	cluster1 := builder.Cluster(metav1.NamespaceDefault, "cluster1").
+		WithTopology(&clusterv1.Topology{
+			ClassRef: clusterv1.ClusterClassRef{
+				Name: "class1",
+			},
+			Version: "v1.30.0",
+		}).
 		Build()
+	// Pausing the Cluster so the reconciler running in the background does not reconcile the Cluster for us.
+	cluster1.Spec.Paused = ptr.To(true)
 	cluster1WithReferences := builder.Cluster(metav1.NamespaceDefault, "cluster1").
 		WithInfrastructureCluster(builder.TestInfrastructureCluster(metav1.NamespaceDefault, "infrastructure-cluster1").
 			Build()).
@@ -1158,6 +1253,16 @@ func TestReconcileCluster(t *testing.T) {
 				tt.current = prepareCluster(tt.current, namespace.GetName())
 			}
 
+			ict := builder.TestInfrastructureClusterTemplate(namespace.GetName(), "infra1").Build()
+			cpt := builder.TestControlPlaneTemplate(namespace.GetName(), "cp1").Build()
+			clusterClass := builder.ClusterClass(namespace.GetName(), "class1").
+				WithInfrastructureClusterTemplate(ict).
+				WithControlPlaneTemplate(cpt).
+				Build()
+			g.Expect(env.CreateAndWait(ctx, ict)).To(Succeed())
+			g.Expect(env.CreateAndWait(ctx, cpt)).To(Succeed())
+			g.Expect(env.CreateAndWait(ctx, clusterClass)).To(Succeed())
+
 			if tt.current != nil {
 				// NOTE: it is ok to use create given that the Cluster are created by user.
 				g.Expect(env.CreateAndWait(ctx, tt.current)).To(Succeed())
@@ -1168,9 +1273,9 @@ func TestReconcileCluster(t *testing.T) {
 			s.Desired = &scope.ClusterState{Cluster: tt.desired}
 
 			r := Reconciler{
-				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:   env,
+				recorder: env.GetEventRecorderFor("test"),
+				ssaCache: ssa.NewCache("topology/cluster"),
 			}
 			err = r.reconcileCluster(ctx, s)
 			if tt.wantErr {
@@ -1183,12 +1288,13 @@ func TestReconcileCluster(t *testing.T) {
 			err = env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(tt.want), got)
 			g.Expect(err).ToNot(HaveOccurred())
 
-			g.Expect(got.Spec.InfrastructureRef).To(EqualObject(tt.want.Spec.InfrastructureRef))
-			g.Expect(got.Spec.ControlPlaneRef).To(EqualObject(tt.want.Spec.ControlPlaneRef))
+			g.Expect(got.Spec.InfrastructureRef).To(Equal(tt.want.Spec.InfrastructureRef))
+			g.Expect(got.Spec.ControlPlaneRef).To(Equal(tt.want.Spec.ControlPlaneRef))
 
 			if tt.current != nil {
 				g.Expect(env.CleanupAndWait(ctx, tt.current)).To(Succeed())
 			}
+			g.Expect(env.CleanupAndWait(ctx, clusterClass, ict, cpt)).To(Succeed())
 		})
 	}
 }
@@ -1278,7 +1384,7 @@ func TestReconcileInfrastructureCluster(t *testing.T) {
 			}
 
 			if tt.original != nil {
-				// NOTE: it is required to use server side apply to creat the object in order to ensure consistency with the topology controller behaviour.
+				// NOTE: it is required to use server side apply to create the object in order to ensure consistency with the topology controller behaviour.
 				g.Expect(env.PatchAndWait(ctx, tt.original.DeepCopy(), client.ForceOwnership, client.FieldOwner(structuredmerge.TopologyManagerName))).To(Succeed())
 				// NOTE: it is required to apply instance specific changes with a "plain" Patch operation to simulate a different manger.
 				if tt.externalChanges != "" {
@@ -1295,9 +1401,9 @@ func TestReconcileInfrastructureCluster(t *testing.T) {
 			s.Desired = &scope.ClusterState{InfrastructureCluster: tt.desired.DeepCopy()}
 
 			r := Reconciler{
-				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:   env,
+				recorder: env.GetEventRecorderFor("test"),
+				ssaCache: ssa.NewCache("topology/cluster"),
 			}
 			created, err := r.reconcileInfrastructureCluster(ctx, s)
 			if tt.wantErr {
@@ -1331,7 +1437,32 @@ func TestReconcileInfrastructureCluster(t *testing.T) {
 }
 
 func TestReconcileControlPlane(t *testing.T) {
+	testReconcileControlPlane(t, "v1beta1")
+	testReconcileControlPlane(t, "v1beta2")
+}
+
+func testReconcileControlPlane(t *testing.T, controlPlaneContractVersion string) {
+	t.Helper()
+
 	g := NewWithT(t)
+
+	// Ensure correct contract labels on control plane CRD
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	g.Expect(env.Get(t.Context(), client.ObjectKeyFromObject(builder.GenericControlPlaneCRD), crd)).To(Succeed())
+	crdLabelsBackup := maps.Clone(crd.Labels)
+	originalCRD := crd.DeepCopy()
+	crd.Labels = map[string]string{
+		// Set label to signal that ControlPlane implements v1beta1 or v1beta2 contract.
+		fmt.Sprintf("%s/%s", clusterv1.GroupVersion.Group, controlPlaneContractVersion): clusterv1.GroupVersionControlPlane.Version,
+	}
+	g.Expect(env.Patch(t.Context(), crd, client.MergeFrom(originalCRD))).To(Succeed())
+	t.Cleanup(func() {
+		crd := &apiextensionsv1.CustomResourceDefinition{}
+		g.Expect(env.Get(context.Background(), client.ObjectKeyFromObject(builder.GenericControlPlaneCRD), crd)).To(Succeed())
+		originalCRD := crd.DeepCopy()
+		crd.Labels = crdLabelsBackup
+		g.Expect(env.Patch(context.Background(), crd, client.MergeFrom(originalCRD))).To(Succeed())
+	})
 
 	// Objects for testing reconciliation of a control plane without machines.
 
@@ -1339,7 +1470,7 @@ func TestReconcileControlPlane(t *testing.T) {
 	ccWithoutControlPlaneInfrastructure := &scope.ControlPlaneBlueprint{}
 
 	// Create ControlPlaneObject without machine templates.
-	controlPlaneWithoutInfrastructure := builder.TestControlPlane(metav1.NamespaceDefault, "cp1").
+	controlPlaneWithoutInfrastructure := builder.ControlPlane(metav1.NamespaceDefault, "cp1").
 		WithSpecFields(map[string]interface{}{"spec.foo": "foo"}).
 		Build()
 
@@ -1368,8 +1499,8 @@ func TestReconcileControlPlane(t *testing.T) {
 	ccWithControlPlaneInfrastructure := &scope.ControlPlaneBlueprint{InfrastructureMachineTemplate: infrastructureMachineTemplate}
 
 	// Create ControlPlaneObject with machine templates.
-	controlPlaneWithInfrastructure := builder.TestControlPlane(metav1.NamespaceDefault, "cp1").
-		WithInfrastructureMachineTemplate(infrastructureMachineTemplate).
+	controlPlaneWithInfrastructure := builder.ControlPlane(metav1.NamespaceDefault, "cp1").
+		WithInfrastructureMachineTemplate(infrastructureMachineTemplate, controlPlaneContractVersion).
 		WithSpecFields(map[string]interface{}{"spec.foo": "foo"}).
 		Build()
 
@@ -1508,7 +1639,7 @@ func TestReconcileControlPlane(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s (control plane contract %s)", tt.name, controlPlaneContractVersion), func(t *testing.T) {
 			g := NewWithT(t)
 
 			// Create namespace and modify input to have correct namespace set
@@ -1532,8 +1663,8 @@ func TestReconcileControlPlane(t *testing.T) {
 				ClusterClass: &clusterv1.ClusterClass{},
 			}
 			if tt.class.InfrastructureMachineTemplate != nil {
-				s.Blueprint.ClusterClass.Spec.ControlPlane.MachineInfrastructure = &clusterv1.LocalObjectTemplate{
-					Ref: contract.ObjToRef(tt.class.InfrastructureMachineTemplate),
+				s.Blueprint.ClusterClass.Spec.ControlPlane.MachineInfrastructure = clusterv1.ControlPlaneClassMachineInfrastructureTemplate{
+					TemplateRef: objToClusterClassTemplateRef(tt.class.InfrastructureMachineTemplate),
 				}
 			}
 			if tt.upgradeTracker != nil {
@@ -1543,7 +1674,7 @@ func TestReconcileControlPlane(t *testing.T) {
 			s.Current.ControlPlane = &scope.ControlPlaneState{}
 			if tt.original != nil {
 				if tt.original.InfrastructureMachineTemplate != nil {
-					// NOTE: it is required to use server side apply to creat the object in order to ensure consistency with the topology controller behaviour.
+					// NOTE: it is required to use server side apply to create the object in order to ensure consistency with the topology controller behaviour.
 					g.Expect(env.PatchAndWait(ctx, tt.original.InfrastructureMachineTemplate.DeepCopy(), client.FieldOwner(structuredmerge.TopologyManagerName))).To(Succeed())
 					// NOTE: it is required to apply instance specific changes with a "plain" Patch operation to simulate a different manger.
 					if tt.machineInfrastructureExternalChanges != "" {
@@ -1555,23 +1686,23 @@ func TestReconcileControlPlane(t *testing.T) {
 					s.Current.ControlPlane.InfrastructureMachineTemplate = current
 				}
 				if tt.original.Object != nil {
-					// NOTE: it is required to use server side apply to creat the object in order to ensure consistency with the topology controller behaviour.
+					// NOTE: it is required to use server side apply to create the object in order to ensure consistency with the topology controller behaviour.
 					g.Expect(env.PatchAndWait(ctx, tt.original.Object.DeepCopy(), client.ForceOwnership, client.FieldOwner(structuredmerge.TopologyManagerName))).To(Succeed())
 					// NOTE: it is required to apply instance specific changes with a "plain" Patch operation to simulate a different manger.
 					if tt.controlPlaneExternalChanges != "" {
 						g.Expect(env.Patch(ctx, tt.original.Object.DeepCopy(), client.RawPatch(types.MergePatchType, []byte(tt.controlPlaneExternalChanges)))).To(Succeed())
 					}
 
-					current := builder.TestControlPlane("", "").Build()
+					current := builder.ControlPlane("", "").Build()
 					g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(tt.original.Object), current)).To(Succeed())
 					s.Current.ControlPlane.Object = current
 				}
 			}
 
 			r := Reconciler{
-				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:   env,
+				recorder: env.GetEventRecorderFor("test"),
+				ssaCache: ssa.NewCache("topology/cluster"),
 			}
 
 			s.Desired = &scope.ClusterState{
@@ -1591,21 +1722,38 @@ func TestReconcileControlPlane(t *testing.T) {
 			g.Expect(created).To(Equal(tt.wantCreated))
 
 			// Create ControlPlane object for fetching data into
-			gotControlPlaneObject := builder.TestControlPlane("", "").Build()
+			gotControlPlaneObject := builder.ControlPlane("", "").Build()
 			err = env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(tt.want.Object), gotControlPlaneObject)
 			g.Expect(err).ToNot(HaveOccurred())
 
 			// check for template rotation.
 			gotRotation := false
-			var gotInfrastructureMachineRef *corev1.ObjectReference
+			var gotInfrastructureMachineRef *clusterv1.ContractVersionedObjectReference
 			if tt.class.InfrastructureMachineTemplate != nil {
-				gotInfrastructureMachineRef, err = contract.ControlPlane().MachineTemplate().InfrastructureRef().Get(gotControlPlaneObject)
-				g.Expect(err).ToNot(HaveOccurred())
-				if tt.original != nil {
-					if tt.original.InfrastructureMachineTemplate != nil && tt.original.InfrastructureMachineTemplate.GetName() != gotInfrastructureMachineRef.Name {
-						gotRotation = true
-						// if template has been rotated, fixup infrastructureRef in the wantControlPlaneObjectSpec before comparison.
-						g.Expect(contract.ControlPlane().MachineTemplate().InfrastructureRef().Set(tt.want.Object, refToUnstructured(gotInfrastructureMachineRef))).To(Succeed())
+				if controlPlaneContractVersion == "v1beta1" {
+					gotInfrastructureMachineV1Beta1Ref, err := contract.ControlPlane().MachineTemplate().InfrastructureV1Beta1Ref().Get(gotControlPlaneObject)
+					g.Expect(err).ToNot(HaveOccurred())
+					if tt.original != nil {
+						if tt.original.InfrastructureMachineTemplate != nil && tt.original.InfrastructureMachineTemplate.GetName() != gotInfrastructureMachineV1Beta1Ref.Name {
+							gotRotation = true
+							// if template has been rotated, fixup infrastructureRef in the wantControlPlaneObjectSpec before comparison.
+							g.Expect(contract.ControlPlane().MachineTemplate().InfrastructureV1Beta1Ref().Set(tt.want.Object, gotInfrastructureMachineV1Beta1Ref)).To(Succeed())
+						}
+					}
+					gotInfrastructureMachineRef = &clusterv1.ContractVersionedObjectReference{
+						APIGroup: gotInfrastructureMachineV1Beta1Ref.GroupVersionKind().Group,
+						Kind:     gotInfrastructureMachineV1Beta1Ref.Kind,
+						Name:     gotInfrastructureMachineV1Beta1Ref.Name,
+					}
+				} else {
+					gotInfrastructureMachineRef, err = contract.ControlPlane().MachineTemplate().InfrastructureRef().Get(gotControlPlaneObject)
+					g.Expect(err).ToNot(HaveOccurred())
+					if tt.original != nil {
+						if tt.original.InfrastructureMachineTemplate != nil && tt.original.InfrastructureMachineTemplate.GetName() != gotInfrastructureMachineRef.Name {
+							gotRotation = true
+							// if template has been rotated, fixup infrastructureRef in the wantControlPlaneObjectSpec before comparison.
+							g.Expect(contract.ControlPlane().MachineTemplate().InfrastructureRef().Set(tt.want.Object, gotInfrastructureMachineRef)).To(Succeed())
+						}
 					}
 				}
 			}
@@ -1631,7 +1779,7 @@ func TestReconcileControlPlane(t *testing.T) {
 			// Check the infrastructure template
 			if tt.want.InfrastructureMachineTemplate != nil {
 				// Check to see if the controlPlaneObject has been updated with a new template.
-				// This check is just for the naming format uses by generated templates - here it's templateName-*
+				// This check is just for the naming format used by generated templates - here it's templateName-*
 				// This check is only performed when we had an initial template that has been changed
 				if gotRotation {
 					pattern := fmt.Sprintf("%s.*", topologynames.ControlPlaneInfrastructureMachineTemplateNamePrefix(s.Current.Cluster.Name))
@@ -1641,7 +1789,7 @@ func TestReconcileControlPlane(t *testing.T) {
 				}
 
 				// Create object to hold the queried InfrastructureMachineTemplate
-				gotInfrastructureMachineTemplateKey := client.ObjectKey{Namespace: gotInfrastructureMachineRef.Namespace, Name: gotInfrastructureMachineRef.Name}
+				gotInfrastructureMachineTemplateKey := client.ObjectKey{Namespace: gotControlPlaneObject.GetNamespace(), Name: gotInfrastructureMachineRef.Name}
 				gotInfrastructureMachineTemplate := builder.TestInfrastructureMachineTemplate("", "").Build()
 				err = env.GetAPIReader().Get(ctx, gotInfrastructureMachineTemplateKey, gotInfrastructureMachineTemplate)
 				g.Expect(err).ToNot(HaveOccurred())
@@ -1691,7 +1839,7 @@ func TestReconcileControlPlaneCleanup(t *testing.T) {
 	infrastructureMachineTemplateCopy := infrastructureMachineTemplate.DeepCopy()
 	infrastructureMachineTemplateCopy.SetName("infrav1-cluster")
 	controlPlane := builder.TestControlPlane(metav1.NamespaceDefault, "cp1").
-		WithInfrastructureMachineTemplate(infrastructureMachineTemplateCopy).
+		WithInfrastructureMachineTemplate(infrastructureMachineTemplateCopy, "v1beta2").
 		WithSpecFields(map[string]interface{}{"spec.foo": "foo"}).
 		Build()
 
@@ -1708,8 +1856,8 @@ func TestReconcileControlPlaneCleanup(t *testing.T) {
 			ClusterClass: &clusterv1.ClusterClass{
 				Spec: clusterv1.ClusterClassSpec{
 					ControlPlane: clusterv1.ControlPlaneClass{
-						MachineInfrastructure: &clusterv1.LocalObjectTemplate{
-							Ref: contract.ObjToRef(infrastructureMachineTemplate),
+						MachineInfrastructure: clusterv1.ControlPlaneClassMachineInfrastructureTemplate{
+							TemplateRef: objToClusterClassTemplateRef(infrastructureMachineTemplate),
 						},
 					},
 				},
@@ -1725,9 +1873,8 @@ func TestReconcileControlPlaneCleanup(t *testing.T) {
 		s.Desired.ControlPlane.Object.SetNamespace("do-not-exist")
 
 		r := Reconciler{
-			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-			recorder:           env.GetEventRecorderFor("test"),
+			Client:   env,
+			recorder: env.GetEventRecorderFor("test"),
 		}
 		created, err := r.reconcileControlPlane(ctx, s)
 		g.Expect(err).To(HaveOccurred())
@@ -1744,12 +1891,14 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 	// Create InfrastructureMachineTemplates for test cases
 	infrastructureMachineTemplate := builder.TestInfrastructureMachineTemplate(metav1.NamespaceDefault, "infra1").Build()
 
-	mhcClass := &clusterv1.MachineHealthCheckClass{
-		UnhealthyConditions: []clusterv1.UnhealthyCondition{
-			{
-				Type:    corev1.NodeReady,
-				Status:  corev1.ConditionUnknown,
-				Timeout: metav1.Duration{Duration: 5 * time.Minute},
+	mhcClass := clusterv1.ControlPlaneClassHealthCheck{
+		Checks: clusterv1.ControlPlaneClassHealthCheckChecks{
+			UnhealthyNodeConditions: []clusterv1.UnhealthyNodeCondition{
+				{
+					Type:           corev1.NodeReady,
+					Status:         corev1.ConditionUnknown,
+					TimeoutSeconds: ptr.To(int32(5 * 60)),
+				},
 			},
 		},
 	}
@@ -1757,20 +1906,20 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 	// Create clusterClasses requiring controlPlaneInfrastructure and one not.
 	ccWithControlPlaneInfrastructure := &scope.ControlPlaneBlueprint{
 		InfrastructureMachineTemplate: infrastructureMachineTemplate,
-		MachineHealthCheck:            mhcClass,
+		HealthCheck:                   mhcClass,
 	}
 	ccWithoutControlPlaneInfrastructure := &scope.ControlPlaneBlueprint{
-		MachineHealthCheck: mhcClass,
+		HealthCheck: mhcClass,
 	}
 
 	// Create ControlPlane Object.
 	controlPlane1 := builder.TestControlPlane(metav1.NamespaceDefault, "cp1").
-		WithInfrastructureMachineTemplate(infrastructureMachineTemplate).
+		WithInfrastructureMachineTemplate(infrastructureMachineTemplate, "v1beta2").
 		Build()
 
 	mhcBuilder := builder.MachineHealthCheck(metav1.NamespaceDefault, "cp1").
 		WithSelector(*selectors.ForControlPlaneMHC()).
-		WithUnhealthyConditions(mhcClass.UnhealthyConditions).
+		WithUnhealthyNodeConditions(mhcClass.Checks.UnhealthyNodeConditions).
 		WithClusterName("cluster1")
 
 	tests := []struct {
@@ -1865,8 +2014,8 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 				ClusterClass: &clusterv1.ClusterClass{},
 			}
 			if tt.class.InfrastructureMachineTemplate != nil {
-				s.Blueprint.ClusterClass.Spec.ControlPlane.MachineInfrastructure = &clusterv1.LocalObjectTemplate{
-					Ref: contract.ObjToRef(tt.class.InfrastructureMachineTemplate),
+				s.Blueprint.ClusterClass.Spec.ControlPlane.MachineInfrastructure = clusterv1.ControlPlaneClassMachineInfrastructureTemplate{
+					TemplateRef: objToClusterClassTemplateRef(tt.class.InfrastructureMachineTemplate),
 				}
 			}
 
@@ -1890,9 +2039,9 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 			}
 
 			r := Reconciler{
-				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:   env,
+				recorder: env.GetEventRecorderFor("test"),
+				ssaCache: ssa.NewCache("topology/cluster"),
 			}
 
 			s.Desired = &scope.ClusterState{
@@ -2012,10 +2161,10 @@ func TestReconcileMachineDeployments(t *testing.T) {
 	infrastructureMachineTemplate9m := builder.TestInfrastructureMachineTemplate(metav1.NamespaceDefault, "infrastructure-machine-9m").Build()
 	bootstrapTemplate9m := builder.TestBootstrapTemplate(metav1.NamespaceDefault, "bootstrap-config-9m").Build()
 	md9 := newFakeMachineDeploymentTopologyState("md-9m", infrastructureMachineTemplate9m, bootstrapTemplate9m, nil)
-	md9.Object.Spec.Template.ObjectMeta.Labels = map[string]string{clusterv1.ClusterNameLabel: "cluster-1", "foo": "bar"}
+	md9.Object.Spec.Template.Labels = map[string]string{clusterv1.ClusterNameLabel: "cluster-1", "foo": "bar"}
 	md9.Object.Spec.Selector.MatchLabels = map[string]string{clusterv1.ClusterNameLabel: "cluster-1", "foo": "bar"}
 	md9WithInstanceSpecificTemplateMetadataAndSelector := newFakeMachineDeploymentTopologyState("md-9m", infrastructureMachineTemplate9m, bootstrapTemplate9m, nil)
-	md9WithInstanceSpecificTemplateMetadataAndSelector.Object.Spec.Template.ObjectMeta.Labels = map[string]string{"foo": "bar"}
+	md9WithInstanceSpecificTemplateMetadataAndSelector.Object.Spec.Template.Labels = map[string]string{"foo": "bar"}
 	md9WithInstanceSpecificTemplateMetadataAndSelector.Object.Spec.Selector.MatchLabels = map[string]string{"foo": "bar"}
 
 	tests := []struct {
@@ -2188,10 +2337,10 @@ func TestReconcileMachineDeployments(t *testing.T) {
 			}
 
 			r := Reconciler{
-				Client:             env.GetClient(),
-				APIReader:          env.GetAPIReader(),
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:    env.GetClient(),
+				APIReader: env.GetAPIReader(),
+				recorder:  env.GetEventRecorderFor("test"),
+				ssaCache:  ssa.NewCache("topology/cluster"),
 			}
 			err = r.reconcileMachineDeployments(ctx, s)
 			if tt.wantErr {
@@ -2214,12 +2363,12 @@ func TestReconcileMachineDeployments(t *testing.T) {
 					if wantMachineDeploymentState.Object.Name != gotMachineDeployment.Name {
 						continue
 					}
-					currentMachineDeploymentTopologyName := wantMachineDeploymentState.Object.ObjectMeta.Labels[clusterv1.ClusterTopologyMachineDeploymentNameLabel]
+					currentMachineDeploymentTopologyName := wantMachineDeploymentState.Object.Labels[clusterv1.ClusterTopologyMachineDeploymentNameLabel]
 					currentMachineDeploymentState := currentMachineDeploymentStates[currentMachineDeploymentTopologyName]
 
-					// Copy over the name of the newly created InfrastructureRef and Bootsrap.ConfigRef because they get a generated name
+					// Copy over the name of the newly created InfrastructureRef and Bootstrap.ConfigRef because they get a generated name
 					wantMachineDeploymentState.Object.Spec.Template.Spec.InfrastructureRef.Name = gotMachineDeployment.Spec.Template.Spec.InfrastructureRef.Name
-					if gotMachineDeployment.Spec.Template.Spec.Bootstrap.ConfigRef != nil {
+					if gotMachineDeployment.Spec.Template.Spec.Bootstrap.ConfigRef.IsDefined() {
 						wantMachineDeploymentState.Object.Spec.Template.Spec.Bootstrap.ConfigRef.Name = gotMachineDeployment.Spec.Template.Spec.Bootstrap.ConfigRef.Name
 					}
 
@@ -2230,18 +2379,10 @@ func TestReconcileMachineDeployments(t *testing.T) {
 
 					// Compare BootstrapTemplate.
 					gotBootstrapTemplateRef := gotMachineDeployment.Spec.Template.Spec.Bootstrap.ConfigRef
-					gotBootstrapTemplate := unstructured.Unstructured{}
-					gotBootstrapTemplate.SetKind(gotBootstrapTemplateRef.Kind)
-					gotBootstrapTemplate.SetAPIVersion(gotBootstrapTemplateRef.APIVersion)
-
-					err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-						Namespace: gotBootstrapTemplateRef.Namespace,
-						Name:      gotBootstrapTemplateRef.Name,
-					}, &gotBootstrapTemplate)
-
+					gotBootstrapTemplate, err := external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotBootstrapTemplateRef, gotMachineDeployment.Namespace)
 					g.Expect(err).ToNot(HaveOccurred())
 
-					g.Expect(&gotBootstrapTemplate).To(EqualObject(wantMachineDeploymentState.BootstrapTemplate, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
+					g.Expect(gotBootstrapTemplate).To(EqualObject(wantMachineDeploymentState.BootstrapTemplate, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
 
 					// Check BootstrapTemplate rotation if there was a previous MachineDeployment/Template.
 					if currentMachineDeploymentState != nil && currentMachineDeploymentState.BootstrapTemplate != nil {
@@ -2254,18 +2395,10 @@ func TestReconcileMachineDeployments(t *testing.T) {
 
 					// Compare InfrastructureMachineTemplate.
 					gotInfrastructureMachineTemplateRef := gotMachineDeployment.Spec.Template.Spec.InfrastructureRef
-					gotInfrastructureMachineTemplate := unstructured.Unstructured{}
-					gotInfrastructureMachineTemplate.SetKind(gotInfrastructureMachineTemplateRef.Kind)
-					gotInfrastructureMachineTemplate.SetAPIVersion(gotInfrastructureMachineTemplateRef.APIVersion)
-
-					err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-						Namespace: gotInfrastructureMachineTemplateRef.Namespace,
-						Name:      gotInfrastructureMachineTemplateRef.Name,
-					}, &gotInfrastructureMachineTemplate)
-
+					gotInfrastructureMachineTemplate, err := external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotInfrastructureMachineTemplateRef, gotMachineDeployment.Namespace)
 					g.Expect(err).ToNot(HaveOccurred())
 
-					g.Expect(&gotInfrastructureMachineTemplate).To(EqualObject(wantMachineDeploymentState.InfrastructureMachineTemplate, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
+					g.Expect(gotInfrastructureMachineTemplate).To(EqualObject(wantMachineDeploymentState.InfrastructureMachineTemplate, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
 
 					// Check InfrastructureMachineTemplate rotation if there was a previous MachineDeployment/Template.
 					if currentMachineDeploymentState != nil && currentMachineDeploymentState.InfrastructureMachineTemplate != nil {
@@ -2306,36 +2439,19 @@ func TestReconcileMachineDeploymentsCleanup(t *testing.T) {
 		s.Desired.MachineDeployments[md1.Object.Name].Object.Namespace = "do-not-exist"
 
 		r := Reconciler{
-			Client:             env.GetClient(),
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-			recorder:           env.GetEventRecorderFor("test"),
+			Client:    env.GetClient(),
+			APIReader: env.GetAPIReader(),
+			recorder:  env.GetEventRecorderFor("test"),
 		}
 		err = r.reconcileMachineDeployments(ctx, s)
 		g.Expect(err).To(HaveOccurred())
 
 		gotBootstrapTemplateRef := md1.Object.Spec.Template.Spec.Bootstrap.ConfigRef
-		gotBootstrapTemplate := unstructured.Unstructured{}
-		gotBootstrapTemplate.SetKind(gotBootstrapTemplateRef.Kind)
-		gotBootstrapTemplate.SetAPIVersion(gotBootstrapTemplateRef.APIVersion)
-
-		err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-			Namespace: gotBootstrapTemplateRef.Namespace,
-			Name:      gotBootstrapTemplateRef.Name,
-		}, &gotBootstrapTemplate)
-
+		_, err = external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotBootstrapTemplateRef, md1.Object.Namespace)
 		g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		gotInfrastructureMachineTemplateRef := md1.Object.Spec.Template.Spec.InfrastructureRef
-		gotInfrastructureMachineTemplate := unstructured.Unstructured{}
-		gotInfrastructureMachineTemplate.SetKind(gotInfrastructureMachineTemplateRef.Kind)
-		gotInfrastructureMachineTemplate.SetAPIVersion(gotInfrastructureMachineTemplateRef.APIVersion)
-
-		err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-			Namespace: gotInfrastructureMachineTemplateRef.Namespace,
-			Name:      gotInfrastructureMachineTemplateRef.Name,
-		}, &gotInfrastructureMachineTemplate)
-
+		_, err = external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotInfrastructureMachineTemplateRef, md1.Object.Namespace)
 		g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 	t.Run("cleanup InfrastructureMachineTemplate and BootstrapTemplate in case of errors on upgrade", func(t *testing.T) {
@@ -2371,36 +2487,20 @@ func TestReconcileMachineDeploymentsCleanup(t *testing.T) {
 		s.Desired.MachineDeployments[md2WithTemplateChanges.Object.Name].Object.Namespace = "do-not-exist"
 
 		r := Reconciler{
-			Client:             env.GetClient(),
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-			recorder:           env.GetEventRecorderFor("test"),
+			Client:    env.GetClient(),
+			APIReader: env.GetAPIReader(),
+			recorder:  env.GetEventRecorderFor("test"),
+			ssaCache:  ssa.NewCache("topology/cluster"),
 		}
 		err = r.reconcileMachineDeployments(ctx, s)
 		g.Expect(err).To(HaveOccurred())
 
 		newBootstrapTemplateRef := md2WithTemplateChanges.Object.Spec.Template.Spec.Bootstrap.ConfigRef
-		newBootstrapTemplate := unstructured.Unstructured{}
-		newBootstrapTemplate.SetKind(newBootstrapTemplateRef.Kind)
-		newBootstrapTemplate.SetAPIVersion(newBootstrapTemplateRef.APIVersion)
-
-		err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-			Namespace: newBootstrapTemplateRef.Namespace,
-			Name:      newBootstrapTemplateRef.Name,
-		}, &newBootstrapTemplate)
-
+		_, err = external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), newBootstrapTemplateRef, md2WithTemplateChanges.Object.Namespace)
 		g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		newInfrastructureMachineTemplateRef := md2WithTemplateChanges.Object.Spec.Template.Spec.InfrastructureRef
-		newInfrastructureMachineTemplate := unstructured.Unstructured{}
-		newInfrastructureMachineTemplate.SetKind(newInfrastructureMachineTemplateRef.Kind)
-		newInfrastructureMachineTemplate.SetAPIVersion(newInfrastructureMachineTemplateRef.APIVersion)
-
-		err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-			Namespace: newInfrastructureMachineTemplateRef.Namespace,
-			Name:      newInfrastructureMachineTemplateRef.Name,
-		}, &newInfrastructureMachineTemplate)
-
+		_, err = external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), newInfrastructureMachineTemplateRef, md2WithTemplateChanges.Object.Namespace)
 		g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 }
@@ -2479,9 +2579,9 @@ func TestReconcileMachinePools(t *testing.T) {
 	infrastructureMachinePool9m := builder.TestInfrastructureMachinePool(metav1.NamespaceDefault, "infrastructure-machinepool-9m").Build()
 	bootstrapConfig9m := builder.TestBootstrapConfig(metav1.NamespaceDefault, "bootstrap-config-9m").Build()
 	mp9 := newFakeMachinePoolTopologyState("mp-9m", infrastructureMachinePool9m, bootstrapConfig9m)
-	mp9.Object.Spec.Template.ObjectMeta.Labels = map[string]string{clusterv1.ClusterNameLabel: "cluster-1", "foo": "bar"}
+	mp9.Object.Spec.Template.Labels = map[string]string{clusterv1.ClusterNameLabel: "cluster-1", "foo": "bar"}
 	mp9WithInstanceSpecificTemplateMetadata := newFakeMachinePoolTopologyState("mp-9m", infrastructureMachinePool9m, bootstrapConfig9m)
-	mp9WithInstanceSpecificTemplateMetadata.Object.Spec.Template.ObjectMeta.Labels = map[string]string{"foo": "bar"}
+	mp9WithInstanceSpecificTemplateMetadata.Object.Spec.Template.Labels = map[string]string{"foo": "bar"}
 
 	tests := []struct {
 		name                                      string
@@ -2644,10 +2744,10 @@ func TestReconcileMachinePools(t *testing.T) {
 			}
 
 			r := Reconciler{
-				Client:             env.GetClient(),
-				APIReader:          env.GetAPIReader(),
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:    env.GetClient(),
+				APIReader: env.GetAPIReader(),
+				recorder:  env.GetEventRecorderFor("test"),
+				ssaCache:  ssa.NewCache("topology/cluster"),
 			}
 			err = r.reconcileMachinePools(ctx, s)
 			if tt.wantErr {
@@ -2656,7 +2756,7 @@ func TestReconcileMachinePools(t *testing.T) {
 			}
 			g.Expect(err).ToNot(HaveOccurred())
 
-			var gotMachinePoolList expv1.MachinePoolList
+			var gotMachinePoolList clusterv1.MachinePoolList
 			g.Expect(env.GetAPIReader().List(ctx, &gotMachinePoolList, &client.ListOptions{Namespace: namespace.GetName()})).To(Succeed())
 			g.Expect(gotMachinePoolList.Items).To(HaveLen(len(tt.want)))
 
@@ -2670,16 +2770,16 @@ func TestReconcileMachinePools(t *testing.T) {
 					if wantMachinePoolState.Object.Name != gotMachinePool.Name {
 						continue
 					}
-					currentMachinePoolTopologyName := wantMachinePoolState.Object.ObjectMeta.Labels[clusterv1.ClusterTopologyMachinePoolNameLabel]
+					currentMachinePoolTopologyName := wantMachinePoolState.Object.Labels[clusterv1.ClusterTopologyMachinePoolNameLabel]
 					currentMachinePoolState := currentMachinePoolStates[currentMachinePoolTopologyName]
 
 					// Copy over the name of the newly created InfrastructureRef and Bootsrap.ConfigRef because they get a generated name
 					wantMachinePoolState.Object.Spec.Template.Spec.InfrastructureRef.Name = gotMachinePool.Spec.Template.Spec.InfrastructureRef.Name
-					if gotMachinePool.Spec.Template.Spec.Bootstrap.ConfigRef != nil {
+					if gotMachinePool.Spec.Template.Spec.Bootstrap.ConfigRef.IsDefined() {
 						wantMachinePoolState.Object.Spec.Template.Spec.Bootstrap.ConfigRef.Name = gotMachinePool.Spec.Template.Spec.Bootstrap.ConfigRef.Name
 					}
 					// expect default value for the node deletion timeout.
-					wantMachinePoolState.Object.Spec.Template.Spec.NodeDeletionTimeout = &metav1.Duration{Duration: 10 * time.Second}
+					wantMachinePoolState.Object.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds = ptr.To(int32(10))
 
 					// Compare MachinePool.
 					// Note: We're intentionally only comparing Spec as otherwise we would have to account for
@@ -2688,18 +2788,10 @@ func TestReconcileMachinePools(t *testing.T) {
 
 					// Compare BootstrapObject.
 					gotBootstrapObjectRef := gotMachinePool.Spec.Template.Spec.Bootstrap.ConfigRef
-					gotBootstrapObject := unstructured.Unstructured{}
-					gotBootstrapObject.SetKind(gotBootstrapObjectRef.Kind)
-					gotBootstrapObject.SetAPIVersion(gotBootstrapObjectRef.APIVersion)
-
-					err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-						Namespace: gotBootstrapObjectRef.Namespace,
-						Name:      gotBootstrapObjectRef.Name,
-					}, &gotBootstrapObject)
-
+					gotBootstrapObject, err := external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotBootstrapObjectRef, gotMachinePool.Namespace)
 					g.Expect(err).ToNot(HaveOccurred())
 
-					g.Expect(&gotBootstrapObject).To(EqualObject(wantMachinePoolState.BootstrapObject, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
+					g.Expect(gotBootstrapObject).To(EqualObject(wantMachinePoolState.BootstrapObject, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
 
 					// Check BootstrapObject update.
 					if currentMachinePoolState != nil && currentMachinePoolState.BootstrapObject != nil {
@@ -2712,18 +2804,10 @@ func TestReconcileMachinePools(t *testing.T) {
 
 					// Compare InfrastructureMachinePoolObject.
 					gotInfrastructureMachinePoolObjectRef := gotMachinePool.Spec.Template.Spec.InfrastructureRef
-					gotInfrastructureMachinePoolObject := unstructured.Unstructured{}
-					gotInfrastructureMachinePoolObject.SetKind(gotInfrastructureMachinePoolObjectRef.Kind)
-					gotInfrastructureMachinePoolObject.SetAPIVersion(gotInfrastructureMachinePoolObjectRef.APIVersion)
-
-					err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-						Namespace: gotInfrastructureMachinePoolObjectRef.Namespace,
-						Name:      gotInfrastructureMachinePoolObjectRef.Name,
-					}, &gotInfrastructureMachinePoolObject)
-
+					gotInfrastructureMachinePoolObject, err := external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotInfrastructureMachinePoolObjectRef, gotMachinePool.Namespace)
 					g.Expect(err).ToNot(HaveOccurred())
 
-					g.Expect(&gotInfrastructureMachinePoolObject).To(EqualObject(wantMachinePoolState.InfrastructureMachinePoolObject, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
+					g.Expect(gotInfrastructureMachinePoolObject).To(EqualObject(wantMachinePoolState.InfrastructureMachinePoolObject, IgnoreAutogeneratedMetadata, IgnoreNameGenerated))
 
 					// Check InfrastructureMachinePoolObject update.
 					if currentMachinePoolState != nil && currentMachinePoolState.InfrastructureMachinePoolObject != nil {
@@ -2764,36 +2848,20 @@ func TestReconcileMachinePoolsCleanup(t *testing.T) {
 		s.Desired.MachinePools[mp1.Object.Name].Object.Namespace = "do-not-exist"
 
 		r := Reconciler{
-			Client:             env.GetClient(),
-			APIReader:          env.GetAPIReader(),
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-			recorder:           env.GetEventRecorderFor("test"),
+			Client:    env.GetClient(),
+			APIReader: env.GetAPIReader(),
+			recorder:  env.GetEventRecorderFor("test"),
+			ssaCache:  ssa.NewCache("topology/cluster"),
 		}
 		err = r.reconcileMachinePools(ctx, s)
 		g.Expect(err).To(HaveOccurred())
 
 		gotBootstrapObjectRef := mp1.Object.Spec.Template.Spec.Bootstrap.ConfigRef
-		gotBootstrapObject := unstructured.Unstructured{}
-		gotBootstrapObject.SetKind(gotBootstrapObjectRef.Kind)
-		gotBootstrapObject.SetAPIVersion(gotBootstrapObjectRef.APIVersion)
-
-		err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-			Namespace: gotBootstrapObjectRef.Namespace,
-			Name:      gotBootstrapObjectRef.Name,
-		}, &gotBootstrapObject)
-
+		_, err = external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotBootstrapObjectRef, mp1.Object.Namespace)
 		g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		gotInfrastructureMachinePoolObjectRef := mp1.Object.Spec.Template.Spec.InfrastructureRef
-		gotInfrastructureMachinePoolObject := unstructured.Unstructured{}
-		gotInfrastructureMachinePoolObject.SetKind(gotInfrastructureMachinePoolObjectRef.Kind)
-		gotInfrastructureMachinePoolObject.SetAPIVersion(gotInfrastructureMachinePoolObjectRef.APIVersion)
-
-		err = env.GetAPIReader().Get(ctx, client.ObjectKey{
-			Namespace: gotInfrastructureMachinePoolObjectRef.Namespace,
-			Name:      gotInfrastructureMachinePoolObjectRef.Name,
-		}, &gotInfrastructureMachinePoolObject)
-
+		_, err = external.GetObjectFromContractVersionedRef(ctx, env.GetAPIReader(), gotInfrastructureMachinePoolObjectRef, mp1.Object.Namespace)
 		g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 }
@@ -3073,12 +3141,16 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 					name: "Initially reconcile",
 					desired: object{
 						spec: map[string]interface{}{
-							"machineTemplate": map[string]interface{}{},
+							"machineTemplate": map[string]interface{}{
+								"spec": map[string]interface{}{},
+							},
 						},
 					},
 					want: object{
 						spec: map[string]interface{}{
-							"machineTemplate": map[string]interface{}{},
+							"machineTemplate": map[string]interface{}{
+								"spec": map[string]interface{}{},
+							},
 						},
 					},
 					wantCreated: true,
@@ -3088,9 +3160,11 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 					object: object{
 						spec: map[string]interface{}{
 							"machineTemplate": map[string]interface{}{
-								"infrastructureRef": map[string]interface{}{
-									"apiVersion": "foo/v1alpha1",
-									"kind":       "Foo",
+								"spec": map[string]interface{}{
+									"infrastructureRef": map[string]interface{}{
+										"apiGroup": "foo",
+										"kind":     "Foo",
+									},
 								},
 							},
 						},
@@ -3106,17 +3180,27 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 										"foo": "foo",
 									},
 								},
-								"nodeDeletionTimeout": "10m",
+								"spec": map[string]interface{}{
+									"deletion": map[string]interface{}{
+										"nodeDeletionTimeoutSeconds": "10m",
+									},
+								},
 							},
 						},
 					},
 					want: object{
 						spec: map[string]interface{}{
 							"machineTemplate": map[string]interface{}{
-								// User fields are preserved.
-								"infrastructureRef": map[string]interface{}{
-									"apiVersion": "foo/v1alpha1",
-									"kind":       "Foo",
+								"spec": map[string]interface{}{
+									// User fields are preserved.
+									"infrastructureRef": map[string]interface{}{
+										"apiGroup": "foo",
+										"kind":     "Foo",
+									},
+									// ClusterClass authoritative fields are added.
+									"deletion": map[string]interface{}{
+										"nodeDeletionTimeoutSeconds": "10m",
+									},
 								},
 								// ClusterClass authoritative fields are added.
 								"metadata": map[string]interface{}{
@@ -3124,7 +3208,6 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 										"foo": "foo",
 									},
 								},
-								"nodeDeletionTimeout": "10m",
 							},
 						},
 					},
@@ -3146,11 +3229,13 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 					want: object{
 						spec: map[string]interface{}{
 							"machineTemplate": map[string]interface{}{
-								// Reconcile to drop clusterClassField,
-								// while preserving user-defined field and clusterClassField.
-								"infrastructureRef": map[string]interface{}{
-									"apiVersion": "foo/v1alpha1",
-									"kind":       "Foo",
+								"spec": map[string]interface{}{
+									// Reconcile to drop clusterClassField,
+									// while preserving user-defined field and clusterClassField.
+									"infrastructureRef": map[string]interface{}{
+										"apiGroup": "foo",
+										"kind":     "Foo",
+									},
 								},
 								"metadata": map[string]interface{}{
 									"labels": map[string]interface{}{
@@ -3173,11 +3258,13 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 					want: object{
 						spec: map[string]interface{}{
 							"machineTemplate": map[string]interface{}{
-								// Reconcile to drop clusterClassObject,
-								// while preserving user-defined field.
-								"infrastructureRef": map[string]interface{}{
-									"apiVersion": "foo/v1alpha1",
-									"kind":       "Foo",
+								"spec": map[string]interface{}{
+									// Reconcile to drop clusterClassObject,
+									// while preserving user-defined field.
+									"infrastructureRef": map[string]interface{}{
+										"apiGroup": "foo",
+										"kind":     "Foo",
+									},
 								},
 							},
 						},
@@ -3196,9 +3283,9 @@ func TestReconcileReferencedObjectSequences(t *testing.T) {
 			g.Expect(err).ToNot(HaveOccurred())
 
 			r := Reconciler{
-				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:   env,
+				recorder: env.GetEventRecorderFor("test"),
+				ssaCache: ssa.NewCache("topology/cluster"),
 			}
 
 			s := scope.New(&clusterv1.Cluster{})
@@ -3321,11 +3408,11 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 	maxUnhealthy := intstr.Parse("45%")
 	mhcBuilder := builder.MachineHealthCheck(metav1.NamespaceDefault, "md-1").
 		WithSelector(*selectors.ForMachineDeploymentMHC(md)).
-		WithUnhealthyConditions([]clusterv1.UnhealthyCondition{
+		WithUnhealthyNodeConditions([]clusterv1.UnhealthyNodeCondition{
 			{
-				Type:    corev1.NodeReady,
-				Status:  corev1.ConditionUnknown,
-				Timeout: metav1.Duration{Duration: 5 * time.Minute},
+				Type:           corev1.NodeReady,
+				Status:         corev1.ConditionUnknown,
+				TimeoutSeconds: ptr.To(int32(5 * 60)),
 			},
 		}).
 		WithClusterName("cluster1")
@@ -3469,10 +3556,10 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 			s.Desired = &scope.ClusterState{MachineDeployments: toMachineDeploymentTopologyStateMap(tt.desired)}
 
 			r := Reconciler{
-				Client:             env.GetClient(),
-				APIReader:          env.GetAPIReader(),
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:    env.GetClient(),
+				APIReader: env.GetAPIReader(),
+				recorder:  env.GetEventRecorderFor("test"),
+				ssaCache:  ssa.NewCache("topology/cluster"),
 			}
 
 			err = r.reconcileMachineDeployments(ctx, s)
@@ -3505,10 +3592,28 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 }
 
 func TestReconcileState(t *testing.T) {
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
+
+	ict := builder.TestInfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()
+	cpt := builder.TestControlPlaneTemplate(metav1.NamespaceDefault, "cp1").Build()
+	clusterClass := builder.ClusterClass(metav1.NamespaceDefault, "class1").
+		WithInfrastructureClusterTemplate(ict).
+		WithControlPlaneTemplate(cpt).
+		Build()
+
 	t.Run("Cluster get reconciled with infrastructure Ref only when reconcileInfrastructureCluster pass and reconcileControlPlane fails ", func(t *testing.T) {
 		g := NewWithT(t)
 
-		currentCluster := builder.Cluster(metav1.NamespaceDefault, "cluster1").Build()
+		currentCluster := builder.Cluster(metav1.NamespaceDefault, "cluster1").
+			WithTopology(&clusterv1.Topology{
+				ClassRef: clusterv1.ClusterClassRef{
+					Name: "class1",
+				},
+				Version: "v1.30.0",
+			}).
+			Build()
+		// Pausing the Cluster so the reconciler running in the background does not reconcile the Cluster for us.
+		currentCluster.Spec.Paused = ptr.To(true)
 
 		infrastructureCluster := builder.TestInfrastructureCluster(metav1.NamespaceDefault, "infrastructure-cluster1").Build()
 		controlPlane := builder.TestControlPlane(metav1.NamespaceDefault, "controlplane-cluster1").Build()
@@ -3516,6 +3621,10 @@ func TestReconcileState(t *testing.T) {
 			WithInfrastructureCluster(infrastructureCluster).
 			WithControlPlane(controlPlane).
 			Build()
+
+		g.Expect(env.CreateAndWait(ctx, ict.DeepCopy())).To(Succeed())
+		g.Expect(env.CreateAndWait(ctx, cpt.DeepCopy())).To(Succeed())
+		g.Expect(env.CreateAndWait(ctx, clusterClass.DeepCopy())).To(Succeed())
 
 		// cluster requires a UID because reconcileClusterShim will create a cluster shim
 		// which has the cluster set as Owner in an OwnerReference.
@@ -3539,9 +3648,9 @@ func TestReconcileState(t *testing.T) {
 		controlPlane.SetNamespace("do-not-exist")
 
 		r := Reconciler{
-			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-			recorder:           env.GetEventRecorderFor("test"),
+			Client:   env,
+			recorder: env.GetEventRecorderFor("test"),
+			ssaCache: ssa.NewCache("topology/cluster"),
 		}
 		err = r.reconcileState(ctx, s)
 		g.Expect(err).To(HaveOccurred())
@@ -3550,15 +3659,25 @@ func TestReconcileState(t *testing.T) {
 		err = env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(currentCluster), got)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		g.Expect(got.Spec.InfrastructureRef).ToNot(BeNil())
-		g.Expect(got.Spec.ControlPlaneRef).To(BeNil())
+		g.Expect(got.Spec.InfrastructureRef.IsDefined()).To(BeTrue())
+		g.Expect(got.Spec.ControlPlaneRef.IsDefined()).To(BeFalse())
 
-		g.Expect(env.CleanupAndWait(ctx, infrastructureCluster, currentCluster)).To(Succeed())
+		g.Expect(env.CleanupAndWait(ctx, currentCluster)).To(Succeed())
+		g.Expect(env.CleanupAndWait(ctx, infrastructureCluster, clusterClass, ict, cpt)).To(Succeed())
 	})
 	t.Run("Cluster get reconciled with both infrastructure Ref and control plane ref when both reconcileInfrastructureCluster and reconcileControlPlane pass", func(t *testing.T) {
 		g := NewWithT(t)
 
-		currentCluster := builder.Cluster(metav1.NamespaceDefault, "cluster1").Build()
+		currentCluster := builder.Cluster(metav1.NamespaceDefault, "cluster1").
+			WithTopology(&clusterv1.Topology{
+				ClassRef: clusterv1.ClusterClassRef{
+					Name: "class1",
+				},
+				Version: "v1.30.0",
+			}).
+			Build()
+		// Pausing the Cluster so the reconciler running in the background does not reconcile the Cluster for us.
+		currentCluster.Spec.Paused = ptr.To(true)
 
 		infrastructureCluster := builder.TestInfrastructureCluster(metav1.NamespaceDefault, "infrastructure-cluster1").Build()
 		controlPlane := builder.TestControlPlane(metav1.NamespaceDefault, "controlplane-cluster1").Build()
@@ -3566,6 +3685,10 @@ func TestReconcileState(t *testing.T) {
 			WithInfrastructureCluster(infrastructureCluster).
 			WithControlPlane(controlPlane).
 			Build()
+
+		g.Expect(env.CreateAndWait(ctx, ict.DeepCopy())).To(Succeed())
+		g.Expect(env.CreateAndWait(ctx, cpt.DeepCopy())).To(Succeed())
+		g.Expect(env.CreateAndWait(ctx, clusterClass.DeepCopy())).To(Succeed())
 
 		// cluster requires a UID because reconcileClusterShim will create a cluster shim
 		// which has the cluster set as Owner in an OwnerReference.
@@ -3586,9 +3709,9 @@ func TestReconcileState(t *testing.T) {
 		prepareControlPlaneState(g, s.Desired.ControlPlane, namespace.GetName())
 
 		r := Reconciler{
-			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-			recorder:           env.GetEventRecorderFor("test"),
+			Client:   env,
+			recorder: env.GetEventRecorderFor("test"),
+			ssaCache: ssa.NewCache("topology/cluster"),
 		}
 		err = r.reconcileState(ctx, s)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -3597,10 +3720,11 @@ func TestReconcileState(t *testing.T) {
 		err = env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(currentCluster), got)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		g.Expect(got.Spec.InfrastructureRef).ToNot(BeNil())
-		g.Expect(got.Spec.ControlPlaneRef).ToNot(BeNil())
+		g.Expect(got.Spec.InfrastructureRef.IsDefined()).To(BeTrue())
+		g.Expect(got.Spec.ControlPlaneRef.IsDefined()).To(BeTrue())
 
-		g.Expect(env.CleanupAndWait(ctx, infrastructureCluster, controlPlane, currentCluster)).To(Succeed())
+		g.Expect(env.CleanupAndWait(ctx, currentCluster)).To(Succeed())
+		g.Expect(env.CleanupAndWait(ctx, infrastructureCluster, controlPlane, clusterClass, ict, cpt)).To(Succeed())
 	})
 	t.Run("Cluster does not get reconciled when reconcileControlPlane fails and infrastructure Ref is set", func(t *testing.T) {
 		g := NewWithT(t)
@@ -3611,6 +3735,8 @@ func TestReconcileState(t *testing.T) {
 		currentCluster := builder.Cluster(metav1.NamespaceDefault, "cluster1").
 			WithInfrastructureCluster(infrastructureCluster).
 			Build()
+		// Pausing the Cluster so the reconciler running in the background does not reconcile the Cluster for us.
+		currentCluster.Spec.Paused = ptr.To(true)
 
 		desiredCluster := builder.Cluster(metav1.NamespaceDefault, "cluster1").
 			WithInfrastructureCluster(infrastructureCluster).
@@ -3639,9 +3765,9 @@ func TestReconcileState(t *testing.T) {
 		controlPlane.SetNamespace("do-not-exist")
 
 		r := Reconciler{
-			Client:             env,
-			patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-			recorder:           env.GetEventRecorderFor("test"),
+			Client:   env,
+			recorder: env.GetEventRecorderFor("test"),
+			ssaCache: ssa.NewCache("topology/cluster"),
 		}
 		err = r.reconcileState(ctx, s)
 		g.Expect(err).To(HaveOccurred())
@@ -3650,8 +3776,8 @@ func TestReconcileState(t *testing.T) {
 		err = env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(currentCluster), got)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		g.Expect(got.Spec.InfrastructureRef).ToNot(BeNil())
-		g.Expect(got.Spec.ControlPlaneRef).To(BeNil())
+		g.Expect(got.Spec.InfrastructureRef.IsDefined()).To(BeTrue())
+		g.Expect(got.Spec.ControlPlaneRef.IsDefined()).To(BeFalse())
 
 		g.Expect(env.CleanupAndWait(ctx, infrastructureCluster, controlPlane, currentCluster)).To(Succeed())
 	})
@@ -3725,11 +3851,11 @@ func TestReconciler_reconcileMachineHealthCheck(t *testing.T) {
 	cp := builder.ControlPlane(metav1.NamespaceDefault, "cp1").Build()
 	mhcBuilder := builder.MachineHealthCheck(metav1.NamespaceDefault, "cp1").
 		WithSelector(*selectors.ForControlPlaneMHC()).
-		WithUnhealthyConditions([]clusterv1.UnhealthyCondition{
+		WithUnhealthyNodeConditions([]clusterv1.UnhealthyNodeCondition{
 			{
-				Type:    corev1.NodeReady,
-				Status:  corev1.ConditionUnknown,
-				Timeout: metav1.Duration{Duration: 5 * time.Minute},
+				Type:           corev1.NodeReady,
+				Status:         corev1.ConditionUnknown,
+				TimeoutSeconds: ptr.To(int32(5 * 60)),
 			},
 		}).
 		WithClusterName("cluster1")
@@ -3750,18 +3876,18 @@ func TestReconciler_reconcileMachineHealthCheck(t *testing.T) {
 			name:    "Update a MachineHealthCheck with changes",
 			current: mhcBuilder.DeepCopy().Build(),
 			// update the unhealthy conditions in the MachineHealthCheck
-			desired: mhcBuilder.DeepCopy().WithUnhealthyConditions([]clusterv1.UnhealthyCondition{
+			desired: mhcBuilder.DeepCopy().WithUnhealthyNodeConditions([]clusterv1.UnhealthyNodeCondition{
 				{
-					Type:    corev1.NodeReady,
-					Status:  corev1.ConditionUnknown,
-					Timeout: metav1.Duration{Duration: 1000 * time.Minute},
+					Type:           corev1.NodeReady,
+					Status:         corev1.ConditionUnknown,
+					TimeoutSeconds: ptr.To(int32(1000 * 60)),
 				},
 			}).Build(),
-			want: mhcBuilder.DeepCopy().WithUnhealthyConditions([]clusterv1.UnhealthyCondition{
+			want: mhcBuilder.DeepCopy().WithUnhealthyNodeConditions([]clusterv1.UnhealthyNodeCondition{
 				{
-					Type:    corev1.NodeReady,
-					Status:  corev1.ConditionUnknown,
-					Timeout: metav1.Duration{Duration: 1000 * time.Minute},
+					Type:           corev1.NodeReady,
+					Status:         corev1.ConditionUnknown,
+					TimeoutSeconds: ptr.To(int32(1000 * 60)),
 				},
 			}).Build(),
 		},
@@ -3811,9 +3937,9 @@ func TestReconciler_reconcileMachineHealthCheck(t *testing.T) {
 			}
 
 			r := Reconciler{
-				Client:             env,
-				patchHelperFactory: serverSideApplyPatchHelperFactory(env, ssa.NewCache(testController)),
-				recorder:           env.GetEventRecorderFor("test"),
+				Client:   env,
+				recorder: env.GetEventRecorderFor("test"),
+				ssaCache: ssa.NewCache("topology/cluster"),
 			}
 			if tt.current != nil {
 				g.Expect(env.CreateAndWait(ctx, tt.current)).To(Succeed())
@@ -3855,9 +3981,7 @@ func prepareControlPlaneBluePrint(in *scope.ControlPlaneBlueprint, namespace str
 			s.InfrastructureMachineTemplate.SetNamespace(namespace)
 		}
 	}
-	if in.MachineHealthCheck != nil {
-		s.MachineHealthCheck = in.MachineHealthCheck.DeepCopy()
-	}
+	s.HealthCheck = *in.HealthCheck.DeepCopy()
 	if in.Template != nil {
 		s.Template = in.Template.DeepCopy()
 		if s.Template.GetNamespace() == metav1.NamespaceDefault {
@@ -3922,12 +4046,6 @@ func prepareMachineDeploymentState(in *scope.MachineDeploymentState, namespace s
 		if s.Object.GetNamespace() == metav1.NamespaceDefault {
 			s.Object.SetNamespace(namespace)
 		}
-		if s.Object.Spec.Template.Spec.Bootstrap.ConfigRef != nil && s.Object.Spec.Template.Spec.Bootstrap.ConfigRef.Namespace == metav1.NamespaceDefault {
-			s.Object.Spec.Template.Spec.Bootstrap.ConfigRef.Namespace = namespace
-		}
-		if s.Object.Spec.Template.Spec.InfrastructureRef.Namespace == metav1.NamespaceDefault {
-			s.Object.Spec.Template.Spec.InfrastructureRef.Namespace = namespace
-		}
 	}
 	return s
 }
@@ -3953,12 +4071,6 @@ func prepareMachinePoolState(in *scope.MachinePoolState, namespace string) *scop
 		if s.Object.GetNamespace() == metav1.NamespaceDefault {
 			s.Object.SetNamespace(namespace)
 		}
-		if s.Object.Spec.Template.Spec.Bootstrap.ConfigRef != nil && s.Object.Spec.Template.Spec.Bootstrap.ConfigRef.Namespace == metav1.NamespaceDefault {
-			s.Object.Spec.Template.Spec.Bootstrap.ConfigRef.Namespace = namespace
-		}
-		if s.Object.Spec.Template.Spec.InfrastructureRef.Namespace == metav1.NamespaceDefault {
-			s.Object.Spec.Template.Spec.InfrastructureRef.Namespace = namespace
-		}
 	}
 	return s
 }
@@ -3969,12 +4081,6 @@ func prepareCluster(in *clusterv1.Cluster, namespace string) *clusterv1.Cluster 
 	c := in.DeepCopy()
 	if c.Namespace == metav1.NamespaceDefault {
 		c.SetNamespace(namespace)
-	}
-	if c.Spec.InfrastructureRef != nil && c.Spec.InfrastructureRef.Namespace == metav1.NamespaceDefault {
-		c.Spec.InfrastructureRef.Namespace = namespace
-	}
-	if c.Spec.ControlPlaneRef != nil && c.Spec.ControlPlaneRef.Namespace == metav1.NamespaceDefault {
-		c.Spec.ControlPlaneRef.Namespace = namespace
 	}
 	return c
 }
@@ -3987,7 +4093,7 @@ func Test_createErrorWithoutObjectName(t *testing.T) {
 			Reason:  metav1.StatusReasonInvalid,
 			Message: "DockerMachineTemplate.infrastructure.cluster.x-k8s.io \"docker-template-one\" is invalid: spec.template.spec.preLoadImages: Invalid value: \"array\": spec.template.spec.preLoadImages in body must be of type string: \"array\"",
 			Details: &metav1.StatusDetails{
-				Group: "infrastructure.cluster.x-k8s.io",
+				Group: clusterv1.GroupVersionInfrastructure.Group,
 				Kind:  "DockerMachineTemplate",
 				Name:  "docker-template-one",
 				Causes: []metav1.StatusCause{
@@ -4008,7 +4114,7 @@ func Test_createErrorWithoutObjectName(t *testing.T) {
 			// The only difference between the two objects should be in the Message section.
 			Message: "failed to create DockerMachineTemplate.infrastructure.cluster.x-k8s.io: FieldValueInvalid: spec.template.spec.preLoadImages: Invalid value: \"array\": spec.template.spec.preLoadImages in body must be of type string: \"array\"",
 			Details: &metav1.StatusDetails{
-				Group: "infrastructure.cluster.x-k8s.io",
+				Group: clusterv1.GroupVersionInfrastructure.Group,
 				Kind:  "DockerMachineTemplate",
 				Name:  "docker-template-one",
 				Causes: []metav1.StatusCause{
@@ -4028,7 +4134,7 @@ func Test_createErrorWithoutObjectName(t *testing.T) {
 			Reason:  metav1.StatusReasonInvalid,
 			Message: "DockerMachineTemplate.infrastructure.cluster.x-k8s.io \"docker-template-one\" is invalid: spec.template.spec.preLoadImages: Invalid value: \"array\": spec.template.spec.preLoadImages in body must be of type string: \"array\"",
 			Details: &metav1.StatusDetails{
-				Group: "infrastructure.cluster.x-k8s.io",
+				Group: clusterv1.GroupVersionInfrastructure.Group,
 				Kind:  "DockerMachineTemplate",
 				Name:  "docker-template-one",
 			},
@@ -4042,7 +4148,7 @@ func Test_createErrorWithoutObjectName(t *testing.T) {
 			// The only difference between the two objects should be in the Message section.
 			Message: "failed to create DockerMachineTemplate.infrastructure.cluster.x-k8s.io",
 			Details: &metav1.StatusDetails{
-				Group: "infrastructure.cluster.x-k8s.io",
+				Group: clusterv1.GroupVersionInfrastructure.Group,
 				Kind:  "DockerMachineTemplate",
 				Name:  "docker-template-one",
 			},
@@ -4132,5 +4238,14 @@ func Test_createErrorWithoutObjectName(t *testing.T) {
 			err := createErrorWithoutObjectName(ctx, tt.input, tt.obj)
 			g.Expect(err.Error()).To(Equal(tt.expected.Error()))
 		})
+	}
+}
+
+func objToClusterClassTemplateRef(obj *unstructured.Unstructured) clusterv1.ClusterClassTemplateReference {
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	return clusterv1.ClusterClassTemplateReference{
+		Kind:       gvk.Kind,
+		APIVersion: gvk.GroupVersion().String(),
+		Name:       obj.GetName(),
 	}
 }

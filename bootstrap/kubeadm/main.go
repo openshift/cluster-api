@@ -46,17 +46,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1beta1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	kubeadmbootstrapcontrollers "sigs.k8s.io/cluster-api/bootstrap/kubeadm/controllers"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/internal/webhooks"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/crdmigrator"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
-	bootstrapv1alpha3 "sigs.k8s.io/cluster-api/internal/apis/bootstrap/kubeadm/v1alpha3"
-	bootstrapv1alpha4 "sigs.k8s.io/cluster-api/internal/apis/bootstrap/kubeadm/v1alpha4"
+	bootstrapv1alpha3 "sigs.k8s.io/cluster-api/internal/api/bootstrap/kubeadm/v1alpha3"
+	bootstrapv1alpha4 "sigs.k8s.io/cluster-api/internal/api/bootstrap/kubeadm/v1alpha4"
 	"sigs.k8s.io/cluster-api/util/apiwarnings"
 	"sigs.k8s.io/cluster-api/util/flags"
 	"sigs.k8s.io/cluster-api/version"
@@ -100,9 +100,9 @@ func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = apiextensionsv1.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
-	_ = expv1.AddToScheme(scheme)
 	_ = bootstrapv1alpha3.AddToScheme(scheme)
 	_ = bootstrapv1alpha4.AddToScheme(scheme)
+	_ = bootstrapv1beta1.AddToScheme(scheme)
 	_ = bootstrapv1.AddToScheme(scheme)
 }
 
@@ -195,25 +195,26 @@ func InitFlags(fs *pflag.FlagSet) {
 // +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=kubeadmconfigtemplates,verbs=get;list;watch;patch;update
 
 func main() {
-	setupLog.Info(fmt.Sprintf("Version: %+v", version.Get().String()))
-
 	InitFlags(pflag.CommandLine)
 	pflag.CommandLine.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "failed to set default log level")
+		fmt.Printf("Failed to set default log level: %v\n", err)
 		os.Exit(1)
 	}
 	pflag.Parse()
 
 	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
-		setupLog.Error(err, "unable to start manager")
+		fmt.Printf("Unable to start manager: %v\n", err)
 		os.Exit(1)
 	}
 
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
+
+	// Note: setupLog can only be used after ctrl.SetLogger was called
+	setupLog.Info(fmt.Sprintf("Version: %s (git commit: %s)", version.Get().String(), version.Get().GitCommit))
 
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS

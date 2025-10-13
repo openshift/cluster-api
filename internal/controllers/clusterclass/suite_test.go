@@ -38,8 +38,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/api/v1beta1/index"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
 	"sigs.k8s.io/cluster-api/feature"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/test/envtest"
@@ -112,11 +112,8 @@ func ownerReferenceTo(obj client.Object, gvk schema.GroupVersionKind) *metav1.Ow
 	}
 }
 
-// referenceExistsWithCorrectKindAndAPIVersion asserts that the passed ObjectReference is not nil and that it has the correct kind and apiVersion.
-func referenceExistsWithCorrectKindAndAPIVersion(reference *corev1.ObjectReference, kind string, apiVersion schema.GroupVersion) error {
-	if reference == nil {
-		return fmt.Errorf("object reference passed was nil")
-	}
+// referenceExistsWithCorrectKindAndAPIVersion asserts that the passed ClusterClassTemplateReference is not nil and that it has the correct kind and apiVersion.
+func referenceExistsWithCorrectKindAndAPIVersion(reference clusterv1.ClusterClassTemplateReference, kind string, apiVersion schema.GroupVersion) error {
 	if reference.Kind != kind {
 		return fmt.Errorf("object reference kind %v does not match expected %v", reference.Kind, kind)
 	}

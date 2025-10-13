@@ -38,9 +38,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 func TestConnect(t *testing.T) {
@@ -51,13 +52,20 @@ func TestConnect(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 	clusterKey := client.ObjectKeyFromObject(testCluster)
 	g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
 	defer func() { g.Expect(env.CleanupAndWait(ctx, testCluster)).To(Succeed()) }()
 
-	config := buildClusterAccessorConfig(env.Manager.GetScheme(), Options{
-		SecretClient: env.Manager.GetClient(),
+	config := buildClusterAccessorConfig(env.GetScheme(), Options{
+		SecretClient: env.GetClient(),
 		Client: ClientOptions{
 			UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
 			Timeout:   10 * time.Second,
@@ -73,9 +81,14 @@ func TestConnect(t *testing.T) {
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(Equal("error creating REST config: error getting kubeconfig secret: Secret \"test-cluster-kubeconfig\" not found"))
 	g.Expect(accessor.Connected(ctx)).To(BeFalse())
-	g.Expect(accessor.lockedState.lastConnectionCreationErrorTimestamp.IsZero()).To(BeFalse())
-	accessor.lockedState.lastConnectionCreationErrorTimestamp = time.Time{} // so we can compare in the next line
-	g.Expect(accessor.lockedState).To(Equal(clusterAccessorLockedState{}))
+	g.Expect(accessor.lockedState.lastConnectionCreationErrorTime.IsZero()).To(BeFalse())
+	g.Expect(accessor.lockedState).To(Equal(clusterAccessorLockedState{
+		lastConnectionCreationErrorTime: accessor.lockedState.lastConnectionCreationErrorTime,
+		healthChecking: clusterAccessorLockedHealthCheckingState{
+			lastProbeTime:       accessor.lockedState.healthChecking.lastProbeTime,
+			consecutiveFailures: 1,
+		},
+	}))
 
 	// Create invalid kubeconfig Secret
 	kubeconfigBytes := kubeconfig.FromEnvTestConfig(env.Config, testCluster)
@@ -92,7 +105,7 @@ func TestConnect(t *testing.T) {
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(Equal("error creating HTTP client and mapper: cluster is not reachable: the server could not find the requested resource"))
 	g.Expect(accessor.Connected(ctx)).To(BeFalse())
-	g.Expect(accessor.lockedState.lastConnectionCreationErrorTimestamp.IsZero()).To(BeFalse())
+	g.Expect(accessor.lockedState.lastConnectionCreationErrorTime.IsZero()).To(BeFalse())
 
 	// Cleanup invalid kubeconfig Secret
 	g.Expect(env.CleanupAndWait(ctx, kubeconfigSecret)).To(Succeed())
@@ -119,8 +132,8 @@ func TestConnect(t *testing.T) {
 
 	g.Expect(accessor.lockedState.clientCertificatePrivateKey).ToNot(BeNil())
 
-	g.Expect(accessor.lockedState.healthChecking.lastProbeTimestamp.IsZero()).To(BeFalse())
-	g.Expect(accessor.lockedState.healthChecking.lastProbeSuccessTimestamp.IsZero()).To(BeFalse())
+	g.Expect(accessor.lockedState.healthChecking.lastProbeTime.IsZero()).To(BeFalse())
+	g.Expect(accessor.lockedState.healthChecking.lastProbeSuccessTime.IsZero()).To(BeFalse())
 	g.Expect(accessor.lockedState.healthChecking.consecutiveFailures).To(Equal(0))
 
 	// Get client and test Get & List
@@ -147,6 +160,13 @@ func TestDisconnect(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 	clusterKey := client.ObjectKeyFromObject(testCluster)
 	g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
@@ -157,8 +177,8 @@ func TestDisconnect(t *testing.T) {
 	g.Expect(env.CreateAndWait(ctx, kubeconfigSecret)).To(Succeed())
 	defer func() { g.Expect(env.CleanupAndWait(ctx, kubeconfigSecret)).To(Succeed()) }()
 
-	config := buildClusterAccessorConfig(env.Manager.GetScheme(), Options{
-		SecretClient: env.Manager.GetClient(),
+	config := buildClusterAccessorConfig(env.GetScheme(), Options{
+		SecretClient: env.GetClient(),
 		Client: ClientOptions{
 			UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
 			Timeout:   10 * time.Second,
@@ -186,8 +206,8 @@ func TestDisconnect(t *testing.T) {
 	// Verify health checking state was preserved
 	g.Expect(accessor.lockedState.clientCertificatePrivateKey).ToNot(BeNil())
 
-	g.Expect(accessor.lockedState.healthChecking.lastProbeTimestamp.IsZero()).To(BeFalse())
-	g.Expect(accessor.lockedState.healthChecking.lastProbeSuccessTimestamp.IsZero()).To(BeFalse())
+	g.Expect(accessor.lockedState.healthChecking.lastProbeTime.IsZero()).To(BeFalse())
+	g.Expect(accessor.lockedState.healthChecking.lastProbeSuccessTime.IsZero()).To(BeFalse())
 }
 
 func TestHealthCheck(t *testing.T) {
@@ -195,6 +215,13 @@ func TestHealthCheck(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
+		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
 		},
 	}
 	clusterKey := client.ObjectKeyFromObject(testCluster)
@@ -307,6 +334,13 @@ func TestWatch(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 	clusterKey := client.ObjectKeyFromObject(testCluster)
 	g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
@@ -317,8 +351,8 @@ func TestWatch(t *testing.T) {
 	g.Expect(env.CreateAndWait(ctx, kubeconfigSecret)).To(Succeed())
 	defer func() { g.Expect(env.CleanupAndWait(ctx, kubeconfigSecret)).To(Succeed()) }()
 
-	config := buildClusterAccessorConfig(env.Manager.GetScheme(), Options{
-		SecretClient: env.Manager.GetClient(),
+	config := buildClusterAccessorConfig(env.GetScheme(), Options{
+		SecretClient: env.GetClient(),
 		Client: ClientOptions{
 			UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
 			Timeout:   10 * time.Second,

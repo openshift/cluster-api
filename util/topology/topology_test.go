@@ -26,7 +26,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 func TestShouldSkipImmutabilityChecks(t *testing.T) {
@@ -85,7 +85,7 @@ func TestShouldSkipImmutabilityChecks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ShouldSkipImmutabilityChecks(tt.req, tt.obj); got != tt.want {
+			if got := IsDryRunRequest(tt.req, tt.obj); got != tt.want {
 				t.Errorf("ShouldSkipImmutabilityChecks() = %v, want %v", got, tt.want)
 			}
 		})

@@ -29,7 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blang/semver/v4"
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
@@ -47,14 +46,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/external"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	controlplanev1webhooks "sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/webhooks"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
@@ -63,7 +61,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/secret"
@@ -76,18 +74,17 @@ func TestClusterToKubeadmControlPlane(t *testing.T) {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "KubeadmControlPlane",
-			Namespace:  metav1.NamespaceDefault,
-			Name:       "kcp-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
+		ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: controlplanev1.GroupVersion.Group,
+			Kind:     "KubeadmControlPlane",
+			Name:     "kcp-foo",
 		},
 	}
 
 	expectedResult := []ctrl.Request{
 		{
 			NamespacedName: client.ObjectKey{
-				Namespace: cluster.Spec.ControlPlaneRef.Namespace,
+				Namespace: cluster.Namespace,
 				Name:      cluster.Spec.ControlPlaneRef.Name,
 			},
 		},
@@ -125,11 +122,10 @@ func TestClusterToKubeadmControlPlaneOtherControlPlane(t *testing.T) {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "OtherControlPlane",
-			Namespace:  metav1.NamespaceDefault,
-			Name:       "other-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
+		ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: controlplanev1.GroupVersion.Group,
+			Kind:     "OtherControlPlane",
+			Name:     "other-foo",
 		},
 	}
 
@@ -248,11 +244,12 @@ func TestReconcileNoClusterOwnerRef(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: "v1.16.6",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       "UnknownInfraMachine",
-					APIVersion: "test/v1alpha1",
-					Name:       "foo",
-					Namespace:  metav1.NamespaceDefault,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test",
+						Name:     "foo",
+					},
 				},
 			},
 		},
@@ -289,11 +286,12 @@ func TestReconcileNoKCP(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: "v1.16.6",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       "UnknownInfraMachine",
-					APIVersion: "test/v1alpha1",
-					Name:       "foo",
-					Namespace:  metav1.NamespaceDefault,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test",
+						Name:     "foo",
+					},
 				},
 			},
 		},
@@ -331,11 +329,12 @@ func TestReconcileNoCluster(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: "v1.16.6",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       "UnknownInfraMachine",
-					APIVersion: "test/v1alpha1",
-					Name:       "foo",
-					Namespace:  metav1.NamespaceDefault,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test",
+						Name:     "foo",
+					},
 				},
 			},
 		},
@@ -367,7 +366,7 @@ func TestReconcilePaused(t *testing.T) {
 
 	// Test: cluster is paused and kcp is not
 	cluster := newCluster(&types.NamespacedName{Namespace: metav1.NamespaceDefault, Name: clusterName})
-	cluster.Spec.Paused = true
+	cluster.Spec.Paused = ptr.To(true)
 	kcp := &controlplanev1.KubeadmControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: metav1.NamespaceDefault,
@@ -383,11 +382,12 @@ func TestReconcilePaused(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: "v1.16.6",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       "UnknownInfraMachine",
-					APIVersion: "test/v1alpha1",
-					Name:       "foo",
-					Namespace:  metav1.NamespaceDefault,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test",
+						Name:     "foo",
+					},
 				},
 			},
 		},
@@ -411,9 +411,9 @@ func TestReconcilePaused(t *testing.T) {
 	g.Expect(machineList.Items).To(BeEmpty())
 
 	// Test: kcp is paused and cluster is not
-	cluster.Spec.Paused = false
-	kcp.ObjectMeta.Annotations = map[string]string{}
-	kcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
+	cluster.Spec.Paused = ptr.To(false)
+	kcp.Annotations = map[string]string{}
+	kcp.Annotations[clusterv1.PausedAnnotation] = "paused"
 	_, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: util.ObjectKey(kcp)})
 	g.Expect(err).ToNot(HaveOccurred())
 }
@@ -422,7 +422,7 @@ func TestReconcileClusterNoEndpoints(t *testing.T) {
 	g := NewWithT(t)
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
-	cluster.Status = clusterv1.ClusterStatus{InfrastructureReady: true}
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 
 	kcp := &controlplanev1.KubeadmControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -439,20 +439,21 @@ func TestReconcileClusterNoEndpoints(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: "v1.16.6",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       "UnknownInfraMachine",
-					APIVersion: "test/v1alpha1",
-					Name:       "foo",
-					Namespace:  metav1.NamespaceDefault,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test",
+						Name:     "foo",
+					},
 				},
 			},
 		},
 		Status: controlplanev1.KubeadmControlPlaneStatus{
-			V1Beta2: &controlplanev1.KubeadmControlPlaneV1Beta2Status{Conditions: []metav1.Condition{{
-				Type:   clusterv1.PausedV1Beta2Condition,
+			Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedCondition,
 				Status: metav1.ConditionFalse,
-				Reason: clusterv1.NotPausedV1Beta2Reason,
-			}}},
+				Reason: clusterv1.NotPausedReason,
+			}},
 		},
 	}
 	webhook := &controlplanev1webhooks.KubeadmControlPlane{}
@@ -505,7 +506,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "bar"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
-		cluster.Status.InfrastructureReady = true
+		cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 		kcp.Spec.Version = version
 
 		fmc := &fakeManagementCluster{
@@ -523,13 +524,13 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
-						ConfigRef: &corev1.ObjectReference{
-							APIVersion: bootstrapv1.GroupVersion.String(),
-							Kind:       "KubeadmConfig",
-							Name:       name,
+						ConfigRef: clusterv1.ContractVersionedObjectReference{
+							APIGroup: bootstrapv1.GroupVersion.Group,
+							Kind:     "KubeadmConfig",
+							Name:     name,
 						},
 					},
-					Version: &version,
+					Version: version,
 				},
 			}
 			cfg := &bootstrapv1.KubeadmConfig{
@@ -573,7 +574,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "validhost"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
-		cluster.Status.InfrastructureReady = true
+		cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 		kcp.Spec.Version = version
 
 		fmc := &fakeManagementCluster{
@@ -591,13 +592,13 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
-						ConfigRef: &corev1.ObjectReference{
-							APIVersion: bootstrapv1.GroupVersion.String(),
-							Kind:       "KubeadmConfig",
-							Name:       name,
+						ConfigRef: clusterv1.ContractVersionedObjectReference{
+							APIGroup: bootstrapv1.GroupVersion.Group,
+							Kind:     "KubeadmConfig",
+							Name:     name,
 						},
 					},
-					Version: &version,
+					Version: version,
 				},
 			}
 			cfg := &bootstrapv1.KubeadmConfig{
@@ -682,7 +683,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "nodomain.example.com1"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
-		cluster.Status.InfrastructureReady = true
+		cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 		kcp.Spec.Version = version
 
 		now := metav1.Now()
@@ -706,13 +707,13 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
-						ConfigRef: &corev1.ObjectReference{
-							APIVersion: bootstrapv1.GroupVersion.String(),
-							Kind:       "KubeadmConfig",
-							Name:       name,
+						ConfigRef: clusterv1.ContractVersionedObjectReference{
+							APIGroup: bootstrapv1.GroupVersion.Group,
+							Kind:     "KubeadmConfig",
+							Name:     name,
 						},
 					},
-					Version: &version,
+					Version: version,
 				},
 			}
 			cfg := &bootstrapv1.KubeadmConfig{
@@ -751,7 +752,7 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 		cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 		cluster.Spec.ControlPlaneEndpoint.Host = "nodomain.example.com2"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
-		cluster.Status.InfrastructureReady = true
+		cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 		kcp.Spec.Version = "v1.17.0"
 
 		fmc := &fakeManagementCluster{
@@ -764,12 +765,12 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 					},
 					Spec: clusterv1.MachineSpec{
 						Bootstrap: clusterv1.Bootstrap{
-							ConfigRef: &corev1.ObjectReference{
-								APIVersion: bootstrapv1.GroupVersion.String(),
-								Kind:       "KubeadmConfig",
+							ConfigRef: clusterv1.ContractVersionedObjectReference{
+								APIGroup: bootstrapv1.GroupVersion.Group,
+								Kind:     "KubeadmConfig",
 							},
 						},
-						Version: ptr.To("v1.15.0"),
+						Version: "v1.15.0",
 					},
 				},
 			},
@@ -809,7 +810,7 @@ func TestKubeadmControlPlaneReconciler_ensureOwnerReferences(t *testing.T) {
 	cluster, kcp, tmpl := createClusterWithControlPlane(metav1.NamespaceDefault)
 	cluster.Spec.ControlPlaneEndpoint.Host = "bar"
 	cluster.Spec.ControlPlaneEndpoint.Port = 6443
-	cluster.Status.InfrastructureReady = true
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	kcp.Spec.Version = "v1.21.0"
 	key, err := certs.NewPrivateKey()
 	g.Expect(err).ToNot(HaveOccurred())
@@ -982,30 +983,32 @@ func TestReconcileCertificateExpiries(t *testing.T) {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	kcp := &controlplanev1.KubeadmControlPlane{
-		Status: controlplanev1.KubeadmControlPlaneStatus{Initialized: true},
+		Status: controlplanev1.KubeadmControlPlaneStatus{
+			Initialization: controlplanev1.KubeadmControlPlaneInitializationStatus{
+				ControlPlaneInitialized: ptr.To(true),
+			},
+		},
 	}
 	machineWithoutExpiryAnnotation := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "machineWithoutExpiryAnnotation",
 		},
 		Spec: clusterv1.MachineSpec{
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       "GenericMachine",
-				APIVersion: "generic.io/v1",
-				Namespace:  metav1.NamespaceDefault,
-				Name:       "machineWithoutExpiryAnnotation-infra",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     builder.TestInfrastructureMachineKind,
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Name:     "machineWithoutExpiryAnnotation-infra",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-					Namespace:  metav1.NamespaceDefault,
-					Name:       "machineWithoutExpiryAnnotation-bootstrap",
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					Kind:     "KubeadmConfig",
+					APIGroup: bootstrapv1.GroupVersion.Group,
+					Name:     "machineWithoutExpiryAnnotation-bootstrap",
 				},
 			},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "machineWithoutExpiryAnnotation",
 			},
 		},
@@ -1020,23 +1023,21 @@ func TestReconcileCertificateExpiries(t *testing.T) {
 			Name: "machineWithExpiryAnnotation",
 		},
 		Spec: clusterv1.MachineSpec{
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       "GenericMachine",
-				APIVersion: "generic.io/v1",
-				Namespace:  metav1.NamespaceDefault,
-				Name:       "machineWithExpiryAnnotation-infra",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     builder.TestInfrastructureMachineKind,
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Name:     "machineWithExpiryAnnotation-infra",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-					Namespace:  metav1.NamespaceDefault,
-					Name:       "machineWithExpiryAnnotation-bootstrap",
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					Kind:     "KubeadmConfig",
+					APIGroup: bootstrapv1.GroupVersion.Group,
+					Name:     "machineWithExpiryAnnotation-bootstrap",
 				},
 			},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "machineWithExpiryAnnotation",
 			},
 		},
@@ -1055,23 +1056,21 @@ func TestReconcileCertificateExpiries(t *testing.T) {
 			DeletionTimestamp: &metav1.Time{Time: time.Now()},
 		},
 		Spec: clusterv1.MachineSpec{
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       "GenericMachine",
-				APIVersion: "generic.io/v1",
-				Namespace:  metav1.NamespaceDefault,
-				Name:       "machineWithDeletionTimestamp-infra",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     builder.TestInfrastructureMachineKind,
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Name:     "machineWithDeletionTimestamp-infra",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-					Namespace:  metav1.NamespaceDefault,
-					Name:       "machineWithDeletionTimestamp-bootstrap",
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					Kind:     "KubeadmConfig",
+					APIGroup: bootstrapv1.GroupVersion.Group,
+					Name:     "machineWithDeletionTimestamp-bootstrap",
 				},
 			},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "machineWithDeletionTimestamp",
 			},
 		},
@@ -1086,18 +1085,16 @@ func TestReconcileCertificateExpiries(t *testing.T) {
 			Name: "machineWithoutNodeRef",
 		},
 		Spec: clusterv1.MachineSpec{
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       "GenericMachine",
-				APIVersion: "generic.io/v1",
-				Namespace:  metav1.NamespaceDefault,
-				Name:       "machineWithoutNodeRef-infra",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     builder.TestInfrastructureMachineKind,
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Name:     "machineWithoutNodeRef-infra",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-					Namespace:  metav1.NamespaceDefault,
-					Name:       "machineWithoutNodeRef-bootstrap",
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					Kind:     "KubeadmConfig",
+					APIGroup: bootstrapv1.GroupVersion.Group,
+					Name:     "machineWithoutNodeRef-bootstrap",
 				},
 			},
 		},
@@ -1112,23 +1109,21 @@ func TestReconcileCertificateExpiries(t *testing.T) {
 			Name: "machineWithoutKubeadmConfig",
 		},
 		Spec: clusterv1.MachineSpec{
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       "GenericMachine",
-				APIVersion: "generic.io/v1",
-				Namespace:  metav1.NamespaceDefault,
-				Name:       "machineWithoutKubeadmConfig-infra",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     builder.TestInfrastructureMachineKind,
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Name:     "machineWithoutKubeadmConfig-infra",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-					Namespace:  metav1.NamespaceDefault,
-					Name:       "machineWithoutKubeadmConfig-bootstrap",
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					Kind:     "KubeadmConfig",
+					APIGroup: bootstrapv1.GroupVersion.Group,
+					Name:     "machineWithoutKubeadmConfig-bootstrap",
 				},
 			},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "machineWithoutKubeadmConfig",
 			},
 		},
@@ -1147,6 +1142,8 @@ func TestReconcileCertificateExpiries(t *testing.T) {
 		machineWithExpiryAnnotationKubeadmConfig,
 		machineWithDeletionTimestampKubeadmConfig,
 		machineWithoutNodeRefKubeadmConfig,
+		// Note: CRD is needed to look up the apiVersion from contract labels.
+		builder.TestInfrastructureMachineCRD,
 	)
 
 	managementCluster := &fakeManagementCluster{
@@ -1219,17 +1216,22 @@ func TestReconcileInitializeControlPlane(t *testing.T) {
 			Host: "test.local",
 			Port: 9999,
 		},
+		InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: builder.InfrastructureGroupVersion.Group,
+			Kind:     builder.GenericInfrastructureClusterKind,
+			Name:     "infracluster1",
+		},
 	}
 	g.Expect(env.Create(ctx, cluster)).To(Succeed())
 	patchHelper, err := patch.NewHelper(cluster, env)
 	g.Expect(err).ToNot(HaveOccurred())
-	cluster.Status = clusterv1.ClusterStatus{InfrastructureReady: true}
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(patchHelper.Patch(ctx, cluster)).To(Succeed())
 
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"kind":       "GenericInfrastructureMachineTemplate",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"kind":       builder.GenericInfrastructureMachineTemplateKind,
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-foo",
 				"namespace": cluster.Namespace,
@@ -1262,11 +1264,12 @@ func TestReconcileInitializeControlPlane(t *testing.T) {
 			Replicas: nil,
 			Version:  "v1.16.6",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       genericInfrastructureMachineTemplate.GetKind(),
-					APIVersion: genericInfrastructureMachineTemplate.GetAPIVersion(),
-					Name:       genericInfrastructureMachineTemplate.GetName(),
-					Namespace:  cluster.Namespace,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     genericInfrastructureMachineTemplate.GetKind(),
+						APIGroup: genericInfrastructureMachineTemplate.GroupVersionKind().Group,
+						Name:     genericInfrastructureMachineTemplate.GetName(),
+					},
 				},
 			},
 			KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{},
@@ -1381,9 +1384,9 @@ kubernetesVersion: metav1.16.1
 		g.Expect(kcp.Finalizers).To(ContainElement(controlplanev1.KubeadmControlPlaneFinalizer))
 
 		g.Expect(kcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(kcp.Status.Replicas).To(BeEquivalentTo(1))
-		g.Expect(conditions.IsFalse(kcp, controlplanev1.AvailableCondition)).To(BeTrue())
-		g.Expect(v1beta2conditions.IsFalse(kcp, controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition)).To(BeTrue())
+		g.Expect(kcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
+		g.Expect(v1beta1conditions.IsFalse(kcp, controlplanev1.AvailableV1Beta1Condition)).To(BeTrue())
+		g.Expect(conditions.IsFalse(kcp, controlplanev1.KubeadmControlPlaneInitializedCondition)).To(BeTrue())
 
 		s, err := secret.GetFromNamespacedName(ctx, env, client.ObjectKey{Namespace: cluster.Namespace, Name: "foo"}, secret.ClusterCA)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -1402,7 +1405,7 @@ kubernetesVersion: metav1.16.1
 		machine := machineList.Items[0]
 		g.Expect(machine.Name).To(HavePrefix(kcp.Name))
 		// Newly cloned infra objects should have the infraref annotation.
-		infraObj, err := external.Get(ctx, r.Client, &machine.Spec.InfrastructureRef)
+		infraObj, err := external.GetObjectFromContractVersionedRef(ctx, r.Client, machine.Spec.InfrastructureRef, machine.Namespace)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(infraObj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.TemplateClonedFromNameAnnotation, genericInfrastructureMachineTemplate.GetName()))
 		g.Expect(infraObj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.TemplateClonedFromGroupKindAnnotation, genericInfrastructureMachineTemplate.GroupVersionKind().GroupKind().String()))
@@ -1437,6 +1440,11 @@ func TestReconcileInitializeControlPlane_withUserCA(t *testing.T) {
 			Host: "test.local",
 			Port: 9999,
 		},
+		InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: builder.InfrastructureGroupVersion.Group,
+			Kind:     builder.GenericInfrastructureClusterKind,
+			Name:     "infracluster1",
+		},
 	}
 
 	caCertificate := &secret.Certificate{
@@ -1464,15 +1472,15 @@ func TestReconcileInitializeControlPlane_withUserCA(t *testing.T) {
 	g.Expect(env.Create(ctx, cluster)).To(Succeed())
 	patchHelper, err := patch.NewHelper(cluster, env)
 	g.Expect(err).ToNot(HaveOccurred())
-	cluster.Status = clusterv1.ClusterStatus{InfrastructureReady: true}
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(patchHelper.Patch(ctx, cluster)).To(Succeed())
 
 	g.Expect(env.CreateAndWait(ctx, certSecret)).To(Succeed())
 
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"kind":       "GenericInfrastructureMachineTemplate",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"kind":       builder.GenericInfrastructureMachineTemplateKind,
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-foo",
 				"namespace": cluster.Namespace,
@@ -1505,11 +1513,12 @@ func TestReconcileInitializeControlPlane_withUserCA(t *testing.T) {
 			Replicas: nil,
 			Version:  "v1.16.6",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       genericInfrastructureMachineTemplate.GetKind(),
-					APIVersion: genericInfrastructureMachineTemplate.GetAPIVersion(),
-					Name:       genericInfrastructureMachineTemplate.GetName(),
-					Namespace:  cluster.Namespace,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     genericInfrastructureMachineTemplate.GetKind(),
+						APIGroup: genericInfrastructureMachineTemplate.GroupVersionKind().Group,
+						Name:     genericInfrastructureMachineTemplate.GetName(),
+					},
 				},
 			},
 			KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{},
@@ -1622,8 +1631,8 @@ kubernetesVersion: metav1.16.1`,
 		g.Expect(kcp.Finalizers).To(ContainElement(controlplanev1.KubeadmControlPlaneFinalizer))
 
 		g.Expect(kcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(kcp.Status.Replicas).To(BeEquivalentTo(1))
-		g.Expect(conditions.IsFalse(kcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(kcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
+		g.Expect(v1beta1conditions.IsFalse(kcp, controlplanev1.AvailableV1Beta1Condition)).To(BeTrue())
 
 		// Verify that the kubeconfig is using the custom CA
 		kBytes, err := kubeconfig.FromSecret(ctx, env, util.ObjectKey(cluster))
@@ -1642,7 +1651,7 @@ kubernetesVersion: metav1.16.1`,
 		machine := machineList.Items[0]
 		g.Expect(machine.Name).To(HavePrefix(kcp.Name))
 		// Newly cloned infra objects should have the infraref annotation.
-		infraObj, err := external.Get(ctx, r.Client, &machine.Spec.InfrastructureRef)
+		infraObj, err := external.GetObjectFromContractVersionedRef(ctx, r.Client, machine.Spec.InfrastructureRef, machine.Namespace)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(infraObj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.TemplateClonedFromNameAnnotation, genericInfrastructureMachineTemplate.GetName()))
 		g.Expect(infraObj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.TemplateClonedFromGroupKindAnnotation, genericInfrastructureMachineTemplate.GroupVersionKind().GroupKind().String()))
@@ -1658,7 +1667,19 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 		g.Expect(err).ToNot(HaveOccurred())
 
 		t.Log("Creating the Cluster")
-		cluster := &clusterv1.Cluster{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: "test-cluster"}}
+		cluster := &clusterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: ns.Name,
+				Name:      "test-cluster",
+			},
+			Spec: clusterv1.ClusterSpec{
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: builder.InfrastructureGroupVersion.Group,
+					Kind:     builder.GenericInfrastructureClusterKind,
+					Name:     "infracluster1",
+				},
+			},
+		}
 		g.Expect(env.Create(ctx, cluster)).To(Succeed())
 
 		t.Log("Creating the Cluster Kubeconfig Secret")
@@ -1681,8 +1702,8 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 	defer teardown(t, g, namespace, testCluster)
 
 	classicManager := "manager"
-	duration5s := &metav1.Duration{Duration: 5 * time.Second}
-	duration10s := &metav1.Duration{Duration: 10 * time.Second}
+	duration5s := ptr.To(int32(5))
+	duration10s := ptr.To(int32(10))
 
 	// Existing InfraMachine
 	infraMachineSpec := map[string]interface{}{
@@ -1691,7 +1712,7 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 	existingInfraMachine := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "existing-inframachine",
 				"namespace": testCluster.Namespace,
@@ -1709,19 +1730,17 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 			"spec": infraMachineSpec,
 		},
 	}
-	infraMachineRef := &corev1.ObjectReference{
-		Kind:       "GenericInfrastructureMachine",
-		Namespace:  namespace.Name,
-		Name:       "existing-inframachine",
-		APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+	infraMachineRef := &clusterv1.ContractVersionedObjectReference{
+		Kind:     "GenericInfrastructureMachine",
+		Name:     "existing-inframachine",
+		APIGroup: clusterv1.GroupVersionInfrastructure.Group,
 	}
 	// Note: use "manager" as the field owner to mimic the manager used before ClusterAPI v1.4.0.
 	g.Expect(env.Create(ctx, existingInfraMachine, client.FieldOwner("manager"))).To(Succeed())
 
 	// Existing KubeadmConfig
 	bootstrapSpec := &bootstrapv1.KubeadmConfigSpec{
-		Users:             []bootstrapv1.User{{Name: "test-user"}},
-		JoinConfiguration: &bootstrapv1.JoinConfiguration{},
+		Users: []bootstrapv1.User{{Name: "test-user"}},
 	}
 	existingKubeadmConfig := &bootstrapv1.KubeadmConfig{
 		TypeMeta: metav1.TypeMeta{
@@ -1744,17 +1763,16 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 		},
 		Spec: *bootstrapSpec,
 	}
-	bootstrapRef := &corev1.ObjectReference{
-		Kind:       "KubeadmConfig",
-		Namespace:  namespace.Name,
-		Name:       "existing-kubeadmconfig",
-		APIVersion: bootstrapv1.GroupVersion.String(),
+	bootstrapRef := clusterv1.ContractVersionedObjectReference{
+		Kind:     "KubeadmConfig",
+		Name:     "existing-kubeadmconfig",
+		APIGroup: bootstrapv1.GroupVersion.Group,
 	}
 	// Note: use "manager" as the field owner to mimic the manager used before ClusterAPI v1.4.0.
 	g.Expect(env.Create(ctx, existingKubeadmConfig, client.FieldOwner("manager"))).To(Succeed())
 
 	// Existing Machine to validate in-place mutation
-	fd := ptr.To("fd1")
+	fd := "fd1"
 	inPlaceMutatingMachine := &clusterv1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Machine",
@@ -1779,13 +1797,15 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: bootstrapRef,
 			},
-			InfrastructureRef:       *infraMachineRef,
-			Version:                 ptr.To("v1.25.3"),
-			FailureDomain:           fd,
-			ProviderID:              ptr.To("provider-id"),
-			NodeDrainTimeout:        duration5s,
-			NodeVolumeDetachTimeout: duration5s,
-			NodeDeletionTimeout:     duration5s,
+			InfrastructureRef: *infraMachineRef,
+			Version:           "v1.25.3",
+			FailureDomain:     fd,
+			ProviderID:        "provider-id",
+			Deletion: clusterv1.MachineDeletionSpec{
+				NodeDrainTimeoutSeconds:        duration5s,
+				NodeVolumeDetachTimeoutSeconds: duration5s,
+				NodeDeletionTimeoutSeconds:     duration5s,
+			},
 		},
 	}
 	// Note: use "manager" as the field owner to mimic the manager used before ClusterAPI v1.4.0.
@@ -1806,16 +1826,20 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: testCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				Namespace: namespace.Name,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     builder.GenericInfrastructureMachineKind,
+				Name:     "inframachine",
 			},
 			Bootstrap: clusterv1.Bootstrap{
 				DataSecretName: ptr.To("machine-bootstrap-secret"),
 			},
-			NodeDrainTimeout:        duration5s,
-			NodeVolumeDetachTimeout: duration5s,
-			NodeDeletionTimeout:     duration5s,
-			ReadinessGates:          mandatoryMachineReadinessGates,
+			Deletion: clusterv1.MachineDeletionSpec{
+				NodeDrainTimeoutSeconds:        duration5s,
+				NodeVolumeDetachTimeoutSeconds: duration5s,
+				NodeDeletionTimeoutSeconds:     duration5s,
+			},
+			ReadinessGates: mandatoryMachineReadinessGates,
 		},
 	}
 	g.Expect(env.Create(ctx, deletingMachine, client.FieldOwner(classicManager))).To(Succeed())
@@ -1844,8 +1868,10 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: testCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				Namespace: namespace.Name,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     builder.GenericInfrastructureMachineKind,
+				Name:     "inframachine",
 			},
 			Bootstrap: clusterv1.Bootstrap{
 				DataSecretName: ptr.To("machine-bootstrap-secret"),
@@ -1881,15 +1907,18 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 						"modified-annotation":  "modified-value",  // Annotation value will be modified while testing in-place mutation.
 					},
 				},
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       "GenericInfrastructureMachineTemplate",
-					Namespace:  namespace.Name,
-					Name:       "infra-foo",
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "GenericInfrastructureMachineTemplate",
+						Name:     "infra-foo",
+						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+					},
+					Deletion: controlplanev1.KubeadmControlPlaneMachineTemplateDeletionSpec{
+						NodeDrainTimeoutSeconds:        duration5s,
+						NodeVolumeDetachTimeoutSeconds: duration5s,
+						NodeDeletionTimeoutSeconds:     duration5s,
+					},
 				},
-				NodeDrainTimeout:        duration5s,
-				NodeVolumeDetachTimeout: duration5s,
-				NodeDeletionTimeout:     duration5s,
 			},
 		},
 	}
@@ -1996,9 +2025,9 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 		"modified-annotation":  "modified-value-2", // Modify the value of the annotation
 		// Drop "dropped-annotation"
 	}
-	kcp.Spec.MachineTemplate.NodeDrainTimeout = duration10s
-	kcp.Spec.MachineTemplate.NodeDeletionTimeout = duration10s
-	kcp.Spec.MachineTemplate.NodeVolumeDetachTimeout = duration10s
+	kcp.Spec.MachineTemplate.Spec.Deletion.NodeDrainTimeoutSeconds = duration10s
+	kcp.Spec.MachineTemplate.Spec.Deletion.NodeDeletionTimeoutSeconds = duration10s
+	kcp.Spec.MachineTemplate.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = duration10s
 
 	// Use the updated KCP.
 	controlPlane.KCP = kcp
@@ -2018,17 +2047,17 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 	expectedAnnotations[controlplanev1.PreTerminateHookCleanupAnnotation] = ""
 	g.Expect(updatedInplaceMutatingMachine.Annotations).Should(Equal(expectedAnnotations))
 	// Verify Node timeout values
-	g.Expect(updatedInplaceMutatingMachine.Spec.NodeDrainTimeout).Should(And(
+	g.Expect(updatedInplaceMutatingMachine.Spec.Deletion.NodeDrainTimeoutSeconds).Should(And(
 		Not(BeNil()),
-		HaveValue(BeComparableTo(*kcp.Spec.MachineTemplate.NodeDrainTimeout)),
+		HaveValue(BeComparableTo(*kcp.Spec.MachineTemplate.Spec.Deletion.NodeDrainTimeoutSeconds)),
 	))
-	g.Expect(updatedInplaceMutatingMachine.Spec.NodeDeletionTimeout).Should(And(
+	g.Expect(updatedInplaceMutatingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds).Should(And(
 		Not(BeNil()),
-		HaveValue(BeComparableTo(*kcp.Spec.MachineTemplate.NodeDeletionTimeout)),
+		HaveValue(BeComparableTo(*kcp.Spec.MachineTemplate.Spec.Deletion.NodeDeletionTimeoutSeconds)),
 	))
-	g.Expect(updatedInplaceMutatingMachine.Spec.NodeVolumeDetachTimeout).Should(And(
+	g.Expect(updatedInplaceMutatingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).Should(And(
 		Not(BeNil()),
-		HaveValue(BeComparableTo(*kcp.Spec.MachineTemplate.NodeVolumeDetachTimeout)),
+		HaveValue(BeComparableTo(*kcp.Spec.MachineTemplate.Spec.Deletion.NodeVolumeDetachTimeoutSeconds)),
 	))
 	// Verify that the non in-place mutating fields remain the same.
 	g.Expect(updatedInplaceMutatingMachine.Spec.FailureDomain).Should(Equal(inPlaceMutatingMachine.Spec.FailureDomain))
@@ -2075,13 +2104,13 @@ func TestKubeadmControlPlaneReconciler_syncMachines(t *testing.T) {
 	g.Expect(updatedDeletingMachine.Labels).Should(Equal(deletingMachine.Labels))
 	g.Expect(updatedDeletingMachine.Annotations).Should(Equal(deletingMachine.Annotations))
 	// Verify Node timeout values
-	g.Expect(updatedDeletingMachine.Spec.NodeDrainTimeout).Should(Equal(kcp.Spec.MachineTemplate.NodeDrainTimeout))
-	g.Expect(updatedDeletingMachine.Spec.NodeDeletionTimeout).Should(Equal(kcp.Spec.MachineTemplate.NodeDeletionTimeout))
-	g.Expect(updatedDeletingMachine.Spec.NodeVolumeDetachTimeout).Should(Equal(kcp.Spec.MachineTemplate.NodeVolumeDetachTimeout))
+	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDrainTimeoutSeconds).Should(Equal(kcp.Spec.MachineTemplate.Spec.Deletion.NodeDrainTimeoutSeconds))
+	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds).Should(Equal(kcp.Spec.MachineTemplate.Spec.Deletion.NodeDeletionTimeoutSeconds))
+	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).Should(Equal(kcp.Spec.MachineTemplate.Spec.Deletion.NodeVolumeDetachTimeoutSeconds))
 	// Verify the machine spec is otherwise unchanged.
-	deletingMachine.Spec.NodeDrainTimeout = kcp.Spec.MachineTemplate.NodeDrainTimeout
-	deletingMachine.Spec.NodeDeletionTimeout = kcp.Spec.MachineTemplate.NodeDeletionTimeout
-	deletingMachine.Spec.NodeVolumeDetachTimeout = kcp.Spec.MachineTemplate.NodeVolumeDetachTimeout
+	deletingMachine.Spec.Deletion.NodeDrainTimeoutSeconds = kcp.Spec.MachineTemplate.Spec.Deletion.NodeDrainTimeoutSeconds
+	deletingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds = kcp.Spec.MachineTemplate.Spec.Deletion.NodeDeletionTimeoutSeconds
+	deletingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = kcp.Spec.MachineTemplate.Spec.Deletion.NodeVolumeDetachTimeoutSeconds
 	g.Expect(updatedDeletingMachine.Spec).Should(BeComparableTo(deletingMachine.Spec))
 }
 
@@ -2094,13 +2123,17 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			Namespace: metav1.NamespaceDefault,
 		},
 		Spec: clusterv1.MachineSpec{
-			Version:           ptr.To("v1.31.0"),
-			ProviderID:        ptr.To("foo"),
-			InfrastructureRef: corev1.ObjectReference{Kind: "GenericInfrastructureMachine", APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1", Name: "m1"},
+			Version:    "v1.31.0",
+			ProviderID: "foo",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     "GenericInfrastructureMachine",
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Name:     "m1",
+			},
 		},
 	}
 	defaultMachine1NotUpToDate := defaultMachine1.DeepCopy()
-	defaultMachine1NotUpToDate.Spec.Version = ptr.To("v1.30.0")
+	defaultMachine1NotUpToDate.Spec.Version = "v1.30.0"
 
 	defaultMachine2 := clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -2125,19 +2158,15 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			Version: "v1.31.0",
 		},
 		Status: controlplanev1.KubeadmControlPlaneStatus{
-			Initialized: true,
-			Conditions: clusterv1.Conditions{
-				{Type: controlplanev1.AvailableCondition, Status: corev1.ConditionTrue,
-					LastTransitionTime: metav1.Time{Time: now.Add(-5 * time.Second)}},
+			Initialization: controlplanev1.KubeadmControlPlaneInitializationStatus{
+				ControlPlaneInitialized: ptr.To(true),
 			},
-			V1Beta2: &controlplanev1.KubeadmControlPlaneV1Beta2Status{
-				Conditions: []metav1.Condition{
-					{
-						Type:               controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
-						Status:             metav1.ConditionTrue,
-						Reason:             controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
-						LastTransitionTime: metav1.Time{Time: now.Add(-5 * time.Second)},
-					},
+			Conditions: []metav1.Condition{
+				{
+					Type:               controlplanev1.KubeadmControlPlaneInitializedCondition,
+					Status:             metav1.ConditionTrue,
+					Reason:             controlplanev1.KubeadmControlPlaneInitializedReason,
+					LastTransitionTime: metav1.Time{Time: now.Add(-5 * time.Second)},
 				},
 			},
 		},
@@ -2157,12 +2186,11 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			controlPlane: &internal.ControlPlane{
 				KCP: func() *controlplanev1.KubeadmControlPlane {
 					kcp := defaultKCP.DeepCopy()
-					kcp.Status.Initialized = false
-					conditions.MarkFalse(kcp, controlplanev1.AvailableCondition, "", clusterv1.ConditionSeverityError, "")
-					v1beta2conditions.Set(kcp, metav1.Condition{
-						Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					kcp.Status.Initialization.ControlPlaneInitialized = ptr.To(false)
+					conditions.Set(kcp, metav1.Condition{
+						Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 						Status: metav1.ConditionFalse,
-						Reason: controlplanev1.KubeadmControlPlaneNotInitializedV1Beta2Reason,
+						Reason: controlplanev1.KubeadmControlPlaneNotInitializedReason,
 					})
 					return kcp
 				}(),
@@ -2172,65 +2200,65 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			},
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionFalse,
-					Reason: controlplanev1.KubeadmControlPlaneNotInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneNotInitializedReason,
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterInspectionFailedReason,
 					Message: "Waiting for Cluster control plane to be initialized",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsInspectionFailedReason,
 					Message: "Waiting for Cluster control plane to be initialized",
 				},
 			},
 			expectMachineConditions: []metav1.Condition{
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for Cluster control plane to be initialized",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for Cluster control plane to be initialized",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for Cluster control plane to be initialized",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for Cluster control plane to be initialized",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedReason,
 					Message: "Waiting for Cluster control plane to be initialized",
 				},
 				{
-					Type:   clusterv1.MachineUpToDateV1Beta2Condition,
+					Type:   clusterv1.MachineUpToDateCondition,
 					Status: metav1.ConditionTrue,
-					Reason: clusterv1.MachineUpToDateV1Beta2Reason,
+					Reason: clusterv1.MachineUpToDateReason,
 				},
 			},
 		},
 		{
 			name: "Machines up to date",
 			controlPlane: func() *internal.ControlPlane {
-				controlPlane, err := internal.NewControlPlane(ctx, nil, env.GetClient(), defaultCluster, defaultKCP, collections.FromMachines(
+				controlPlane, err := internal.NewControlPlane(ctx, nil, env.GetClient(), defaultCluster, defaultKCP.DeepCopy(), collections.FromMachines(
 					defaultMachine1.DeepCopy(),
 				))
 				if err != nil {
@@ -2245,69 +2273,70 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 					},
 				},
 			},
+			lastProbeSuccessTime: now.Add(-3 * time.Minute),
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
 				},
 				{
-					Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status: metav1.ConditionUnknown,
-					Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthUnknownV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthUnknownReason,
 					Message: "* Machine machine1-test:\n" +
 						"  * EtcdMemberHealthy: Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status: metav1.ConditionUnknown,
-					Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthUnknownV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthUnknownReason,
 					Message: "* Machine machine1-test:\n" +
 						"  * Control plane components: Waiting for a Node with spec.providerID foo to exist",
 				},
 			},
 			expectMachineConditions: []metav1.Condition{
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:   clusterv1.MachineUpToDateV1Beta2Condition,
+					Type:   clusterv1.MachineUpToDateCondition,
 					Status: metav1.ConditionTrue,
-					Reason: clusterv1.MachineUpToDateV1Beta2Reason,
+					Reason: clusterv1.MachineUpToDateReason,
 				},
 			},
 		},
 		{
 			name: "Machines not up to date",
 			controlPlane: func() *internal.ControlPlane {
-				controlPlane, err := internal.NewControlPlane(ctx, nil, env.GetClient(), defaultCluster, defaultKCP, collections.FromMachines(
+				controlPlane, err := internal.NewControlPlane(ctx, nil, env.GetClient(), defaultCluster, defaultKCP.DeepCopy(), collections.FromMachines(
 					defaultMachine1NotUpToDate.DeepCopy(),
 				))
 				if err != nil {
@@ -2322,63 +2351,224 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 					},
 				},
 			},
+			lastProbeSuccessTime: now.Add(-3 * time.Minute),
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
 				},
 				{
-					Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status: metav1.ConditionUnknown,
-					Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthUnknownV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthUnknownReason,
 					Message: "* Machine machine1-test:\n" +
 						"  * EtcdMemberHealthy: Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status: metav1.ConditionUnknown,
-					Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthUnknownV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthUnknownReason,
 					Message: "* Machine machine1-test:\n" +
 						"  * Control plane components: Waiting for a Node with spec.providerID foo to exist",
 				},
 			},
 			expectMachineConditions: []metav1.Condition{
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedReason,
 					Message: "Waiting for a Node with spec.providerID foo to exist",
 				},
 				{
-					Type:    clusterv1.MachineUpToDateV1Beta2Condition,
+					Type:    clusterv1.MachineUpToDateCondition,
 					Status:  metav1.ConditionFalse,
-					Reason:  clusterv1.MachineNotUpToDateV1Beta2Reason,
+					Reason:  clusterv1.MachineNotUpToDateReason,
 					Message: "* Version v1.30.0, v1.31.0 required",
+				},
+			},
+		},
+		{
+			name: "connection down, preserve conditions as they have been set before (probe did not succeed yet)",
+			controlPlane: &internal.ControlPlane{
+				Cluster: defaultCluster,
+				KCP: func() *controlplanev1.KubeadmControlPlane {
+					kcp := defaultKCP.DeepCopy()
+					for i, condition := range kcp.Status.Conditions {
+						if condition.Type == controlplanev1.KubeadmControlPlaneInitializedCondition {
+							kcp.Status.Conditions[i].LastTransitionTime.Time = now.Add(-4 * time.Minute)
+						}
+					}
+					conditions.Set(kcp, metav1.Condition{
+						Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
+						Status: metav1.ConditionTrue,
+						Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyReason,
+					})
+					conditions.Set(kcp, metav1.Condition{
+						Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
+						Status: metav1.ConditionTrue,
+						Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyReason,
+					})
+					return kcp
+				}(),
+				Machines: map[string]*clusterv1.Machine{
+					defaultMachine1.Name: func() *clusterv1.Machine {
+						m := defaultMachine1.DeepCopy()
+						conditions.Set(m, metav1.Condition{
+							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
+							Status: metav1.ConditionTrue,
+							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
+						})
+						return m
+					}(),
+					defaultMachine2.Name: func() *clusterv1.Machine {
+						m := defaultMachine2.DeepCopy()
+						conditions.Set(m, metav1.Condition{
+							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
+							Status: metav1.ConditionTrue,
+							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
+						})
+						return m
+					}(),
+				},
+			},
+			managementCluster: &fakeManagementCluster{
+				Workload: &fakeWorkloadCluster{
+					Workload: &internal.Workload{
+						Client: fake.NewClientBuilder().Build(),
+					},
+				},
+			},
+			lastProbeSuccessTime: time.Time{}, // probe did not succeed yet
+			expectErr:            "connection to the workload cluster not established yet",
+			expectKCPConditions: []metav1.Condition{
+				{
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
+					Status: metav1.ConditionTrue,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
+				},
+				{
+					Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
+					Status: metav1.ConditionTrue,
+					Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyReason,
+				},
+				{
+					Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
+					Status: metav1.ConditionTrue,
+					Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyReason,
+				},
+			},
+			expectMachineConditions: []metav1.Condition{
+				{
+					Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
+					Status: metav1.ConditionTrue,
+					Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
+				},
+				{
+					Type:   clusterv1.MachineUpToDateCondition,
+					Status: metav1.ConditionTrue,
+					Reason: clusterv1.MachineUpToDateReason,
+				},
+			},
+		},
+		{
+			name: "connection down, set conditions as they haven't been set before (probe did not succeed yet)",
+			controlPlane: func() *internal.ControlPlane {
+				controlPlane, err := internal.NewControlPlane(ctx, nil, env.GetClient(), defaultCluster, defaultKCP.DeepCopy(), collections.FromMachines(
+					defaultMachine1.DeepCopy(),
+				))
+				if err != nil {
+					panic(err)
+				}
+				return controlPlane
+			}(),
+			managementCluster: &fakeManagementCluster{
+				Workload: &fakeWorkloadCluster{
+					Workload: &internal.Workload{
+						Client: fake.NewClientBuilder().Build(),
+					},
+				},
+			},
+			lastProbeSuccessTime: time.Time{}, // probe did not succeed yet
+			expectErr:            "connection to the workload cluster not established yet",
+			expectKCPConditions: []metav1.Condition{
+				{
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
+					Status: metav1.ConditionTrue,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
+				},
+				{
+					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
+					Status:  metav1.ConditionUnknown,
+					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterConnectionDownReason,
+					Message: "Remote connection not established yet",
+				},
+				{
+					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
+					Status:  metav1.ConditionUnknown,
+					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsConnectionDownReason,
+					Message: "Remote connection not established yet",
+				},
+			},
+			expectMachineConditions: []metav1.Condition{
+				{
+					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
+					Status:  metav1.ConditionUnknown,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
+					Message: "Remote connection not established yet",
+				},
+				{
+					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
+					Status:  metav1.ConditionUnknown,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
+					Message: "Remote connection not established yet",
+				},
+				{
+					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
+					Status:  metav1.ConditionUnknown,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
+					Message: "Remote connection not established yet",
+				},
+				{
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+					Status:  metav1.ConditionUnknown,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
+					Message: "Remote connection not established yet",
+				},
+				{
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
+					Status:  metav1.ConditionUnknown,
+					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberConnectionDownReason,
+					Message: "Remote connection not established yet",
+				},
+				{
+					Type:   clusterv1.MachineUpToDateCondition,
+					Status: metav1.ConditionTrue,
+					Reason: clusterv1.MachineUpToDateReason,
 				},
 			},
 		},
@@ -2389,43 +2579,38 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 				KCP: func() *controlplanev1.KubeadmControlPlane {
 					kcp := defaultKCP.DeepCopy()
 					for i, condition := range kcp.Status.Conditions {
-						if condition.Type == controlplanev1.AvailableCondition {
+						if condition.Type == controlplanev1.KubeadmControlPlaneInitializedCondition {
 							kcp.Status.Conditions[i].LastTransitionTime.Time = now.Add(-4 * time.Minute)
 						}
 					}
-					for i, condition := range kcp.Status.V1Beta2.Conditions {
-						if condition.Type == controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition {
-							kcp.Status.V1Beta2.Conditions[i].LastTransitionTime.Time = now.Add(-4 * time.Minute)
-						}
-					}
-					v1beta2conditions.Set(kcp, metav1.Condition{
-						Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					conditions.Set(kcp, metav1.Condition{
+						Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 						Status: metav1.ConditionTrue,
-						Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Reason,
+						Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyReason,
 					})
-					v1beta2conditions.Set(kcp, metav1.Condition{
-						Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					conditions.Set(kcp, metav1.Condition{
+						Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 						Status: metav1.ConditionTrue,
-						Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Reason,
+						Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyReason,
 					})
 					return kcp
 				}(),
 				Machines: map[string]*clusterv1.Machine{
 					defaultMachine1.Name: func() *clusterv1.Machine {
 						m := defaultMachine1.DeepCopy()
-						v1beta2conditions.Set(m, metav1.Condition{
-							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+						conditions.Set(m, metav1.Condition{
+							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 							Status: metav1.ConditionTrue,
-							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningV1Beta2Reason,
+							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
 						})
 						return m
 					}(),
 					defaultMachine2.Name: func() *clusterv1.Machine {
 						m := defaultMachine2.DeepCopy()
-						v1beta2conditions.Set(m, metav1.Condition{
-							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+						conditions.Set(m, metav1.Condition{
+							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 							Status: metav1.ConditionTrue,
-							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningV1Beta2Reason,
+							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
 						})
 						return m
 					}(),
@@ -2442,31 +2627,31 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 				"connection to the workload cluster is down",
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
 				},
 				{
-					Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyReason,
 				},
 				{
-					Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyReason,
 				},
 			},
 			expectMachineConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
 				},
 				{
-					Type:   clusterv1.MachineUpToDateV1Beta2Condition,
+					Type:   clusterv1.MachineUpToDateCondition,
 					Status: metav1.ConditionTrue,
-					Reason: clusterv1.MachineUpToDateV1Beta2Reason,
+					Reason: clusterv1.MachineUpToDateReason,
 				},
 			},
 		},
@@ -2477,13 +2662,8 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 				KCP: func() *controlplanev1.KubeadmControlPlane {
 					kcp := defaultKCP.DeepCopy()
 					for i, condition := range kcp.Status.Conditions {
-						if condition.Type == controlplanev1.AvailableCondition {
+						if condition.Type == controlplanev1.KubeadmControlPlaneInitializedCondition {
 							kcp.Status.Conditions[i].LastTransitionTime.Time = now.Add(-4 * time.Minute)
-						}
-					}
-					for i, condition := range kcp.Status.V1Beta2.Conditions {
-						if condition.Type == controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition {
-							kcp.Status.V1Beta2.Conditions[i].LastTransitionTime.Time = now.Add(-4 * time.Minute)
 						}
 					}
 					return kcp
@@ -2504,58 +2684,58 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 				"connection to the workload cluster is down",
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-3*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-3*time.Minute).Format(time.RFC3339)),
 				},
 			},
 			expectMachineConditions: []metav1.Condition{
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-3*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-3*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-3*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-3*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-3*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:   clusterv1.MachineUpToDateV1Beta2Condition,
+					Type:   clusterv1.MachineUpToDateCondition,
 					Status: metav1.ConditionTrue,
-					Reason: clusterv1.MachineUpToDateV1Beta2Reason,
+					Reason: clusterv1.MachineUpToDateReason,
 				},
 			},
 		},
@@ -2566,43 +2746,38 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 				KCP: func() *controlplanev1.KubeadmControlPlane {
 					kcp := defaultKCP.DeepCopy()
 					for i, condition := range kcp.Status.Conditions {
-						if condition.Type == controlplanev1.AvailableCondition {
+						if condition.Type == controlplanev1.KubeadmControlPlaneInitializedCondition {
 							kcp.Status.Conditions[i].LastTransitionTime.Time = now.Add(-7 * time.Minute)
 						}
 					}
-					for i, condition := range kcp.Status.V1Beta2.Conditions {
-						if condition.Type == controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition {
-							kcp.Status.V1Beta2.Conditions[i].LastTransitionTime.Time = now.Add(-7 * time.Minute)
-						}
-					}
-					v1beta2conditions.Set(kcp, metav1.Condition{
-						Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					conditions.Set(kcp, metav1.Condition{
+						Type:   controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 						Status: metav1.ConditionTrue,
-						Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Reason,
+						Reason: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyReason,
 					})
-					v1beta2conditions.Set(kcp, metav1.Condition{
-						Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					conditions.Set(kcp, metav1.Condition{
+						Type:   controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 						Status: metav1.ConditionTrue,
-						Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Reason,
+						Reason: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyReason,
 					})
 					return kcp
 				}(),
 				Machines: map[string]*clusterv1.Machine{
 					defaultMachine1.Name: func() *clusterv1.Machine {
 						m := defaultMachine1.DeepCopy()
-						v1beta2conditions.Set(m, metav1.Condition{
-							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+						conditions.Set(m, metav1.Condition{
+							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 							Status: metav1.ConditionTrue,
-							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningV1Beta2Reason,
+							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
 						})
 						return m
 					}(),
 					defaultMachine2.Name: func() *clusterv1.Machine {
 						m := defaultMachine2.DeepCopy()
-						v1beta2conditions.Set(m, metav1.Condition{
-							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+						conditions.Set(m, metav1.Condition{
+							Type:   controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 							Status: metav1.ConditionTrue,
-							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningV1Beta2Reason,
+							Reason: controlplanev1.KubeadmControlPlaneMachinePodRunningReason,
 						})
 						return m
 					}(),
@@ -2615,58 +2790,58 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			expectErr: "connection to the workload cluster is down",
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-6*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-6*time.Minute).Format(time.RFC3339)),
 				},
 			},
 			expectMachineConditions: []metav1.Condition{
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-6*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-6*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-6*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-6*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberConnectionDownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberConnectionDownReason,
 					Message: fmt.Sprintf("Last successful probe at %s", now.Add(-6*time.Minute).Format(time.RFC3339)),
 				},
 				{
-					Type:   clusterv1.MachineUpToDateV1Beta2Condition,
+					Type:   clusterv1.MachineUpToDateCondition,
 					Status: metav1.ConditionTrue,
-					Reason: clusterv1.MachineUpToDateV1Beta2Reason,
+					Reason: clusterv1.MachineUpToDateReason,
 				},
 			},
 		},
@@ -2674,7 +2849,7 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			name: "internal error occurred when trying to get workload cluster (InspectionFailed)",
 			controlPlane: &internal.ControlPlane{
 				Cluster: defaultCluster,
-				KCP:     defaultKCP,
+				KCP:     defaultKCP.DeepCopy(),
 				Machines: map[string]*clusterv1.Machine{
 					defaultMachine1.Name: defaultMachine1.DeepCopy(),
 					defaultMachine2.Name: defaultMachine2.DeepCopy(),
@@ -2687,58 +2862,58 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			expectErr:            "cannot get client for the workload cluster: failed to get secret; etcd CA bundle",
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterInspectionFailedReason,
 					Message: "Please check controller logs for errors",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsInspectionFailedReason,
 					Message: "Please check controller logs for errors",
 				},
 			},
 			expectMachineConditions: []metav1.Condition{
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Please check controller logs for errors",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Please check controller logs for errors",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Please check controller logs for errors",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachinePodInspectionFailedReason,
 					Message: "Please check controller logs for errors",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneMachineEtcdMemberInspectionFailedReason,
 					Message: "Please check controller logs for errors",
 				},
 				{
-					Type:   clusterv1.MachineUpToDateV1Beta2Condition,
+					Type:   clusterv1.MachineUpToDateCondition,
 					Status: metav1.ConditionTrue,
-					Reason: clusterv1.MachineUpToDateV1Beta2Reason,
+					Reason: clusterv1.MachineUpToDateReason,
 				},
 			},
 		},
@@ -2746,7 +2921,7 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			name: "successfully got workload cluster (without Machines)",
 			controlPlane: &internal.ControlPlane{
 				Cluster: defaultCluster,
-				KCP:     defaultKCP,
+				KCP:     defaultKCP.DeepCopy(),
 			},
 			managementCluster: &fakeManagementCluster{
 				Workload: &fakeWorkloadCluster{
@@ -2758,20 +2933,20 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 			lastProbeSuccessTime: now.Add(-3 * time.Minute),
 			expectKCPConditions: []metav1.Condition{
 				{
-					Type:   controlplanev1.KubeadmControlPlaneInitializedV1Beta2Condition,
+					Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: controlplanev1.KubeadmControlPlaneInitializedV1Beta2Reason,
+					Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterHealthUnknownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneEtcdClusterHealthUnknownReason,
 					Message: "No Machines reporting etcd member status",
 				},
 				{
-					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyV1Beta2Condition,
+					Type:    controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition,
 					Status:  metav1.ConditionUnknown,
-					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthUnknownV1Beta2Reason,
+					Reason:  controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthUnknownReason,
 					Message: "No Machines reporting control plane status",
 				},
 			},
@@ -2815,9 +2990,9 @@ func TestKubeadmControlPlaneReconciler_reconcileControlPlaneAndMachinesCondition
 				g.Expect(err).ToNot(HaveOccurred())
 			}
 
-			g.Expect(tc.controlPlane.KCP.GetV1Beta2Conditions()).To(v1beta2conditions.MatchConditions(tc.expectKCPConditions, v1beta2conditions.IgnoreLastTransitionTime(true)))
+			g.Expect(tc.controlPlane.KCP.GetConditions()).To(conditions.MatchConditions(tc.expectKCPConditions, conditions.IgnoreLastTransitionTime(true)))
 			for _, machine := range tc.controlPlane.Machines {
-				g.Expect(machine.GetV1Beta2Conditions()).To(v1beta2conditions.MatchConditions(tc.expectMachineConditions, v1beta2conditions.IgnoreLastTransitionTime(true)))
+				g.Expect(machine.GetConditions()).To(conditions.MatchConditions(tc.expectMachineConditions, conditions.IgnoreLastTransitionTime(true)))
 			}
 		})
 	}
@@ -2828,8 +3003,12 @@ type fakeClusterCache struct {
 	lastProbeSuccessTime time.Time
 }
 
-func (cc *fakeClusterCache) GetLastProbeSuccessTimestamp(_ context.Context, _ client.ObjectKey) time.Time {
-	return cc.lastProbeSuccessTime
+func (cc *fakeClusterCache) GetHealthCheckingState(_ context.Context, _ client.ObjectKey) clustercache.HealthCheckingState {
+	return clustercache.HealthCheckingState{
+		LastProbeTime:        time.Time{},
+		LastProbeSuccessTime: cc.lastProbeSuccessTime,
+		ConsecutiveFailures:  0,
+	}
 }
 
 func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
@@ -2935,7 +3114,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 			},
 		},
 		{
-			name: "Requeue, if the deleting Machine has no PreTerminateDeleteHookSucceeded condition",
+			name: "Requeue, if the deleting Machine has no Deleting condition",
 			controlPlane: &internal.ControlPlane{
 				KCP: &controlplanev1.KubeadmControlPlane{
 					Spec: controlplanev1.KubeadmControlPlaneSpec{
@@ -2953,7 +3132,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 			},
 		},
 		{
-			name: "Requeue, if the deleting Machine has PreTerminateDeleteHookSucceeded condition true",
+			name: "Requeue, if the deleting Machine has Deleting condition false",
 			controlPlane: &internal.ControlPlane{
 				KCP: &controlplanev1.KubeadmControlPlane{
 					Spec: controlplanev1.KubeadmControlPlaneSpec{
@@ -2963,7 +3142,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 				Machines: collections.Machines{
 					deletingMachineWithKCPPreTerminateHook.Name: func() *clusterv1.Machine {
 						m := deletingMachineWithKCPPreTerminateHook.DeepCopy()
-						conditions.MarkTrue(m, clusterv1.PreTerminateDeleteHookSucceededCondition)
+						conditions.Set(m, metav1.Condition{Type: clusterv1.MachineDeletingCondition, Status: metav1.ConditionFalse})
 						return m
 					}(),
 				},
@@ -2975,7 +3154,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 			},
 		},
 		{
-			name: "Requeue, if the deleting Machine has PreTerminateDeleteHookSucceeded condition false but not waiting for hook",
+			name: "Requeue, if the deleting Machine has Deleting condition true but not waiting for hook",
 			controlPlane: &internal.ControlPlane{
 				KCP: &controlplanev1.KubeadmControlPlane{
 					Spec: controlplanev1.KubeadmControlPlaneSpec{
@@ -2985,7 +3164,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 				Machines: collections.Machines{
 					deletingMachineWithKCPPreTerminateHook.Name: func() *clusterv1.Machine {
 						m := deletingMachineWithKCPPreTerminateHook.DeepCopy()
-						conditions.MarkFalse(m, clusterv1.PreTerminateDeleteHookSucceededCondition, "some-other-reason", clusterv1.ConditionSeverityInfo, "some message")
+						conditions.Set(m, metav1.Condition{Type: clusterv1.MachineDeletingCondition, Status: metav1.ConditionTrue, Reason: "Some other reason"})
 						return m
 					}(),
 				},
@@ -3009,7 +3188,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 					machine.Name: machine, // Leadership will be forwarded to this Machine.
 					deletingMachineWithKCPPreTerminateHook.Name: func() *clusterv1.Machine {
 						m := deletingMachineWithKCPPreTerminateHook.DeepCopy()
-						conditions.MarkFalse(m, clusterv1.PreTerminateDeleteHookSucceededCondition, clusterv1.WaitingExternalHookReason, clusterv1.ConditionSeverityInfo, "some message")
+						conditions.Set(m, metav1.Condition{Type: clusterv1.MachineDeletingCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineDeletingWaitingForPreTerminateHookReason})
 						return m
 					}(),
 				},
@@ -3035,13 +3214,13 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 					deletingMachineWithKCPPreTerminateHook.Name: func() *clusterv1.Machine {
 						m := deletingMachineWithKCPPreTerminateHook.DeepCopy()
 						m.DeletionTimestamp.Time = m.DeletionTimestamp.Add(-1 * time.Duration(1) * time.Second) // Make sure this (the oldest) Machine is selected to run the pre-terminate hook.
-						conditions.MarkFalse(m, clusterv1.PreTerminateDeleteHookSucceededCondition, clusterv1.WaitingExternalHookReason, clusterv1.ConditionSeverityInfo, "some message")
+						conditions.Set(m, metav1.Condition{Type: clusterv1.MachineDeletingCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineDeletingWaitingForPreTerminateHookReason})
 						return m
 					}(),
 					deletingMachineWithKCPPreTerminateHook.Name + "-2": func() *clusterv1.Machine {
 						m := deletingMachineWithKCPPreTerminateHook.DeepCopy()
 						m.Name += "-2"
-						conditions.MarkFalse(m, clusterv1.PreTerminateDeleteHookSucceededCondition, clusterv1.WaitingExternalHookReason, clusterv1.ConditionSeverityInfo, "some message")
+						conditions.Set(m, metav1.Condition{Type: clusterv1.MachineDeletingCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineDeletingWaitingForPreTerminateHookReason})
 						return m
 					}(),
 				},
@@ -3066,7 +3245,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 				Machines: collections.Machines{
 					deletingMachineWithKCPPreTerminateHook.Name: func() *clusterv1.Machine {
 						m := deletingMachineWithKCPPreTerminateHook.DeepCopy()
-						conditions.MarkFalse(m, clusterv1.PreTerminateDeleteHookSucceededCondition, clusterv1.WaitingExternalHookReason, clusterv1.ConditionSeverityInfo, "some message")
+						conditions.Set(m, metav1.Condition{Type: clusterv1.MachineDeletingCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineDeletingWaitingForPreTerminateHookReason})
 						return m
 					}(),
 				},
@@ -3086,9 +3265,9 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 					Spec: controlplanev1.KubeadmControlPlaneSpec{
 						Version: "v1.31.0",
 						KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-							ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
+							ClusterConfiguration: bootstrapv1.ClusterConfiguration{
 								Etcd: bootstrapv1.Etcd{
-									External: &bootstrapv1.ExternalEtcd{
+									External: bootstrapv1.ExternalEtcd{
 										Endpoints: []string{"1.2.3.4"}, // Etcd is not managed by KCP
 									},
 								},
@@ -3100,7 +3279,7 @@ func TestKubeadmControlPlaneReconciler_reconcilePreTerminateHook(t *testing.T) {
 					machine.Name: machine,
 					deletingMachineWithKCPPreTerminateHook.Name: func() *clusterv1.Machine {
 						m := deletingMachineWithKCPPreTerminateHook.DeepCopy()
-						conditions.MarkFalse(m, clusterv1.PreTerminateDeleteHookSucceededCondition, clusterv1.WaitingExternalHookReason, clusterv1.ConditionSeverityInfo, "some message")
+						conditions.Set(m, metav1.Condition{Type: clusterv1.MachineDeletingCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineDeletingWaitingForPreTerminateHookReason})
 						return m
 					}(),
 				},
@@ -3209,12 +3388,10 @@ func TestKubeadmControlPlaneReconciler_updateCoreDNS(t *testing.T) {
 			Replicas: nil,
 			Version:  "v1.16.6",
 			KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-				ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
 					DNS: bootstrapv1.DNS{
-						ImageMeta: bootstrapv1.ImageMeta{
-							ImageRepository: "registry.k8s.io",
-							ImageTag:        "1.7.2",
-						},
+						ImageRepository: "registry.k8s.io",
+						ImageTag:        "1.7.2",
 					},
 				},
 			},
@@ -3301,7 +3478,7 @@ kubernetesVersion: metav1.16.1`,
 			},
 		}
 
-		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp, semver.MustParse("1.19.1"))).To(Succeed())
+		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp)).To(Succeed())
 
 		var actualCoreDNSCM corev1.ConfigMap
 		g.Expect(fakeClient.Get(ctx, client.ObjectKey{Name: "coredns", Namespace: metav1.NamespaceSystem}, &actualCoreDNSCM)).To(Succeed())
@@ -3337,7 +3514,7 @@ kubernetesVersion: metav1.16.1`,
 	t.Run("returns no error when no ClusterConfiguration is specified", func(t *testing.T) {
 		g := NewWithT(t)
 		kcp := kcp.DeepCopy()
-		kcp.Spec.KubeadmConfigSpec.ClusterConfiguration = nil
+		kcp.Spec.KubeadmConfigSpec.ClusterConfiguration = bootstrapv1.ClusterConfiguration{}
 
 		objs := []client.Object{
 			cluster.DeepCopy(),
@@ -3358,7 +3535,7 @@ kubernetesVersion: metav1.16.1`,
 			},
 		}
 
-		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp, semver.MustParse("1.19.1"))).To(Succeed())
+		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp)).To(Succeed())
 	})
 
 	t.Run("should not return an error when there is no CoreDNS configmap", func(t *testing.T) {
@@ -3380,7 +3557,7 @@ kubernetesVersion: metav1.16.1`,
 			},
 		}
 
-		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp, semver.MustParse("1.19.1"))).To(Succeed())
+		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp)).To(Succeed())
 	})
 
 	t.Run("should not return an error when there is no CoreDNS deployment", func(t *testing.T) {
@@ -3403,7 +3580,7 @@ kubernetesVersion: metav1.16.1`,
 			},
 		}
 
-		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp, semver.MustParse("1.19.1"))).To(Succeed())
+		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp)).To(Succeed())
 	})
 
 	t.Run("should not return an error when no DNS upgrade is requested", func(t *testing.T) {
@@ -3428,7 +3605,7 @@ kubernetesVersion: metav1.16.1`,
 			},
 		}
 
-		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp, semver.MustParse("1.19.1"))).To(Succeed())
+		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp)).To(Succeed())
 
 		var actualCoreDNSCM corev1.ConfigMap
 		g.Expect(fakeClient.Get(ctx, client.ObjectKey{Name: "coredns", Namespace: metav1.NamespaceSystem}, &actualCoreDNSCM)).To(Succeed())
@@ -3463,7 +3640,7 @@ kubernetesVersion: metav1.16.1`,
 			},
 		}
 
-		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp, semver.MustParse("1.19.1"))).ToNot(Succeed())
+		g.Expect(workloadCluster.UpdateCoreDNS(ctx, kcp)).ToNot(Succeed())
 	})
 }
 
@@ -3510,7 +3687,7 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 		g.Expect(result).To(Equal(ctrl.Result{RequeueAfter: deleteRequeueAfter}))
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(kcp.Finalizers).To(ContainElement(controlplanev1.KubeadmControlPlaneFinalizer))
-		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingWaitingForMachineDeletionV1Beta2Reason))
+		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingWaitingForMachineDeletionReason))
 		g.Expect(controlPlane.DeletingMessage).To(Equal("Deleting 3 Machines"))
 
 		controlPlaneMachines := clusterv1.MachineList{}
@@ -3538,7 +3715,7 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 		g.Expect(result).To(BeComparableTo(ctrl.Result{}))
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(kcp.Finalizers).To(BeEmpty())
-		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingDeletionCompletedV1Beta2Reason))
+		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingDeletionCompletedReason))
 		g.Expect(controlPlane.DeletingMessage).To(Equal("Deletion completed"))
 	})
 
@@ -3591,7 +3768,7 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 		g.Expect(result).To(BeComparableTo(ctrl.Result{RequeueAfter: deleteRequeueAfter}))
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(kcp.Finalizers).To(ContainElement(controlplanev1.KubeadmControlPlaneFinalizer))
-		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingWaitingForWorkersDeletionV1Beta2Reason))
+		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingWaitingForWorkersDeletionReason))
 		g.Expect(controlPlane.DeletingMessage).To(Equal("KubeadmControlPlane deletion blocked because following objects still exist:\n* Machines: worker-0, worker-1, worker-2, worker-3, worker-4, ... (5 more)"))
 
 		controlPlaneMachines := clusterv1.MachineList{}
@@ -3612,7 +3789,7 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 		initObjs := []client.Object{cluster.DeepCopy(), kcp.DeepCopy()}
 
 		for i := range 10 {
-			initObjs = append(initObjs, &expv1.MachinePool{
+			initObjs = append(initObjs, &clusterv1.MachinePool{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("mp-%d", i),
 					Namespace: cluster.Namespace,
@@ -3652,7 +3829,7 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 		g.Expect(result).To(BeComparableTo(ctrl.Result{RequeueAfter: deleteRequeueAfter}))
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(kcp.Finalizers).To(ContainElement(controlplanev1.KubeadmControlPlaneFinalizer))
-		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingWaitingForWorkersDeletionV1Beta2Reason))
+		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingWaitingForWorkersDeletionReason))
 		g.Expect(controlPlane.DeletingMessage).To(Equal("KubeadmControlPlane deletion blocked because following objects still exist:\n* MachinePools: mp-0, mp-1, mp-2, mp-3, mp-4, ... (5 more)"))
 
 		controlPlaneMachines := clusterv1.MachineList{}
@@ -3690,7 +3867,7 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 		g.Expect(result).To(BeComparableTo(ctrl.Result{}))
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(kcp.Finalizers).To(BeEmpty())
-		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingDeletionCompletedV1Beta2Reason))
+		g.Expect(controlPlane.DeletingReason).To(Equal(controlplanev1.KubeadmControlPlaneDeletingDeletionCompletedReason))
 		g.Expect(controlPlane.DeletingMessage).To(Equal("Deletion completed"))
 	})
 }
@@ -3725,8 +3902,8 @@ func TestObjectsPendingDelete(t *testing.T) {
 			*machine("w8", withLabels(workerMachineLabels)),
 		},
 	})
-	machinePools := &expv1.MachinePoolList{
-		Items: []expv1.MachinePool{
+	machinePools := &clusterv1.MachinePoolList{
+		Items: []clusterv1.MachinePool{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "mp1",
@@ -3776,11 +3953,10 @@ func createClusterWithControlPlane(namespace string) (*clusterv1.Cluster, *contr
 
 	cluster := newCluster(&types.NamespacedName{Name: kcpName, Namespace: namespace})
 	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "KubeadmControlPlane",
-			Namespace:  namespace,
-			Name:       kcpName,
-			APIVersion: controlplanev1.GroupVersion.String(),
+		ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: controlplanev1.GroupVersion.Group,
+			Kind:     "KubeadmControlPlane",
+			Name:     kcpName,
 		},
 	}
 
@@ -3803,20 +3979,23 @@ func createClusterWithControlPlane(namespace string) (*clusterv1.Cluster, *contr
 		},
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Kind:       "GenericInfrastructureMachineTemplate",
-					Namespace:  namespace,
-					Name:       "infra-foo",
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     builder.GenericInfrastructureMachineTemplateKind,
+						Name:     "infra-foo",
+						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+					},
 				},
 			},
 			Replicas: ptr.To[int32](int32(3)),
 			Version:  "v1.31.0",
-			RolloutStrategy: &controlplanev1.RolloutStrategy{
-				Type: "RollingUpdate",
-				RollingUpdate: &controlplanev1.RollingUpdate{
-					MaxSurge: &intstr.IntOrString{
-						IntVal: 1,
+			Rollout: controlplanev1.KubeadmControlPlaneRolloutSpec{
+				Strategy: controlplanev1.KubeadmControlPlaneRolloutStrategy{
+					Type: controlplanev1.RollingUpdateStrategyType,
+					RollingUpdate: controlplanev1.KubeadmControlPlaneRolloutStrategyRollingUpdate{
+						MaxSurge: &intstr.IntOrString{
+							IntVal: 1,
+						},
 					},
 				},
 			},
@@ -3825,8 +4004,8 @@ func createClusterWithControlPlane(namespace string) (*clusterv1.Cluster, *contr
 
 	genericMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"kind":       "GenericInfrastructureMachineTemplate",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"kind":       builder.GenericInfrastructureMachineTemplateKind,
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-foo",
 				"namespace": namespace,
@@ -3844,8 +4023,8 @@ func createClusterWithControlPlane(namespace string) (*clusterv1.Cluster, *contr
 }
 
 func setKCPHealthy(kcp *controlplanev1.KubeadmControlPlane) {
-	conditions.MarkTrue(kcp, controlplanev1.ControlPlaneComponentsHealthyCondition)
-	conditions.MarkTrue(kcp, controlplanev1.EtcdClusterHealthyCondition)
+	conditions.Set(kcp, metav1.Condition{Type: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition, Status: metav1.ConditionTrue})
+	conditions.Set(kcp, metav1.Condition{Type: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition, Status: metav1.ConditionTrue})
 }
 
 func createMachineNodePair(name string, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ready bool) (*clusterv1.Machine, *corev1.Node) {
@@ -3865,18 +4044,15 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, kcp *control
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: cluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       builder.GenericInfrastructureMachineCRD.Kind,
-				APIVersion: builder.GenericInfrastructureMachineCRD.APIVersion,
-				Name:       builder.GenericInfrastructureMachineCRD.Name,
-				Namespace:  builder.GenericInfrastructureMachineCRD.Namespace,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     builder.GenericInfrastructureMachineKind,
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Name:     "inframachine",
 			},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
-				Kind:       "Node",
-				APIVersion: corev1.SchemeGroupVersion.String(),
-				Name:       name,
+			NodeRef: clusterv1.MachineNodeReference{
+				Name: name,
 			},
 		},
 	}
@@ -3905,15 +4081,14 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, kcp *control
 }
 
 func setMachineHealthy(m *clusterv1.Machine) {
-	m.Status.NodeRef = &corev1.ObjectReference{
-		Kind: "Node",
+	m.Status.NodeRef = clusterv1.MachineNodeReference{
 		Name: "node-1",
 	}
-	conditions.MarkTrue(m, controlplanev1.MachineAPIServerPodHealthyCondition)
-	conditions.MarkTrue(m, controlplanev1.MachineControllerManagerPodHealthyCondition)
-	conditions.MarkTrue(m, controlplanev1.MachineSchedulerPodHealthyCondition)
-	conditions.MarkTrue(m, controlplanev1.MachineEtcdPodHealthyCondition)
-	conditions.MarkTrue(m, controlplanev1.MachineEtcdMemberHealthyCondition)
+	conditions.Set(m, metav1.Condition{Type: controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition, Status: metav1.ConditionTrue})
+	conditions.Set(m, metav1.Condition{Type: controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition, Status: metav1.ConditionTrue})
+	conditions.Set(m, metav1.Condition{Type: controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition, Status: metav1.ConditionTrue})
+	conditions.Set(m, metav1.Condition{Type: controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition, Status: metav1.ConditionTrue})
+	conditions.Set(m, metav1.Condition{Type: controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition, Status: metav1.ConditionTrue})
 }
 
 // newCluster return a CAPI cluster object.

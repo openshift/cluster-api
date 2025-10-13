@@ -24,11 +24,10 @@ import (
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/util/collections"
-	"sigs.k8s.io/cluster-api/util/version"
 )
 
 func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
@@ -37,10 +36,6 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 	machinesRequireUpgrade collections.Machines,
 ) (ctrl.Result, error) {
 	logger := ctrl.LoggerFrom(ctx)
-
-	if controlPlane.KCP.Spec.RolloutStrategy == nil || controlPlane.KCP.Spec.RolloutStrategy.RollingUpdate == nil {
-		return ctrl.Result{}, errors.New("rolloutStrategy is not set")
-	}
 
 	// TODO: handle reconciliation of etcd members and kubeadm config in case they get out of sync with cluster
 
@@ -55,48 +50,27 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
 	}
 
-	if err := workloadCluster.ReconcileKubeletRBACRole(ctx, parsedVersion); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to reconcile the remote kubelet RBAC role")
-	}
-
-	if err := workloadCluster.ReconcileKubeletRBACBinding(ctx, parsedVersion); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to reconcile the remote kubelet RBAC binding")
-	}
-
-	// Ensure kubeadm cluster role  & bindings for v1.18+
-	// as per https://github.com/kubernetes/kubernetes/commit/b117a928a6c3f650931bdac02a41fca6680548c4
-	if err := workloadCluster.AllowBootstrapTokensToGetNodes(ctx); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to set role and role binding for kubeadm")
-	}
-
 	// Ensure kubeadm clusterRoleBinding for v1.29+ as per https://github.com/kubernetes/kubernetes/pull/121305
 	if err := workloadCluster.AllowClusterAdminPermissions(ctx, parsedVersion); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to set cluster-admin ClusterRoleBinding for kubeadm")
 	}
 
 	kubeadmCMMutators := make([]func(*bootstrapv1.ClusterConfiguration), 0)
-	kubeadmCMMutators = append(kubeadmCMMutators, workloadCluster.UpdateKubernetesVersionInKubeadmConfigMap(parsedVersion))
 
-	if controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration != nil {
-		// We intentionally only parse major/minor/patch so that the subsequent code
-		// also already applies to beta versions of new releases.
-		parsedVersionTolerant, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
-		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
-		}
-
+	if controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.IsDefined() {
 		// Get the imageRepository or the correct value if nothing is set and a migration is necessary.
-		imageRepository := internal.ImageRepositoryFromClusterConfig(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration, parsedVersionTolerant)
+		imageRepository := internal.ImageRepositoryFromClusterConfig(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration)
 
 		kubeadmCMMutators = append(kubeadmCMMutators,
 			workloadCluster.UpdateImageRepositoryInKubeadmConfigMap(imageRepository),
-			workloadCluster.UpdateFeatureGatesInKubeadmConfigMap(controlPlane.KCP.Spec.KubeadmConfigSpec, parsedVersionTolerant),
+			workloadCluster.UpdateFeatureGatesInKubeadmConfigMap(controlPlane.KCP.Spec.KubeadmConfigSpec, parsedVersion),
 			workloadCluster.UpdateAPIServerInKubeadmConfigMap(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.APIServer),
 			workloadCluster.UpdateControllerManagerInKubeadmConfigMap(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.ControllerManager),
-			workloadCluster.UpdateSchedulerInKubeadmConfigMap(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Scheduler))
+			workloadCluster.UpdateSchedulerInKubeadmConfigMap(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Scheduler),
+			workloadCluster.UpdateCertificateValidityPeriodDays(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.CertificateValidityPeriodDays))
 
 		// Etcd local and external are mutually exclusive and they cannot be switched, once set.
-		if controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local != nil {
+		if controlPlane.IsEtcdManaged() {
 			kubeadmCMMutators = append(kubeadmCMMutators,
 				workloadCluster.UpdateEtcdLocalInKubeadmConfigMap(controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local))
 		} else {
@@ -110,22 +84,18 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 		return ctrl.Result{}, err
 	}
 
-	if err := workloadCluster.UpdateKubeletConfigMap(ctx, parsedVersion); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to upgrade kubelet config map")
-	}
-
-	switch controlPlane.KCP.Spec.RolloutStrategy.Type {
+	switch controlPlane.KCP.Spec.Rollout.Strategy.Type {
 	case controlplanev1.RollingUpdateStrategyType:
 		// RolloutStrategy is currently defaulted and validated to be RollingUpdate
 		// We can ignore MaxUnavailable because we are enforcing health checks before we get here.
-		maxNodes := *controlPlane.KCP.Spec.Replicas + int32(controlPlane.KCP.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntValue())
+		maxNodes := *controlPlane.KCP.Spec.Replicas + int32(controlPlane.KCP.Spec.Rollout.Strategy.RollingUpdate.MaxSurge.IntValue())
 		if int32(controlPlane.Machines.Len()) < maxNodes {
 			// scaleUp ensures that we don't continue scaling up while waiting for Machines to have NodeRefs
 			return r.scaleUpControlPlane(ctx, controlPlane)
 		}
 		return r.scaleDownControlPlane(ctx, controlPlane, machinesRequireUpgrade)
 	default:
-		logger.Info("RolloutStrategy type is not set to RollingUpdateStrategyType, unable to determine the strategy for rolling out machines")
+		logger.Info("RolloutStrategy type is not set to RollingUpdate, unable to determine the strategy for rolling out machines")
 		return ctrl.Result{}, nil
 	}
 }

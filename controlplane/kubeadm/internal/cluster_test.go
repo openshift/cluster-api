@@ -39,13 +39,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/secret"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 func TestGetMachinesForCluster(t *testing.T) {
@@ -118,6 +119,13 @@ func TestGetWorkloadCluster(t *testing.T) {
 			Name:      "my-cluster",
 			Namespace: ns.Name,
 		},
+		Spec: clusterv1.ClusterSpec{
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Kind:     builder.GenericInfrastructureClusterKind,
+				Name:     "infracluster1",
+			},
+		},
 	}
 	g.Expect(env.CreateAndWait(ctx, cluster)).To(Succeed())
 	defer func(do client.Object) {
@@ -126,7 +134,7 @@ func TestGetWorkloadCluster(t *testing.T) {
 
 	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
 	patch := client.MergeFrom(cluster.DeepCopy())
-	cluster.Status.InfrastructureReady = true
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, cluster, patch)).To(Succeed())
 
 	// Create kubeconfig secret
@@ -212,7 +220,7 @@ func TestGetWorkloadCluster(t *testing.T) {
 			}
 
 			clusterCache, err := clustercache.SetupWithManager(ctx, env.Manager, clustercache.Options{
-				SecretClient: env.Manager.GetClient(),
+				SecretClient: env.GetClient(),
 				Client: clustercache.ClientOptions{
 					UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
 					Cache: clustercache.ClientCacheOptions{
@@ -304,7 +312,7 @@ func machineListForTestGetMachinesForCluster() *clusterv1.MachineList {
 		}
 	}
 	controlPlaneMachine := machine("first-machine")
-	controlPlaneMachine.ObjectMeta.Labels[clusterv1.MachineControlPlaneLabel] = ""
+	controlPlaneMachine.Labels[clusterv1.MachineControlPlaneLabel] = ""
 	controlPlaneMachine.OwnerReferences = ownedRef
 
 	return &clusterv1.MachineList{

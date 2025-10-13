@@ -25,12 +25,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
 	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -47,7 +48,7 @@ type ClusterBackendReconciler struct {
 // NOTE: This is done at best effort in order to make iterative development workflow easier.
 func (r *ClusterBackendReconciler) HotRestart(ctx context.Context) error {
 	inMemoryClusterList := &infrav1.DevClusterList{}
-	if err := r.Client.List(ctx, inMemoryClusterList); err != nil {
+	if err := r.List(ctx, inMemoryClusterList); err != nil {
 		return err
 	}
 
@@ -126,7 +127,7 @@ func (r *ClusterBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 	}
 
 	// Mark the InMemoryCluster ready
-	inMemoryCluster.Status.Ready = true
+	inMemoryCluster.Status.Initialization.Provisioned = ptr.To(true)
 
 	return ctrl.Result{}, nil
 }
@@ -163,8 +164,8 @@ func (r *ClusterBackendReconciler) PatchDevCluster(ctx context.Context, patchHel
 	return patchHelper.Patch(
 		ctx,
 		inMemoryCluster,
-		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			clusterv1.PausedV1Beta2Condition,
+		patch.WithOwnedConditions{Conditions: []string{
+			clusterv1.PausedCondition,
 		}},
 	)
 }
