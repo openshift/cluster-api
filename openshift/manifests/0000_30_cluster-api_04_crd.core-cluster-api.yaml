@@ -14,6 +14,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: clusterclasses.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -5313,6 +5324,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: clusters.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -9093,6 +9115,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: machines.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -11245,6 +11278,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: machinesets.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -13517,6 +13561,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: machinedeployments.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -16121,6 +16176,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: machinedrainrules.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -16911,6 +16977,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: machinepools.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -19188,6 +19265,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: clusterresourcesets.addons.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: addons.cluster.x-k8s.io
   names:
     categories:
@@ -20092,6 +20180,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: clusterresourcesetbindings.addons.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: addons.cluster.x-k8s.io
   names:
     categories:
@@ -20527,6 +20626,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: machinehealthchecks.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: cluster.x-k8s.io
   names:
     categories:
@@ -21962,6 +22072,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: extensionconfigs.runtime.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: runtime.cluster.x-k8s.io
   names:
     categories:
@@ -22705,6 +22826,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: ipaddresses.ipam.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: ipam.cluster.x-k8s.io
   names:
     categories:
@@ -23061,6 +23193,17 @@ metadata:
     clusterctl.cluster.x-k8s.io: ""
   name: ipaddressclaims.ipam.cluster.x-k8s.io
 spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: capi-webhook-service
+          namespace: openshift-cluster-api
+          path: /convert
+      conversionReviewVersions:
+      - v1
+      - v1beta1
   group: ipam.cluster.x-k8s.io
   names:
     categories:
