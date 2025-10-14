@@ -6,6 +6,8 @@ toolchain go1.24.8
 
 require github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20251010134043-eea205c380db
 
+replace github.com/openshift/cluster-capi-operator/manifests-gen => github.com/chrischdi/cluster-capi-operator/manifests-gen v0.0.0-20251014145254-ffafcefa74b1
+
 require (
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20230217124315-7d5c6f04bbb8 // indirect
