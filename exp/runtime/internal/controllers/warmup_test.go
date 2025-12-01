@@ -27,9 +27,9 @@ import (
 	"k8s.io/apiserver/pkg/admission/plugin/webhook/testcerts"
 	utilfeature "k8s.io/component-base/featuregate/testing"
 
-	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
-	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/feature"
 	internalruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
 	runtimeregistry "sigs.k8s.io/cluster-api/internal/runtime/registry"
@@ -95,10 +95,10 @@ func Test_warmupRunnable_Start(t *testing.T) {
 			g.Expect(handlers[1].Name).To(Equal(fmt.Sprintf("second.ext%d", i+1)))
 			g.Expect(handlers[2].Name).To(Equal(fmt.Sprintf("third.ext%d", i+1)))
 
-			conditions := config.GetConditions()
+			conditions := config.GetV1Beta1Conditions()
 			g.Expect(conditions).To(HaveLen(1))
 			g.Expect(conditions[0].Status).To(Equal(corev1.ConditionTrue))
-			g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredCondition))
+			g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredV1Beta1Condition))
 		}
 	})
 
@@ -157,13 +157,13 @@ func Test_warmupRunnable_Start(t *testing.T) {
 
 		for i, config := range list.Items {
 			handlers := config.Status.Handlers
-			conditions := config.GetConditions()
+			conditions := config.GetV1Beta1Conditions()
 
 			// Expect no handlers and a failed condition for the broken extension.
 			if config.Name == brokenExtension {
 				g.Expect(conditions).To(HaveLen(1))
 				g.Expect(conditions[0].Status).To(Equal(corev1.ConditionFalse))
-				g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredCondition))
+				g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredV1Beta1Condition))
 				g.Expect(handlers).To(BeEmpty())
 
 				continue
@@ -177,7 +177,7 @@ func Test_warmupRunnable_Start(t *testing.T) {
 
 			g.Expect(conditions).To(HaveLen(1))
 			g.Expect(conditions[0].Status).To(Equal(corev1.ConditionTrue))
-			g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredCondition))
+			g.Expect(conditions[0].Type).To(Equal(runtimev1.RuntimeExtensionDiscoveredV1Beta1Condition))
 		}
 	})
 }

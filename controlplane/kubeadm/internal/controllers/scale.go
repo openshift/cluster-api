@@ -21,20 +21,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/cluster-api/util/version"
 )
 
 func (r *KubeadmControlPlaneReconciler) initializeControlPlane(ctx context.Context, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
@@ -42,13 +43,11 @@ func (r *KubeadmControlPlaneReconciler) initializeControlPlane(ctx context.Conte
 
 	bootstrapSpec := controlPlane.InitialControlPlaneConfig()
 
-	// We intentionally only parse major/minor/patch so that the subsequent code
-	// also already applies to beta versions of new releases.
-	parsedVersionTolerant, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
+	parsedVersion, err := semver.ParseTolerant(controlPlane.KCP.Spec.Version)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
 	}
-	internal.DefaultFeatureGates(bootstrapSpec, parsedVersionTolerant)
+	internal.DefaultFeatureGates(bootstrapSpec, parsedVersion)
 
 	fd, err := controlPlane.NextFailureDomainForScaleUp(ctx)
 	if err != nil {
@@ -65,8 +64,8 @@ func (r *KubeadmControlPlaneReconciler) initializeControlPlane(ctx context.Conte
 	logger.WithValues(controlPlane.StatusToLogKeyAndValues(newMachine, nil)...).
 		Info("Machine created (scale up)",
 			"Machine", klog.KObj(newMachine),
-			newMachine.Spec.InfrastructureRef.Kind, klog.KRef(newMachine.Spec.InfrastructureRef.Namespace, newMachine.Spec.InfrastructureRef.Name),
-			newMachine.Spec.Bootstrap.ConfigRef.Kind, klog.KRef(newMachine.Spec.Bootstrap.ConfigRef.Namespace, newMachine.Spec.Bootstrap.ConfigRef.Name))
+			newMachine.Spec.InfrastructureRef.Kind, klog.KRef(newMachine.Namespace, newMachine.Spec.InfrastructureRef.Name),
+			newMachine.Spec.Bootstrap.ConfigRef.Kind, klog.KRef(newMachine.Namespace, newMachine.Spec.Bootstrap.ConfigRef.Name))
 
 	// Requeue the control plane, in case there are additional operations to perform
 	return ctrl.Result{Requeue: true}, nil
@@ -83,13 +82,11 @@ func (r *KubeadmControlPlaneReconciler) scaleUpControlPlane(ctx context.Context,
 	// Create the bootstrap configuration
 	bootstrapSpec := controlPlane.JoinControlPlaneConfig()
 
-	// We intentionally only parse major/minor/patch so that the subsequent code
-	// also already applies to beta versions of new releases.
-	parsedVersionTolerant, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
+	parsedVersion, err := semver.ParseTolerant(controlPlane.KCP.Spec.Version)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
 	}
-	internal.DefaultFeatureGates(bootstrapSpec, parsedVersionTolerant)
+	internal.DefaultFeatureGates(bootstrapSpec, parsedVersion)
 
 	fd, err := controlPlane.NextFailureDomainForScaleUp(ctx)
 	if err != nil {
@@ -106,8 +103,8 @@ func (r *KubeadmControlPlaneReconciler) scaleUpControlPlane(ctx context.Context,
 	logger.WithValues(controlPlane.StatusToLogKeyAndValues(newMachine, nil)...).
 		Info("Machine created (scale up)",
 			"Machine", klog.KObj(newMachine),
-			newMachine.Spec.InfrastructureRef.Kind, klog.KRef(newMachine.Spec.InfrastructureRef.Namespace, newMachine.Spec.InfrastructureRef.Name),
-			newMachine.Spec.Bootstrap.ConfigRef.Kind, klog.KRef(newMachine.Spec.Bootstrap.ConfigRef.Namespace, newMachine.Spec.Bootstrap.ConfigRef.Name))
+			newMachine.Spec.InfrastructureRef.Kind, klog.KRef(newMachine.Namespace, newMachine.Spec.InfrastructureRef.Name),
+			newMachine.Spec.Bootstrap.ConfigRef.Kind, klog.KRef(newMachine.Namespace, newMachine.Spec.Bootstrap.ConfigRef.Name))
 
 	// Requeue the control plane, in case there are other operations to perform
 	return ctrl.Result{Requeue: true}, nil
@@ -188,7 +185,7 @@ func (r *KubeadmControlPlaneReconciler) preflightChecks(ctx context.Context, con
 
 	if feature.Gates.Enabled(feature.ClusterTopology) {
 		// Block when we expect an upgrade to be propagated for topology clusters.
-		if controlPlane.Cluster.Spec.Topology != nil && controlPlane.Cluster.Spec.Topology.Version != controlPlane.KCP.Spec.Version {
+		if controlPlane.Cluster.Spec.Topology.IsDefined() && controlPlane.Cluster.Spec.Topology.Version != controlPlane.KCP.Spec.Version {
 			logger.Info(fmt.Sprintf("Waiting for a version upgrade to %s to be propagated from Cluster.spec.topology", controlPlane.Cluster.Spec.Topology.Version))
 			controlPlane.PreflightCheckResults.TopologyVersionMismatch = true
 			return ctrl.Result{RequeueAfter: preflightFailedRequeueAfter}, nil
@@ -203,15 +200,15 @@ func (r *KubeadmControlPlaneReconciler) preflightChecks(ctx context.Context, con
 	}
 
 	// Check machine health conditions; if there are conditions with False or Unknown, then wait.
-	allMachineHealthConditions := []clusterv1.ConditionType{
-		controlplanev1.MachineAPIServerPodHealthyCondition,
-		controlplanev1.MachineControllerManagerPodHealthyCondition,
-		controlplanev1.MachineSchedulerPodHealthyCondition,
+	allMachineHealthConditions := []string{
+		controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
+		controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
+		controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
 	}
 	if controlPlane.IsEtcdManaged() {
 		allMachineHealthConditions = append(allMachineHealthConditions,
-			controlplanev1.MachineEtcdPodHealthyCondition,
-			controlplanev1.MachineEtcdMemberHealthyCondition,
+			controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+			controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition,
 		)
 	}
 	machineErrors := []error{}
@@ -226,7 +223,7 @@ loopmachines:
 			}
 		}
 
-		if machine.Status.NodeRef == nil {
+		if !machine.Status.NodeRef.IsDefined() {
 			// The conditions will only ever be set on a Machine if we're able to correlate a Machine to a Node.
 			// Correlating Machines to Nodes requires the nodeRef to be set.
 			// Instead of confusing users with errors about that the conditions are not set, let's point them
@@ -240,7 +237,7 @@ loopmachines:
 		} else {
 			for _, condition := range allMachineHealthConditions {
 				if err := preflightCheckCondition("Machine", machine, condition); err != nil {
-					if condition == controlplanev1.MachineEtcdMemberHealthyCondition {
+					if condition == controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition {
 						controlPlane.PreflightCheckResults.EtcdClusterNotHealthy = true
 					} else {
 						controlPlane.PreflightCheckResults.ControlPlaneComponentsNotHealthy = true
@@ -262,16 +259,16 @@ loopmachines:
 	return ctrl.Result{}, nil
 }
 
-func preflightCheckCondition(kind string, obj conditions.Getter, condition clusterv1.ConditionType) error {
-	c := conditions.Get(obj, condition)
+func preflightCheckCondition(kind string, obj *clusterv1.Machine, conditionType string) error {
+	c := conditions.Get(obj, conditionType)
 	if c == nil {
-		return errors.Errorf("%s %s does not have %s condition", kind, obj.GetName(), condition)
+		return errors.Errorf("%s %s does not have %s condition", kind, obj.GetName(), conditionType)
 	}
-	if c.Status == corev1.ConditionFalse {
-		return errors.Errorf("%s %s reports %s condition is false (%s, %s)", kind, obj.GetName(), condition, c.Severity, c.Message)
+	if c.Status == metav1.ConditionFalse {
+		return errors.Errorf("%s %s reports %s condition is false (%s)", kind, obj.GetName(), conditionType, c.Message)
 	}
-	if c.Status == corev1.ConditionUnknown {
-		return errors.Errorf("%s %s reports %s condition is unknown (%s)", kind, obj.GetName(), condition, c.Message)
+	if c.Status == metav1.ConditionUnknown {
+		return errors.Errorf("%s %s reports %s condition is unknown (%s)", kind, obj.GetName(), conditionType, c.Message)
 	}
 	return nil
 }

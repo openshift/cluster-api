@@ -28,17 +28,17 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	utilfeature "k8s.io/component-base/featuregate/testing"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
-	"sigs.k8s.io/cluster-api/util/conditions"
 )
 
 func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
@@ -95,19 +95,17 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 	g.Expect(machineList.Items[0].Namespace).To(Equal(cluster.Namespace))
 	g.Expect(machineList.Items[0].Name).To(HavePrefix(kcp.Name))
 
-	g.Expect(machineList.Items[0].Spec.InfrastructureRef.Namespace).To(Equal(cluster.Namespace))
 	g.Expect(machineList.Items[0].Spec.InfrastructureRef.Name).To(Equal(machineList.Items[0].Name))
-	g.Expect(machineList.Items[0].Spec.InfrastructureRef.APIVersion).To(Equal(genericInfrastructureMachineTemplate.GetAPIVersion()))
+	g.Expect(machineList.Items[0].Spec.InfrastructureRef.APIGroup).To(Equal(genericInfrastructureMachineTemplate.GroupVersionKind().Group))
 	g.Expect(machineList.Items[0].Spec.InfrastructureRef.Kind).To(Equal("GenericInfrastructureMachine"))
 
-	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.Namespace).To(Equal(cluster.Namespace))
 	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.Name).To(Equal(machineList.Items[0].Name))
-	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.APIVersion).To(Equal(bootstrapv1.GroupVersion.String()))
+	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.APIGroup).To(Equal(bootstrapv1.GroupVersion.Group))
 	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.Kind).To(Equal("KubeadmConfig"))
 
 	kubeadmConfig := &bootstrapv1.KubeadmConfig{}
 	bootstrapRef := machineList.Items[0].Spec.Bootstrap.ConfigRef
-	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: bootstrapRef.Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
+	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: machineList.Items[0].Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
 	g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{internal.ControlPlaneKubeletLocalMode: true}))
 }
 
@@ -175,7 +173,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 
 		kubeadmConfig := &bootstrapv1.KubeadmConfig{}
 		bootstrapRef := controlPlaneMachines.Items[0].Spec.Bootstrap.ConfigRef
-		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: bootstrapRef.Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
+		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: controlPlaneMachines.Items[0].Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
 		g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{internal.ControlPlaneKubeletLocalMode: true}))
 	})
 	t.Run("does not create a control plane Machine if preflight checks fail", func(t *testing.T) {
@@ -206,7 +204,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		cluster.UID = types.UID(util.RandomString(10))
 		cluster.Spec.ControlPlaneEndpoint.Host = "nodomain.example.com"
 		cluster.Spec.ControlPlaneEndpoint.Port = 6443
-		cluster.Status.InfrastructureReady = true
+		cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 
 		beforeMachines := collections.New()
 		for i := range 2 {
@@ -400,9 +398,9 @@ func TestSelectMachineForScaleDown(t *testing.T) {
 	mc3 := collections.FromMachines(m1, m2, m3, m4, m5)
 	mc6 := collections.FromMachines(m6, m7, m8)
 	mc9 := collections.FromMachines(m9, m10, m11)
-	fd := clusterv1.FailureDomains{
-		"one": failureDomain(true),
-		"two": failureDomain(true),
+	fd := []clusterv1.FailureDomain{
+		failureDomain("one", true),
+		failureDomain("two", true),
 	}
 
 	needsUpgradeControlPlane := &internal.ControlPlane{
@@ -542,7 +540,7 @@ func TestPreflightChecks(t *testing.T) {
 			name: "control plane with a pending upgrade should requeue",
 			cluster: &clusterv1.Cluster{
 				Spec: clusterv1.ClusterSpec{
-					Topology: &clusterv1.Topology{
+					Topology: clusterv1.Topology{
 						Version: "v1.33.0",
 					},
 				},
@@ -588,7 +586,7 @@ func TestPreflightChecks(t *testing.T) {
 			machines: []*clusterv1.Machine{
 				{
 					Status: clusterv1.MachineStatus{
-						NodeRef: nil,
+						// NodeRef is not set
 						// Note: with v1beta1 no conditions are applied to machine when NodeRef is not set, this will change with v1beta2.
 					},
 				},
@@ -607,16 +605,15 @@ func TestPreflightChecks(t *testing.T) {
 			machines: []*clusterv1.Machine{
 				{
 					Status: clusterv1.MachineStatus{
-						NodeRef: &corev1.ObjectReference{
-							Kind: "Node",
+						NodeRef: clusterv1.MachineNodeReference{
 							Name: "node-1",
 						},
-						Conditions: clusterv1.Conditions{
-							*conditions.FalseCondition(controlplanev1.MachineAPIServerPodHealthyCondition, "fooReason", clusterv1.ConditionSeverityError, ""),
-							*conditions.TrueCondition(controlplanev1.MachineControllerManagerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineSchedulerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineEtcdPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineEtcdMemberHealthyCondition),
+						Conditions: []metav1.Condition{
+							{Type: controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition, Status: metav1.ConditionFalse},
+							{Type: controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition, Status: metav1.ConditionTrue},
 						},
 					},
 				},
@@ -635,16 +632,15 @@ func TestPreflightChecks(t *testing.T) {
 			machines: []*clusterv1.Machine{
 				{
 					Status: clusterv1.MachineStatus{
-						NodeRef: &corev1.ObjectReference{
-							Kind: "Node",
+						NodeRef: clusterv1.MachineNodeReference{
 							Name: "node-1",
 						},
-						Conditions: clusterv1.Conditions{
-							*conditions.TrueCondition(controlplanev1.MachineAPIServerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineControllerManagerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineSchedulerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineEtcdPodHealthyCondition),
-							*conditions.FalseCondition(controlplanev1.MachineEtcdMemberHealthyCondition, "fooReason", clusterv1.ConditionSeverityError, ""),
+						Conditions: []metav1.Condition{
+							{Type: controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition, Status: metav1.ConditionFalse},
 						},
 					},
 				},
@@ -661,25 +657,24 @@ func TestPreflightChecks(t *testing.T) {
 			name: "control plane with an healthy machine and an healthy kcp condition should pass",
 			kcp: &controlplanev1.KubeadmControlPlane{
 				Status: controlplanev1.KubeadmControlPlaneStatus{
-					Conditions: clusterv1.Conditions{
-						*conditions.TrueCondition(controlplanev1.ControlPlaneComponentsHealthyCondition),
-						*conditions.TrueCondition(controlplanev1.EtcdClusterHealthyCondition),
+					Conditions: []metav1.Condition{
+						{Type: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition, Status: metav1.ConditionTrue},
+						{Type: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition, Status: metav1.ConditionTrue},
 					},
 				},
 			},
 			machines: []*clusterv1.Machine{
 				{
 					Status: clusterv1.MachineStatus{
-						NodeRef: &corev1.ObjectReference{
-							Kind: "Node",
+						NodeRef: clusterv1.MachineNodeReference{
 							Name: "node-1",
 						},
-						Conditions: clusterv1.Conditions{
-							*conditions.TrueCondition(controlplanev1.MachineAPIServerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineControllerManagerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineSchedulerPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineEtcdPodHealthyCondition),
-							*conditions.TrueCondition(controlplanev1.MachineEtcdMemberHealthyCondition),
+						Conditions: []metav1.Condition{
+							{Type: controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition, Status: metav1.ConditionTrue},
 						},
 					},
 				},
@@ -719,7 +714,7 @@ func TestPreflightChecks(t *testing.T) {
 }
 
 func TestPreflightCheckCondition(t *testing.T) {
-	condition := clusterv1.ConditionType("fooCondition")
+	condition := "fooCondition"
 	testCases := []struct {
 		name      string
 		machine   *clusterv1.Machine
@@ -734,8 +729,8 @@ func TestPreflightCheckCondition(t *testing.T) {
 			name: "false condition should return error",
 			machine: &clusterv1.Machine{
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						*conditions.FalseCondition(condition, "fooReason", clusterv1.ConditionSeverityError, ""),
+					Conditions: []metav1.Condition{
+						{Type: condition, Status: metav1.ConditionFalse},
 					},
 				},
 			},
@@ -745,8 +740,8 @@ func TestPreflightCheckCondition(t *testing.T) {
 			name: "unknown condition should return error",
 			machine: &clusterv1.Machine{
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						*conditions.UnknownCondition(condition, "fooReason", ""),
+					Conditions: []metav1.Condition{
+						{Type: condition, Status: metav1.ConditionUnknown},
 					},
 				},
 			},
@@ -756,8 +751,8 @@ func TestPreflightCheckCondition(t *testing.T) {
 			name: "true condition should not return error",
 			machine: &clusterv1.Machine{
 				Status: clusterv1.MachineStatus{
-					Conditions: clusterv1.Conditions{
-						*conditions.TrueCondition(condition),
+					Conditions: []metav1.Condition{
+						{Type: condition, Status: metav1.ConditionTrue},
 					},
 				},
 			},
@@ -780,27 +775,28 @@ func TestPreflightCheckCondition(t *testing.T) {
 	}
 }
 
-func failureDomain(controlPlane bool) clusterv1.FailureDomainSpec {
-	return clusterv1.FailureDomainSpec{
-		ControlPlane: controlPlane,
+func failureDomain(name string, controlPlane bool) clusterv1.FailureDomain {
+	return clusterv1.FailureDomain{
+		Name:         name,
+		ControlPlane: ptr.To(controlPlane),
 	}
 }
 
 func withFailureDomain(fd string) machineOpt {
 	return func(m *clusterv1.Machine) {
-		m.Spec.FailureDomain = &fd
+		m.Spec.FailureDomain = fd
 	}
 }
 
 func withAnnotation(annotation string) machineOpt {
 	return func(m *clusterv1.Machine) {
-		m.ObjectMeta.Annotations = map[string]string{annotation: ""}
+		m.Annotations = map[string]string{annotation: ""}
 	}
 }
 
 func withLabels(labels map[string]string) machineOpt {
 	return func(m *clusterv1.Machine) {
-		m.ObjectMeta.Labels = labels
+		m.Labels = labels
 	}
 }
 

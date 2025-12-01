@@ -28,15 +28,17 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/internal/test/envtest"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 const (
@@ -105,7 +107,19 @@ metadata:
 		g.Expect(err).ToNot(HaveOccurred())
 
 		clusterName = fmt.Sprintf("cluster-%s", util.RandomString(6))
-		testCluster = &clusterv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: ns.Name}}
+		testCluster = &clusterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: ns.Name,
+			},
+			Spec: clusterv1.ClusterSpec{
+				ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: builder.ControlPlaneGroupVersion.Group,
+					Kind:     builder.GenericControlPlaneKind,
+					Name:     "cp1",
+				},
+			},
+		}
 
 		t.Log("Creating the Cluster")
 		g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
@@ -113,7 +127,7 @@ metadata:
 		g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 		// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
 		patch := client.MergeFrom(testCluster.DeepCopy())
-		testCluster.Status.InfrastructureReady = true
+		testCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 		g.Expect(env.Status().Patch(ctx, testCluster, patch)).To(Succeed())
 
 		g.Eventually(func(g Gomega) {
@@ -224,6 +238,7 @@ metadata:
 				ClusterSelector: metav1.LabelSelector{
 					MatchLabels: labels,
 				},
+				Resources: []addonsv1.ResourceRef{{Name: configmapName, Kind: "ConfigMap"}},
 			},
 		}
 		// Create the ClusterResourceSet.
@@ -582,6 +597,7 @@ metadata:
 				ClusterSelector: metav1.LabelSelector{
 					MatchLabels: labels,
 				},
+				Resources: []addonsv1.ResourceRef{{Name: configmapName, Kind: "ConfigMap"}},
 			},
 		}
 		// Create the ClusterResourceSet.
@@ -880,9 +896,9 @@ metadata:
 			for _, r := range binding.Spec.Bindings[0].Resources {
 				switch r.ResourceRef.Name {
 				case testConfigmap.Name:
-					g.Expect(r.Applied).To(BeFalse(), "test-configmap should be not applied bc of missing namespace")
+					g.Expect(ptr.Deref(r.Applied, false)).To(BeFalse(), "test-configmap should be not applied bc of missing namespace")
 				case secretName:
-					g.Expect(r.Applied).To(BeTrue(), "test-secret should be applied")
+					g.Expect(ptr.Deref(r.Applied, false)).To(BeTrue(), "test-secret should be applied")
 				}
 			}
 		}, timeout).Should(Succeed())
@@ -893,16 +909,16 @@ metadata:
 			crs := &addonsv1.ClusterResourceSet{}
 			g.Expect(env.Get(ctx, clusterResourceSetKey, crs)).To(Succeed())
 
-			appliedCondition := conditions.Get(crs, addonsv1.ResourcesAppliedCondition)
+			appliedCondition := v1beta1conditions.Get(crs, addonsv1.ResourcesAppliedV1Beta1Condition)
 			g.Expect(appliedCondition).NotTo(BeNil())
 			g.Expect(appliedCondition.Status).To(Equal(corev1.ConditionFalse))
-			g.Expect(appliedCondition.Reason).To(Equal(addonsv1.ApplyFailedReason))
+			g.Expect(appliedCondition.Reason).To(Equal(addonsv1.ApplyFailedV1Beta1Reason))
 			g.Expect(appliedCondition.Message).To(ContainSubstring("creating object /v1, Kind=ConfigMap %s/cm-missing-namespace", missingNamespace))
 
-			appliedConditionV1Beta2 := v1beta2conditions.Get(crs, addonsv1.ResourcesAppliedV1Beta2Condition)
+			appliedConditionV1Beta2 := conditions.Get(crs, addonsv1.ClusterResourceSetResourcesAppliedCondition)
 			g.Expect(appliedConditionV1Beta2).NotTo(BeNil())
 			g.Expect(appliedConditionV1Beta2.Status).To(BeEquivalentTo(corev1.ConditionFalse))
-			g.Expect(appliedConditionV1Beta2.Reason).To(Equal(addonsv1.ResourcesNotAppliedV1Beta2Reason))
+			g.Expect(appliedConditionV1Beta2.Reason).To(Equal(addonsv1.ClusterResourceSetResourcesNotAppliedReason))
 			g.Expect(appliedConditionV1Beta2.Message).To(Equal("Failed to apply ClusterResourceSet resources to Cluster"))
 		}, timeout).Should(Succeed())
 
@@ -1068,7 +1084,7 @@ metadata:
 			for _, b := range binding.Spec.Bindings {
 				g.Expect(b.Resources).To(HaveLen(2))
 				for _, r := range b.Resources {
-					g.Expect(r.Applied).To(BeTrue())
+					g.Expect(ptr.Deref(r.Applied, false)).To(BeTrue())
 				}
 			}
 			g.Expect(binding.OwnerReferences).To(HaveLen(10))
@@ -1098,7 +1114,7 @@ func clusterResourceSetBindingReady(env *envtest.Environment, cluster *clusterv1
 			return false
 		}
 
-		if !binding.Spec.Bindings[0].Resources[0].Applied || !binding.Spec.Bindings[0].Resources[1].Applied {
+		if !ptr.Deref(binding.Spec.Bindings[0].Resources[0].Applied, false) || !ptr.Deref(binding.Spec.Bindings[0].Resources[1].Applied, false) {
 			return false
 		}
 

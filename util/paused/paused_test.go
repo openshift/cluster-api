@@ -24,11 +24,12 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
@@ -49,7 +50,7 @@ func TestEnsurePausedCondition(t *testing.T) {
 
 	// Cluster Case 2: paused
 	pausedCluster := normalCluster.DeepCopy()
-	pausedCluster.Spec.Paused = true
+	pausedCluster.Spec.Paused = ptr.To(true)
 
 	// Object case 1: unpaused
 	obj := &builder.Phase1Obj{ObjectMeta: metav1.ObjectMeta{
@@ -135,15 +136,15 @@ func TestEnsurePausedCondition(t *testing.T) {
 }
 
 func assertCondition(g Gomega, object ConditionSetter, wantIsPaused bool) {
-	condition := v1beta2conditions.Get(object, clusterv1.PausedV1Beta2Condition)
+	condition := conditions.Get(object, clusterv1.PausedCondition)
 	g.Expect(condition.ObservedGeneration).To(Equal(object.GetGeneration()))
 	if wantIsPaused {
 		g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-		g.Expect(condition.Reason).To(Equal(clusterv1.PausedV1Beta2Reason))
+		g.Expect(condition.Reason).To(Equal(clusterv1.PausedReason))
 		g.Expect(condition.Message).ToNot(BeEmpty())
 	} else {
 		g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-		g.Expect(condition.Reason).To(Equal(clusterv1.NotPausedV1Beta2Reason))
+		g.Expect(condition.Reason).To(Equal(clusterv1.NotPausedReason))
 		g.Expect(condition.Message).To(BeEmpty())
 	}
 }

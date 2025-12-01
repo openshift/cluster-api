@@ -19,7 +19,7 @@ package v1beta1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 )
 
 // DevMachineTemplateSpec defines the desired state of DevMachineTemplate.
@@ -29,7 +29,7 @@ type DevMachineTemplateSpec struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=devmachinetemplates,scope=Namespaced,categories=cluster-api
-// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of the DevMachineTemplate"
 
 // DevMachineTemplate is the schema for the in-memory machine template API.
@@ -58,7 +58,7 @@ type DevMachineTemplateResource struct {
 	// Standard object's metadata.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	// +optional
-	ObjectMeta clusterv1.ObjectMeta `json:"metadata,omitempty"`
+	ObjectMeta clusterv1beta1.ObjectMeta `json:"metadata,omitempty"`
 
 	// Spec is the specification of the desired behavior of the machine.
 	Spec DevMachineSpec `json:"spec"`

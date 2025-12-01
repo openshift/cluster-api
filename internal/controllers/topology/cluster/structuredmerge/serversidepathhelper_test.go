@@ -39,8 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/test/builder"
@@ -269,10 +269,10 @@ func TestServerSideApply(t *testing.T) {
 		p, err := patch.NewHelper(obj, env.Client)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		g.Expect(unstructured.SetNestedField(obj.Object, "changed", "spec", "foo")).To(Succeed())   // Controller sets a well known field ignored in the topology controller
-		g.Expect(unstructured.SetNestedField(obj.Object, "changed", "spec", "bar")).To(Succeed())   // Controller sets an infra specific field the topology controller is not aware of
-		g.Expect(unstructured.SetNestedField(obj.Object, "changed", "status", "foo")).To(Succeed()) // Controller sets something in status
-		g.Expect(unstructured.SetNestedField(obj.Object, true, "status", "ready")).To(Succeed())    // Required field
+		g.Expect(unstructured.SetNestedField(obj.Object, "changed", "spec", "foo")).To(Succeed())                        // Controller sets a well known field ignored in the topology controller
+		g.Expect(unstructured.SetNestedField(obj.Object, "changed", "spec", "bar")).To(Succeed())                        // Controller sets an infra specific field the topology controller is not aware of
+		g.Expect(unstructured.SetNestedField(obj.Object, "changed", "status", "foo")).To(Succeed())                      // Controller sets something in status
+		g.Expect(unstructured.SetNestedField(obj.Object, true, "status", "initialization", "provisioned")).To(Succeed()) // Required field
 
 		g.Expect(p.Patch(ctx, obj)).To(Succeed())
 
@@ -321,7 +321,7 @@ func TestServerSideApply(t *testing.T) {
 		g.Expect(v2).To(Equal("changed"))
 		v3, _, _ := unstructured.NestedString(got.Object, "status", "foo")
 		g.Expect(v3).To(Equal("changed"))
-		v4, _, _ := unstructured.NestedBool(got.Object, "status", "ready")
+		v4, _, _ := unstructured.NestedBool(got.Object, "status", "initialization", "provisioned")
 		g.Expect(v4).To(BeTrue())
 
 		fieldV1 := getTopologyManagedFields(got)
@@ -371,7 +371,7 @@ func TestServerSideApply(t *testing.T) {
 		g.Expect(v2).To(Equal("changed"))
 		v3, _, _ := unstructured.NestedString(got.Object, "status", "foo")
 		g.Expect(v3).To(Equal("changed"))
-		v4, _, _ := unstructured.NestedBool(got.Object, "status", "ready")
+		v4, _, _ := unstructured.NestedBool(got.Object, "status", "initialization", "provisioned")
 		g.Expect(v4).To(BeTrue())
 	})
 	t.Run("Topology controller reconcile again with an opinion on a field managed by another controller (co-ownership)", func(t *testing.T) {
@@ -563,10 +563,13 @@ func TestServerSideApplyWithDefaulting(t *testing.T) {
 		Spec: bootstrapv1.KubeadmConfigTemplateSpec{
 			Template: bootstrapv1.KubeadmConfigTemplateResource{
 				Spec: bootstrapv1.KubeadmConfigSpec{
-					JoinConfiguration: &bootstrapv1.JoinConfiguration{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
 						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
-							KubeletExtraArgs: map[string]string{
-								"eviction-hard": "nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%",
+							KubeletExtraArgs: []bootstrapv1.Arg{
+								{
+									Name:  "eviction-hard",
+									Value: ptr.To("nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%"),
+								},
 							},
 						},
 					},
@@ -816,7 +819,7 @@ func TestServerSideApplyWithDefaulting(t *testing.T) {
 // It also calculates and returns the corresponding MutatingWebhookConfiguration.
 // Note: To activate the webhook, the MutatingWebhookConfiguration has to be deployed.
 func setupWebhookWithManager(ns *corev1.Namespace) (*KubeadmConfigTemplateTestDefaulter, *admissionv1.MutatingWebhookConfiguration, error) {
-	webhookServer := env.Manager.GetWebhookServer().(*webhook.DefaultServer)
+	webhookServer := env.GetWebhookServer().(*webhook.DefaultServer)
 
 	// Calculate webhook host and path.
 	// Note: This is done the same way as in our envtest package.
@@ -830,7 +833,7 @@ func setupWebhookWithManager(ns *corev1.Namespace) (*KubeadmConfigTemplateTestDe
 	// Note: This should only ever be called once with the same path, otherwise we get a panic.
 	defaulter := &KubeadmConfigTemplateTestDefaulter{}
 	webhookServer.Register(webhookPath,
-		admission.WithCustomDefaulter(env.Manager.GetScheme(), &bootstrapv1.KubeadmConfigTemplate{}, defaulter))
+		admission.WithCustomDefaulter(env.GetScheme(), &bootstrapv1.KubeadmConfigTemplate{}, defaulter))
 
 	// Calculate the MutatingWebhookConfiguration
 	caBundle, err := os.ReadFile(filepath.Join(webhookServer.Options.CertDir, webhookServer.Options.CertName))

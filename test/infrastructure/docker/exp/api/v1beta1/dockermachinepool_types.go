@@ -19,8 +19,8 @@ package v1beta1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	infrav1beta1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
 )
 
 const (
@@ -43,7 +43,7 @@ type DockerMachinePoolMachineTemplate struct {
 	// ExtraMounts describes additional mount points for the node container
 	// These may be used to bind a hostPath
 	// +optional
-	ExtraMounts []infrav1.Mount `json:"extraMounts,omitempty"`
+	ExtraMounts []infrav1beta1.Mount `json:"extraMounts,omitempty"`
 }
 
 // DockerMachinePoolSpec defines the desired state of DockerMachinePool.
@@ -57,7 +57,7 @@ type DockerMachinePoolSpec struct {
 	ProviderID string `json:"providerID,omitempty"`
 
 	// ProviderIDList is the list of identification IDs of machine instances managed by this Machine Pool
-	//+optional
+	// +optional
 	ProviderIDList []string `json:"providerIDList,omitempty"`
 }
 
@@ -81,7 +81,7 @@ type DockerMachinePoolStatus struct {
 
 	// Conditions defines current service state of the DockerMachinePool.
 	// +optional
-	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+	Conditions clusterv1beta1.Conditions `json:"conditions,omitempty"`
 
 	// InfrastructureMachineKind is the kind of the infrastructure resources behind MachinePool Machines.
 	// +optional
@@ -92,7 +92,7 @@ type DockerMachinePoolStatus struct {
 type DockerMachinePoolInstanceStatus struct {
 	// Addresses contains the associated addresses for the docker machine.
 	// +optional
-	Addresses []clusterv1.MachineAddress `json:"addresses,omitempty"`
+	Addresses []clusterv1beta1.MachineAddress `json:"addresses,omitempty"`
 
 	// InstanceName is the identification of the Machine Instance within the Machine Pool
 	InstanceName string `json:"instanceName,omitempty"`
@@ -119,7 +119,7 @@ type DockerMachinePoolInstanceStatus struct {
 }
 
 // +kubebuilder:resource:path=dockermachinepools,scope=Namespaced,categories=cluster-api
-// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of DockerMachinePool"
@@ -133,13 +133,13 @@ type DockerMachinePool struct {
 	Status DockerMachinePoolStatus `json:"status,omitempty"`
 }
 
-// GetConditions returns the set of conditions for this object.
-func (d *DockerMachinePool) GetConditions() clusterv1.Conditions {
+// GetV1Beta1Conditions returns the set of conditions for this object.
+func (d *DockerMachinePool) GetV1Beta1Conditions() clusterv1beta1.Conditions {
 	return d.Status.Conditions
 }
 
-// SetConditions sets the conditions on this object.
-func (d *DockerMachinePool) SetConditions(conditions clusterv1.Conditions) {
+// SetV1Beta1Conditions sets the conditions on this object.
+func (d *DockerMachinePool) SetV1Beta1Conditions(conditions clusterv1beta1.Conditions) {
 	d.Status.Conditions = conditions
 }
 

@@ -37,17 +37,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/external"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	utilexp "sigs.k8s.io/cluster-api/exp/util"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
-	infraexpv1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
+	infraexpv1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/docker"
 	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
@@ -97,6 +96,18 @@ func (r *DockerMachinePoolReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 	if machinePool == nil {
+		// Note: If ownerRef was not set, there is nothing to delete. Remove finalizer so deletion can succeed.
+		if !dockerMachinePool.DeletionTimestamp.IsZero() {
+			if controllerutil.ContainsFinalizer(dockerMachinePool, infraexpv1.MachinePoolFinalizer) {
+				dockerMachinePoolWithoutFinalizer := dockerMachinePool.DeepCopy()
+				controllerutil.RemoveFinalizer(dockerMachinePoolWithoutFinalizer, infraexpv1.MachinePoolFinalizer)
+				if err := r.Client.Patch(ctx, dockerMachinePoolWithoutFinalizer, client.MergeFrom(dockerMachinePool)); err != nil {
+					return ctrl.Result{}, errors.Wrapf(err, "failed to patch DockerMachinePool %s", klog.KObj(dockerMachinePool))
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+
 		log.Info("Waiting for MachinePool Controller to set OwnerRef on DockerMachinePool")
 		return ctrl.Result{}, nil
 	}
@@ -136,7 +147,7 @@ func (r *DockerMachinePoolReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}()
 
 	// Handle deleted machines
-	if !dockerMachinePool.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !dockerMachinePool.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, r.reconcileDelete(ctx, cluster, machinePool, dockerMachinePool)
 	}
 
@@ -170,7 +181,7 @@ func (r *DockerMachinePoolReconciler) SetupWithManager(ctx context.Context, mgr 
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
 		Watches(
-			&expv1.MachinePool{},
+			&clusterv1.MachinePool{},
 			handler.EnqueueRequestsFromMapFunc(utilexp.MachinePoolToInfrastructureMapFunc(ctx,
 				infraexpv1.GroupVersion.WithKind("DockerMachinePool"))),
 			builder.WithPredicates(predicates.ResourceIsChanged(mgr.GetScheme(), predicateLog)),
@@ -186,7 +197,7 @@ func (r *DockerMachinePoolReconciler) SetupWithManager(ctx context.Context, mgr 
 			builder.WithPredicates(predicates.All(mgr.GetScheme(), predicateLog,
 				predicates.ResourceIsChanged(mgr.GetScheme(), predicateLog),
 				//nolint:staticcheck // This usage will be removed when adding v1beta2 status and implementing the Paused condition.
-				predicates.ClusterUnpausedAndInfrastructureReady(mgr.GetScheme(), predicateLog),
+				predicates.ClusterUnpausedAndInfrastructureProvisioned(mgr.GetScheme(), predicateLog),
 			)),
 		).Build(r)
 	if err != nil {
@@ -205,7 +216,7 @@ func (r *DockerMachinePoolReconciler) SetupWithManager(ctx context.Context, mgr 
 	return nil
 }
 
-func (r *DockerMachinePoolReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
+func (r *DockerMachinePoolReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
 	log := ctrl.LoggerFrom(ctx)
 
 	dockerMachineList, err := getDockerMachines(ctx, r.Client, *cluster, *machinePool, *dockerMachinePool)
@@ -261,7 +272,7 @@ func (r *DockerMachinePoolReconciler) reconcileDelete(ctx context.Context, clust
 	return nil
 }
 
-func (r *DockerMachinePoolReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) (ctrl.Result, error) {
+func (r *DockerMachinePoolReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1.Cluster, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
 	// Make sure bootstrap data is available and populated.
@@ -298,8 +309,8 @@ func (r *DockerMachinePoolReconciler) reconcileNormal(ctx context.Context, clust
 	// Derive providerIDList from the provider ID on each DockerMachine if it exists. The providerID is set by the DockerMachine controller.
 	dockerMachinePool.Spec.ProviderIDList = []string{}
 	for _, dockerMachine := range dockerMachineList.Items {
-		if dockerMachine.Spec.ProviderID != nil {
-			dockerMachinePool.Spec.ProviderIDList = append(dockerMachinePool.Spec.ProviderIDList, *dockerMachine.Spec.ProviderID)
+		if dockerMachine.Spec.ProviderID != "" {
+			dockerMachinePool.Spec.ProviderIDList = append(dockerMachinePool.Spec.ProviderIDList, dockerMachine.Spec.ProviderID)
 		}
 	}
 	// Ensure the providerIDList is deterministic (getDockerMachines doesn't guarantee a specific order)
@@ -316,7 +327,7 @@ func (r *DockerMachinePoolReconciler) reconcileNormal(ctx context.Context, clust
 
 	if len(dockerMachinePool.Spec.ProviderIDList) == int(*machinePool.Spec.Replicas) && len(dockerMachineList.Items) == int(*machinePool.Spec.Replicas) {
 		dockerMachinePool.Status.Ready = true
-		conditions.MarkTrue(dockerMachinePool, expv1.ReplicasReadyCondition)
+		v1beta1conditions.MarkTrue(dockerMachinePool, clusterv1.ReplicasReadyV1Beta1Condition)
 
 		return ctrl.Result{}, nil
 	}
@@ -324,7 +335,7 @@ func (r *DockerMachinePoolReconciler) reconcileNormal(ctx context.Context, clust
 	return r.updateStatus(ctx, cluster, machinePool, dockerMachinePool, dockerMachineList.Items)
 }
 
-func getDockerMachines(ctx context.Context, c client.Client, cluster clusterv1.Cluster, machinePool expv1.MachinePool, dockerMachinePool infraexpv1.DockerMachinePool) (*infrav1.DockerMachineList, error) {
+func getDockerMachines(ctx context.Context, c client.Client, cluster clusterv1.Cluster, machinePool clusterv1.MachinePool, dockerMachinePool infraexpv1.DockerMachinePool) (*infrav1.DockerMachineList, error) {
 	dockerMachineList := &infrav1.DockerMachineList{}
 	labels := map[string]string{
 		clusterv1.ClusterNameLabel:     cluster.Name,
@@ -381,7 +392,7 @@ func dockerMachineToDockerMachinePool(_ context.Context, o client.Object) []ctrl
 
 // updateStatus updates the Status field for the MachinePool object.
 // It checks for the current state of the replicas and updates the Status of the MachinePool.
-func (r *DockerMachinePoolReconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool, dockerMachines []infrav1.DockerMachine) (ctrl.Result, error) {
+func (r *DockerMachinePoolReconciler) updateStatus(ctx context.Context, cluster *clusterv1.Cluster, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool, dockerMachines []infrav1.DockerMachine) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
 	// List the Docker containers. This corresponds to an InfraMachinePool instance for providers.
@@ -407,40 +418,40 @@ func (r *DockerMachinePoolReconciler) updateStatus(ctx context.Context, cluster 
 	switch {
 	// We are scaling up
 	case readyReplicaCount < desiredReplicas:
-		conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedCondition, clusterv1.ScalingUpReason, clusterv1.ConditionSeverityWarning, "Scaling up MachinePool to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
+		v1beta1conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedV1Beta1Condition, clusterv1.ScalingUpV1Beta1Reason, clusterv1.ConditionSeverityWarning, "Scaling up MachinePool to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
 	// We are scaling down
 	case readyReplicaCount > desiredReplicas:
-		conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedCondition, clusterv1.ScalingDownReason, clusterv1.ConditionSeverityWarning, "Scaling down MachinePool to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
+		v1beta1conditions.MarkFalse(dockerMachinePool, clusterv1.ResizedV1Beta1Condition, clusterv1.ScalingDownV1Beta1Reason, clusterv1.ConditionSeverityWarning, "Scaling down MachinePool to %d replicas (actual %d)", desiredReplicas, readyReplicaCount)
 	default:
 		// Make sure last resize operation is marked as completed.
 		// NOTE: we are checking the number of machines ready so we report resize completed only when the machines
 		// are actually provisioned (vs reporting completed immediately after the last machine object is created). This convention is also used by KCP.
 		if len(dockerMachines) == readyReplicaCount {
-			if conditions.IsFalse(dockerMachinePool, clusterv1.ResizedCondition) {
+			if v1beta1conditions.IsFalse(dockerMachinePool, clusterv1.ResizedV1Beta1Condition) {
 				log.Info("All the replicas are ready", "replicas", readyReplicaCount)
 			}
-			conditions.MarkTrue(dockerMachinePool, clusterv1.ResizedCondition)
+			v1beta1conditions.MarkTrue(dockerMachinePool, clusterv1.ResizedV1Beta1Condition)
 		}
 		// This means that there was no error in generating the desired number of machine objects
-		conditions.MarkTrue(dockerMachinePool, clusterv1.MachinesCreatedCondition)
+		v1beta1conditions.MarkTrue(dockerMachinePool, clusterv1.MachinesCreatedV1Beta1Condition)
 	}
 
-	getters := make([]conditions.Getter, 0, len(dockerMachines))
+	getters := make([]v1beta1conditions.Getter, 0, len(dockerMachines))
 	for i := range dockerMachines {
 		getters = append(getters, &dockerMachines[i])
 	}
 
 	// Aggregate the operational state of all the machines; while aggregating we are adding the
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.
-	conditions.SetAggregate(dockerMachinePool, expv1.ReplicasReadyCondition, getters, conditions.AddSourceRef())
+	v1beta1conditions.SetAggregate(dockerMachinePool, clusterv1.ReplicasReadyV1Beta1Condition, getters, v1beta1conditions.AddSourceRef())
 
 	return ctrl.Result{}, nil
 }
 
 func patchDockerMachinePool(ctx context.Context, patchHelper *patch.Helper, dockerMachinePool *infraexpv1.DockerMachinePool) error {
-	conditions.SetSummary(dockerMachinePool,
-		conditions.WithConditions(
-			expv1.ReplicasReadyCondition,
+	v1beta1conditions.SetSummary(dockerMachinePool,
+		v1beta1conditions.WithConditions(
+			clusterv1.ReplicasReadyV1Beta1Condition,
 		),
 	)
 
@@ -448,9 +459,9 @@ func patchDockerMachinePool(ctx context.Context, patchHelper *patch.Helper, dock
 	return patchHelper.Patch(
 		ctx,
 		dockerMachinePool,
-		patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
-			clusterv1.ReadyCondition,
-			expv1.ReplicasReadyCondition,
+		patch.WithOwnedV1Beta1Conditions{Conditions: []clusterv1.ConditionType{
+			clusterv1.ReadyV1Beta1Condition,
+			clusterv1.ReplicasReadyV1Beta1Condition,
 		}},
 	)
 }

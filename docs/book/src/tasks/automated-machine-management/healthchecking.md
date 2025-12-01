@@ -20,7 +20,7 @@ A MachineHealthCheck is a resource within the Cluster API which allows users to 
 A MachineHealthCheck is defined on a management cluster and scoped to a particular workload cluster.
 
 When defining a MachineHealthCheck, users specify a timeout for each of the conditions that they define to check on the Machine's Node.
-If any of these conditions are met for the duration of the timeout, the Machine will be remediated. Also, Machines with `failureMessage` or `failureMessage` (terminal failures) are automatically remediated.
+If any of these conditions are met for the duration of the timeout, the Machine will be remediated.
 By default, the action of remediating a Machine should trigger a new Machine to be created to replace the failed one, but providers are allowed to plug in more sophisticated external remediation solutions.
 
 ## Creating a MachineHealthCheck
@@ -28,7 +28,7 @@ By default, the action of remediating a Machine should trigger a new Machine to 
 Use the following example as a basis for creating a MachineHealthCheck for worker nodes:
 
 ```yaml
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: MachineHealthCheck
 metadata:
   name: capi-quickstart-node-unhealthy-5m
@@ -51,7 +51,7 @@ spec:
     matchLabels:
       nodepool: nodepool-0
   # Conditions to check on Nodes for matched Machines, if any condition is matched for the duration of its timeout, the Machine is considered unhealthy
-  unhealthyConditions:
+  unhealthyNodeConditions:
   - type: Ready
     status: Unknown
     timeout: 300s
@@ -64,7 +64,7 @@ Use this example as the basis for defining a MachineHealthCheck for control plan
 the KubeadmControlPlane:
 
 ```yaml
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: MachineHealthCheck
 metadata:
   name: capi-quickstart-kcp-unhealthy-5m
@@ -74,7 +74,7 @@ spec:
   selector:
     matchLabels:
       cluster.x-k8s.io/control-plane: ""
-  unhealthyConditions:
+  unhealthyNodeConditions:
     - type: Ready
       status: Unknown
       timeout: 300s
@@ -106,7 +106,7 @@ KubeadmControlPlane allows to control how remediation happen by defining an opti
 this feature can be used for preventing unnecessary load on infrastructure provider e.g. in case of quota problems,or for allowing the infrastructure provider to stabilize in case of temporary problems.
 
 ```yaml
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: KubeadmControlPlane
 metadata:
   name: my-control-plane
@@ -231,7 +231,6 @@ Before deploying a MachineHealthCheck, please familiarise yourself with the foll
     - Remediation MUST preserve etcd quorum. This rule ensures that we will not remove a member that would result in etcd losing a majority of members and thus become unable to field new requests (note: this rule applies only to CP already initialized and with managed etcd)
 - If the Node for a Machine is removed from the cluster, a MachineHealthCheck will consider this Machine unhealthy and remediate it immediately
 - If no Node joins the cluster for a Machine after the `NodeStartupTimeout`, the Machine will be remediated
-- If a Machine fails for any reason (if the FailureReason is set), the Machine will be remediated immediately
 - Important: if the kubelet on the node hosting the etcd leader member is not working, this prevents KCP from doing some checks it is expecting to do on the leader - and specifically on the leader -.
   This prevents remediation to happen. There are ongoing discussions about how to overcome this limitation in https://github.com/kubernetes-sigs/cluster-api/issues/8465; as of today users facing this situation
   are recommended to manually forward leadership to another etcd member and manually delete the corresponding machine.

@@ -28,16 +28,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	dockerbackend "sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/controllers/backends/docker"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -68,7 +69,7 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Fetch the DockerMachine instance.
 	dockerMachine := &infrav1.DockerMachine{}
-	if err := r.Client.Get(ctx, req.NamespacedName, dockerMachine); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, dockerMachine); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -93,6 +94,18 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	if machine == nil {
+		// Note: If ownerRef was not set, there is nothing to delete. Remove finalizer so deletion can succeed.
+		if !dockerMachine.DeletionTimestamp.IsZero() {
+			if controllerutil.ContainsFinalizer(dockerMachine, infrav1.MachineFinalizer) {
+				dockerMachineWithoutFinalizer := dockerMachine.DeepCopy()
+				controllerutil.RemoveFinalizer(dockerMachineWithoutFinalizer, infrav1.MachineFinalizer)
+				if err := r.Client.Patch(ctx, dockerMachineWithoutFinalizer, client.MergeFrom(dockerMachine)); err != nil {
+					return ctrl.Result{}, errors.Wrapf(err, "failed to patch DockerMachine %s", klog.KObj(dockerMachine))
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+
 		log.Info("Waiting for Machine Controller to set OwnerRef on DockerMachine")
 		return ctrl.Result{}, nil
 	}
@@ -120,7 +133,7 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		Namespace: dockerMachine.Namespace,
 		Name:      cluster.Spec.InfrastructureRef.Name,
 	}
-	if err := r.Client.Get(ctx, dockerClusterName, dockerCluster); err != nil {
+	if err := r.Get(ctx, dockerClusterName, dockerCluster); err != nil {
 		log.Info("DockerCluster is not available yet")
 		return ctrl.Result{}, nil
 	}
@@ -138,7 +151,7 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	if cluster.Spec.InfrastructureRef == nil {
+	if !cluster.Spec.InfrastructureRef.IsDefined() {
 		log.Info("Cluster infrastructureRef is not available yet")
 		return ctrl.Result{}, nil
 	}
@@ -155,7 +168,7 @@ func (r *DockerMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}()
 
 	// Handle deleted machines
-	if !devMachine.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !devMachine.DeletionTimestamp.IsZero() {
 		return r.backendReconciler.ReconcileDelete(ctx, cluster, devCluster, machine, devMachine)
 	}
 
@@ -194,7 +207,7 @@ func (r *DockerMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 			handler.EnqueueRequestsFromMapFunc(clusterToDockerMachines),
 			builder.WithPredicates(predicates.All(mgr.GetScheme(), predicateLog,
 				predicates.ResourceIsChanged(mgr.GetScheme(), predicateLog),
-				predicates.ClusterPausedTransitionsOrInfrastructureReady(mgr.GetScheme(), predicateLog),
+				predicates.ClusterPausedTransitionsOrInfrastructureProvisioned(mgr.GetScheme(), predicateLog),
 			)),
 		).
 		WatchesRawSource(r.ClusterCache.GetClusterSource("dockermachine", clusterToDockerMachines)).
@@ -231,7 +244,7 @@ func (r *DockerMachineReconciler) dockerClusterToDockerMachines(ctx context.Cont
 
 	labels := map[string]string{clusterv1.ClusterNameLabel: cluster.Name}
 	machineList := &clusterv1.MachineList{}
-	if err := r.Client.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
+	if err := r.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
 		return nil
 	}
 	for _, m := range machineList.Items {
@@ -248,56 +261,59 @@ func (r *DockerMachineReconciler) dockerClusterToDockerMachines(ctx context.Cont
 func patchDockerMachine(ctx context.Context, patchHelper *patch.Helper, dockerMachine *infrav1.DockerMachine) error {
 	// Always update the readyCondition by summarizing the state of other conditions.
 	// A step counter is added to represent progress during the provisioning process (instead we are hiding the step counter during the deletion process).
-	conditions.SetSummary(dockerMachine,
-		conditions.WithConditions(
-			infrav1.ContainerProvisionedCondition,
-			infrav1.BootstrapExecSucceededCondition,
+	v1beta1conditions.SetSummary(dockerMachine,
+		v1beta1conditions.WithConditions(
+			infrav1.ContainerProvisionedV1Beta1Condition,
+			infrav1.BootstrapExecSucceededV1Beta1Condition,
 		),
-		conditions.WithStepCounterIf(dockerMachine.ObjectMeta.DeletionTimestamp.IsZero() && dockerMachine.Spec.ProviderID == nil),
+		v1beta1conditions.WithStepCounterIf(dockerMachine.DeletionTimestamp.IsZero() && dockerMachine.Spec.ProviderID == ""),
 	)
-	if err := v1beta2conditions.SetSummaryCondition(dockerMachine, dockerMachine, infrav1.DevMachineReadyV1Beta2Condition,
-		v1beta2conditions.ForConditionTypes{
-			infrav1.DevMachineDockerContainerProvisionedV1Beta2Condition,
-			infrav1.DevMachineDockerContainerBootstrapExecSucceededV1Beta2Condition,
+	if err := conditions.SetSummaryCondition(dockerMachine, dockerMachine, infrav1.DevMachineReadyCondition,
+		conditions.ForConditionTypes{
+			infrav1.DevMachineDockerContainerProvisionedCondition,
+			infrav1.DevMachineDockerContainerBootstrapExecSucceededCondition,
 		},
 		// Using a custom merge strategy to override reasons applied during merge.
-		v1beta2conditions.CustomMergeStrategy{
-			MergeStrategy: v1beta2conditions.DefaultMergeStrategy(
+		conditions.CustomMergeStrategy{
+			MergeStrategy: conditions.DefaultMergeStrategy(
 				// Use custom reasons.
-				v1beta2conditions.ComputeReasonFunc(v1beta2conditions.GetDefaultComputeMergeReasonFunc(
-					infrav1.DevMachineNotReadyV1Beta2Reason,
-					infrav1.DevMachineReadyUnknownV1Beta2Reason,
-					infrav1.DevMachineReadyV1Beta2Reason,
+				conditions.ComputeReasonFunc(conditions.GetDefaultComputeMergeReasonFunc(
+					infrav1.DevMachineNotReadyReason,
+					infrav1.DevMachineReadyUnknownReason,
+					infrav1.DevMachineReadyReason,
 				)),
 			),
 		},
 	); err != nil {
-		return errors.Wrapf(err, "failed to set %s condition", infrav1.DevMachineReadyV1Beta2Condition)
+		return errors.Wrapf(err, "failed to set %s condition", infrav1.DevMachineReadyCondition)
 	}
 
 	// Patch the object, ignoring conflicts on the conditions owned by this controller.
 	return patchHelper.Patch(
 		ctx,
 		dockerMachine,
-		patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
-			clusterv1.ReadyCondition,
-			infrav1.ContainerProvisionedCondition,
-			infrav1.BootstrapExecSucceededCondition,
+		patch.WithOwnedV1Beta1Conditions{Conditions: []clusterv1.ConditionType{
+			clusterv1.ReadyV1Beta1Condition,
+			infrav1.ContainerProvisionedV1Beta1Condition,
+			infrav1.BootstrapExecSucceededV1Beta1Condition,
 		}},
-		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			clusterv1.PausedV1Beta2Condition,
-			infrav1.DevMachineReadyV1Beta2Condition,
-			infrav1.DevMachineDockerContainerProvisionedV1Beta2Condition,
-			infrav1.DevMachineDockerContainerBootstrapExecSucceededV1Beta2Condition,
+		patch.WithOwnedConditions{Conditions: []string{
+			clusterv1.PausedCondition,
+			infrav1.DevMachineReadyCondition,
+			infrav1.DevMachineDockerContainerProvisionedCondition,
+			infrav1.DevMachineDockerContainerBootstrapExecSucceededCondition,
 		}},
 	)
 }
 
 func dockerMachineToDevMachine(dockerMachine *infrav1.DockerMachine) *infrav1.DevMachine {
-	var v1Beta2Status *infrav1.DevMachineV1Beta2Status
-	if dockerMachine.Status.V1Beta2 != nil {
-		v1Beta2Status = &infrav1.DevMachineV1Beta2Status{
-			Conditions: dockerMachine.Status.V1Beta2.Conditions,
+	// Carry over deprecated v1beta1 status if defined.
+	var v1Beta1Status *infrav1.DevMachineDeprecatedStatus
+	if dockerMachine.Status.Deprecated != nil && dockerMachine.Status.Deprecated.V1Beta1 != nil {
+		v1Beta1Status = &infrav1.DevMachineDeprecatedStatus{
+			V1Beta1: &infrav1.DevMachineV1Beta1DeprecatedStatus{
+				Conditions: dockerMachine.Status.Deprecated.V1Beta1.Conditions,
+			},
 		}
 	}
 
@@ -316,10 +332,12 @@ func dockerMachineToDevMachine(dockerMachine *infrav1.DockerMachine) *infrav1.De
 			},
 		},
 		Status: infrav1.DevMachineStatus{
-			Ready:      dockerMachine.Status.Ready,
+			Initialization: infrav1.DevMachineInitializationStatus{
+				Provisioned: dockerMachine.Status.Initialization.Provisioned,
+			},
 			Addresses:  dockerMachine.Status.Addresses,
 			Conditions: dockerMachine.Status.Conditions,
-			V1Beta2:    v1Beta2Status,
+			Deprecated: v1Beta1Status,
 			Backend: &infrav1.DevMachineBackendStatus{
 				Docker: &infrav1.DockerMachineBackendStatus{
 					LoadBalancerConfigured: dockerMachine.Status.LoadBalancerConfigured,
@@ -330,10 +348,13 @@ func dockerMachineToDevMachine(dockerMachine *infrav1.DockerMachine) *infrav1.De
 }
 
 func devMachineToDockerMachine(devMachine *infrav1.DevMachine, dockerMachine *infrav1.DockerMachine) {
-	var v1Beta2Status *infrav1.DockerMachineV1Beta2Status
-	if devMachine.Status.V1Beta2 != nil {
-		v1Beta2Status = &infrav1.DockerMachineV1Beta2Status{
-			Conditions: devMachine.Status.V1Beta2.Conditions,
+	// Carry over deprecated v1beta1 status if defined.
+	var v1Beta1Status *infrav1.DockerMachineDeprecatedStatus
+	if devMachine.Status.Deprecated != nil && devMachine.Status.Deprecated.V1Beta1 != nil {
+		v1Beta1Status = &infrav1.DockerMachineDeprecatedStatus{
+			V1Beta1: &infrav1.DockerMachineV1Beta1DeprecatedStatus{
+				Conditions: devMachine.Status.Deprecated.V1Beta1.Conditions,
+			},
 		}
 	}
 
@@ -344,9 +365,11 @@ func devMachineToDockerMachine(devMachine *infrav1.DevMachine, dockerMachine *in
 	dockerMachine.Spec.ExtraMounts = devMachine.Spec.Backend.Docker.ExtraMounts
 	dockerMachine.Spec.Bootstrapped = devMachine.Spec.Backend.Docker.Bootstrapped
 	dockerMachine.Spec.BootstrapTimeout = devMachine.Spec.Backend.Docker.BootstrapTimeout
-	dockerMachine.Status.Ready = devMachine.Status.Ready
+	dockerMachine.Status.Initialization = infrav1.DockerMachineInitializationStatus{
+		Provisioned: devMachine.Status.Initialization.Provisioned,
+	}
 	dockerMachine.Status.Addresses = devMachine.Status.Addresses
 	dockerMachine.Status.Conditions = devMachine.Status.Conditions
-	dockerMachine.Status.V1Beta2 = v1Beta2Status
+	dockerMachine.Status.Deprecated = v1Beta1Status
 	dockerMachine.Status.LoadBalancerConfigured = devMachine.Status.Backend.Docker.LoadBalancerConfigured
 }

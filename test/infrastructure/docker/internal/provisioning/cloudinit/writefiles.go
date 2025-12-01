@@ -25,15 +25,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	kubeadmtypes "sigs.k8s.io/cluster-api/bootstrap/kubeadm/types"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/provisioning"
 	"sigs.k8s.io/cluster-api/test/infrastructure/kind"
-	"sigs.k8s.io/cluster-api/util/version"
 )
 
 const (
@@ -48,11 +47,6 @@ conntrack:
 # It is a global variable that affects other namespaces
   maxPerCore: 0
 `
-)
-
-var (
-	cgroupDriverCgroupfs            = "cgroupfs"
-	cgroupDriverPatchVersionCeiling = semver.Version{Major: 1, Minor: 24}
 )
 
 // writeFilesAction defines a list of files that should be written to a node.
@@ -85,15 +79,14 @@ func (a *writeFilesAction) Unmarshal(userData []byte, kindMapping kind.Mapping) 
 			if len(contentSplit) != 3 {
 				return errors.Errorf("invalid kubeadm config file, unable to parse it")
 			}
-			clusterConfiguration := &bootstrapv1.ClusterConfiguration{}
-			initConfiguration, err := kubeadmtypes.UnmarshalInitConfiguration(contentSplit[2], clusterConfiguration)
+			initConfiguration, err := kubeadmtypes.UnmarshalInitConfiguration(contentSplit[2])
 			if err != nil {
 				return errors.Wrapf(err, "failed to parse init configuration")
 			}
 
 			fixNodeRegistration(&initConfiguration.NodeRegistration, kindMapping)
 
-			contentSplit[2], err = kubeadmtypes.MarshalInitConfigurationForVersion(clusterConfiguration, initConfiguration, kindMapping.KubernetesVersion)
+			contentSplit[2], err = kubeadmtypes.MarshalInitConfigurationForVersion(initConfiguration, kindMapping.KubernetesVersion)
 			if err != nil {
 				return errors.Wrapf(err, "failed to marshal init configuration")
 			}
@@ -101,15 +94,14 @@ func (a *writeFilesAction) Unmarshal(userData []byte, kindMapping kind.Mapping) 
 		}
 		if f.Path == kubeadmJoinPath {
 			// NOTE: in case of join the kubeadmConfigFile contains only the join Configuration
-			clusterConfiguration := &bootstrapv1.ClusterConfiguration{}
-			joinConfiguration, err := kubeadmtypes.UnmarshalJoinConfiguration(f.Content, clusterConfiguration)
+			joinConfiguration, err := kubeadmtypes.UnmarshalJoinConfiguration(f.Content)
 			if err != nil {
 				return errors.Wrapf(err, "failed to parse join configuration")
 			}
 
 			fixNodeRegistration(&joinConfiguration.NodeRegistration, kindMapping)
 
-			a.Files[i].Content, err = kubeadmtypes.MarshalJoinConfigurationForVersion(clusterConfiguration, joinConfiguration, kindMapping.KubernetesVersion)
+			a.Files[i].Content, err = kubeadmtypes.MarshalJoinConfigurationForVersion(joinConfiguration, kindMapping.KubernetesVersion)
 			if err != nil {
 				return errors.Wrapf(err, "failed to marshal join configuration")
 			}
@@ -130,7 +122,7 @@ func fixNodeRegistration(nodeRegistration *bootstrapv1.NodeRegistrationOptions, 
 	}
 
 	if nodeRegistration.KubeletExtraArgs == nil {
-		nodeRegistration.KubeletExtraArgs = map[string]string{}
+		nodeRegistration.KubeletExtraArgs = []bootstrapv1.Arg{}
 	}
 
 	// Disable disk resource management by default.
@@ -148,18 +140,19 @@ func fixNodeRegistration(nodeRegistration *bootstrapv1.NodeRegistrationOptions, 
 		defaultExtraArg(nodeRegistration, "cgroup-root", "/kubelet")
 		defaultExtraArg(nodeRegistration, "runtime-cgroups", "/system.slice/containerd.service")
 	}
-
-	if version.Compare(kindMapping.KubernetesVersion, cgroupDriverPatchVersionCeiling) == -1 {
-		// kubeadm for Kubernetes version <= 1.23 defaults to cgroup-driver=cgroupfs; following settings makes kubelet
-		// to run consistently with what kubeadm expects.
-		nodeRegistration.KubeletExtraArgs["cgroup-driver"] = cgroupDriverCgroupfs
-	}
 }
 
 // defautExtraArg sets a default value for an extra arg if it is not already set.
 func defaultExtraArg(nodeRegistration *bootstrapv1.NodeRegistrationOptions, arg, value string) {
-	if _, ok := nodeRegistration.KubeletExtraArgs[arg]; !ok {
-		nodeRegistration.KubeletExtraArgs[arg] = value
+	found := false
+	for i := range nodeRegistration.KubeletExtraArgs {
+		if nodeRegistration.KubeletExtraArgs[i].Name == arg {
+			nodeRegistration.KubeletExtraArgs[i].Value = ptr.To(value)
+			found = true
+		}
+	}
+	if !found {
+		nodeRegistration.KubeletExtraArgs = append(nodeRegistration.KubeletExtraArgs, bootstrapv1.Arg{Name: arg, Value: ptr.To(value)})
 	}
 }
 

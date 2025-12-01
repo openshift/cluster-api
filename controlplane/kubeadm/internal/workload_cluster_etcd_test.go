@@ -28,11 +28,12 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	fake2 "sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd/fake"
 	utilyaml "sigs.k8s.io/cluster-api/util/yaml"
@@ -42,18 +43,18 @@ func TestUpdateEtcdExternalInKubeadmConfigMap(t *testing.T) {
 	tests := []struct {
 		name                     string
 		clusterConfigurationData string
-		externalEtcd             *bootstrapv1.ExternalEtcd
+		externalEtcd             bootstrapv1.ExternalEtcd
 		wantClusterConfiguration string
 	}{
 		{
 			name: "it should set external etcd configuration with external etcd",
 			clusterConfigurationData: utilyaml.Raw(`
-				apiVersion: kubeadm.k8s.io/v1beta2
+				apiVersion: kubeadm.k8s.io/v1beta3
 				kind: ClusterConfiguration
 				etcd:
 				  external: {}
 				`),
-			externalEtcd: &bootstrapv1.ExternalEtcd{
+			externalEtcd: bootstrapv1.ExternalEtcd{
 				Endpoints: []string{"1.2.3.4"},
 				CAFile:    "/tmp/ca_file.pem",
 				CertFile:  "/tmp/cert_file.crt",
@@ -61,7 +62,7 @@ func TestUpdateEtcdExternalInKubeadmConfigMap(t *testing.T) {
 			},
 			wantClusterConfiguration: utilyaml.Raw(`
 				apiServer: {}
-				apiVersion: kubeadm.k8s.io/v1beta2
+				apiVersion: kubeadm.k8s.io/v1beta3
 				controllerManager: {}
 				dns: {}
 				etcd:
@@ -72,29 +73,9 @@ func TestUpdateEtcdExternalInKubeadmConfigMap(t *testing.T) {
 				    - 1.2.3.4
 				    keyFile: /tmp/key_file.key
 				kind: ClusterConfiguration
+				kubernetesVersion: v1.23.1
 				networking: {}
 				scheduler: {}
-				`),
-		},
-		{
-			name: "no op when local etcd configuration already exists",
-			clusterConfigurationData: utilyaml.Raw(`
-				apiVersion: kubeadm.k8s.io/v1beta2
-				kind: ClusterConfiguration
-				etcd:
-				  local: {}
-				`),
-			externalEtcd: &bootstrapv1.ExternalEtcd{
-				Endpoints: []string{"1.2.3.4"},
-				CAFile:    "/tmp/ca_file.pem",
-				CertFile:  "/tmp/cert_file.crt",
-				KeyFile:   "/tmp/key_file.key",
-			},
-			wantClusterConfiguration: utilyaml.Raw(`
-				apiVersion: kubeadm.k8s.io/v1beta2
-				kind: ClusterConfiguration
-				etcd:
-				  local: {}
 				`),
 		},
 	}
@@ -115,7 +96,7 @@ func TestUpdateEtcdExternalInKubeadmConfigMap(t *testing.T) {
 			w := &Workload{
 				Client: fakeClient,
 			}
-			err := w.UpdateClusterConfiguration(ctx, semver.MustParse("1.19.1"), w.UpdateEtcdExternalInKubeadmConfigMap(tt.externalEtcd))
+			err := w.UpdateClusterConfiguration(ctx, semver.MustParse("1.23.1"), w.UpdateEtcdExternalInKubeadmConfigMap(tt.externalEtcd))
 			g.Expect(err).ToNot(HaveOccurred())
 
 			var actualConfig corev1.ConfigMap
@@ -132,65 +113,85 @@ func TestUpdateEtcdExternalInKubeadmConfigMap(t *testing.T) {
 func TestUpdateEtcdLocalInKubeadmConfigMap(t *testing.T) {
 	tests := []struct {
 		name                     string
+		version                  semver.Version
 		clusterConfigurationData string
-		localEtcd                *bootstrapv1.LocalEtcd
+		localEtcd                bootstrapv1.LocalEtcd
 		wantClusterConfiguration string
 	}{
 		{
-			name: "it should set local etcd configuration with local etcd",
+			name:    "it should set local etcd configuration with local etcd (<1.31)",
+			version: semver.MustParse("1.23.1"),
 			clusterConfigurationData: utilyaml.Raw(`
-				apiVersion: kubeadm.k8s.io/v1beta2
+				apiVersion: kubeadm.k8s.io/v1beta3
 				kind: ClusterConfiguration
 				etcd:
 				  local: {}
 				`),
-			localEtcd: &bootstrapv1.LocalEtcd{
-				ImageMeta: bootstrapv1.ImageMeta{
-					ImageRepository: "example.com/k8s",
-					ImageTag:        "v1.6.0",
-				},
-				ExtraArgs: map[string]string{
-					"foo": "bar",
+			localEtcd: bootstrapv1.LocalEtcd{
+				ImageRepository: "example.com/k8s",
+				ImageTag:        "v1.6.0",
+				ExtraArgs: []bootstrapv1.Arg{
+					{
+						Name:  "foo",
+						Value: ptr.To("bar"),
+					},
 				},
 			},
 			wantClusterConfiguration: utilyaml.Raw(`
 				apiServer: {}
-				apiVersion: kubeadm.k8s.io/v1beta2
+				apiVersion: kubeadm.k8s.io/v1beta3
 				controllerManager: {}
 				dns: {}
 				etcd:
 				  local:
+				    dataDir: ""
 				    extraArgs:
 				      foo: bar
 				    imageRepository: example.com/k8s
 				    imageTag: v1.6.0
 				kind: ClusterConfiguration
+				kubernetesVersion: v1.23.1
 				networking: {}
 				scheduler: {}
 				`),
 		},
 		{
-			name: "no op when external etcd configuration already exists",
+			name:    "it should set local etcd configuration with local etcd (>=1.31)",
+			version: semver.MustParse("1.31.1"),
 			clusterConfigurationData: utilyaml.Raw(`
-				apiVersion: kubeadm.k8s.io/v1beta2
+				apiVersion: kubeadm.k8s.io/v1beta4
 				kind: ClusterConfiguration
 				etcd:
-				  external: {}
+				  local: {}
 				`),
-			localEtcd: &bootstrapv1.LocalEtcd{
-				ImageMeta: bootstrapv1.ImageMeta{
-					ImageRepository: "example.com/k8s",
-					ImageTag:        "v1.6.0",
-				},
-				ExtraArgs: map[string]string{
-					"foo": "bar",
+			localEtcd: bootstrapv1.LocalEtcd{
+				ImageRepository: "example.com/k8s",
+				ImageTag:        "v1.6.0",
+				ExtraArgs: []bootstrapv1.Arg{
+					{
+						Name:  "foo",
+						Value: ptr.To("bar"),
+					},
 				},
 			},
 			wantClusterConfiguration: utilyaml.Raw(`
-				apiVersion: kubeadm.k8s.io/v1beta2
-				kind: ClusterConfiguration
+				apiServer: {}
+				apiVersion: kubeadm.k8s.io/v1beta4
+				controllerManager: {}
+				dns: {}
 				etcd:
-				  external: {}
+				  local:
+				    dataDir: ""
+				    extraArgs:
+				    - name: foo
+				      value: bar
+				    imageRepository: example.com/k8s
+				    imageTag: v1.6.0
+				kind: ClusterConfiguration
+				kubernetesVersion: v1.31.1
+				networking: {}
+				proxy: {}
+				scheduler: {}
 				`),
 		},
 	}
@@ -211,7 +212,7 @@ func TestUpdateEtcdLocalInKubeadmConfigMap(t *testing.T) {
 			w := &Workload{
 				Client: fakeClient,
 			}
-			err := w.UpdateClusterConfiguration(ctx, semver.MustParse("1.19.1"), w.UpdateEtcdLocalInKubeadmConfigMap(tt.localEtcd))
+			err := w.UpdateClusterConfiguration(ctx, tt.version, w.UpdateEtcdLocalInKubeadmConfigMap(tt.localEtcd))
 			g.Expect(err).ToNot(HaveOccurred())
 
 			var actualConfig corev1.ConfigMap
@@ -228,7 +229,7 @@ func TestUpdateEtcdLocalInKubeadmConfigMap(t *testing.T) {
 func TestRemoveEtcdMemberForMachine(t *testing.T) {
 	machine := &clusterv1.Machine{
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "cp1",
 			},
 		},
@@ -265,7 +266,7 @@ func TestRemoveEtcdMemberForMachine(t *testing.T) {
 			name: "does nothing if the machine has no node",
 			machine: &clusterv1.Machine{
 				Status: clusterv1.MachineStatus{
-					NodeRef: nil,
+					// NodeRef is not set
 				},
 			},
 			expectErr: false,
@@ -379,7 +380,7 @@ func TestForwardEtcdLeadership(t *testing.T) {
 			{
 				name: "does nothing if machine's NodeRef is nil",
 				machine: defaultMachine(func(m *clusterv1.Machine) {
-					m.Status.NodeRef = nil
+					m.Status.NodeRef = clusterv1.MachineNodeReference{}
 				}),
 				expectErr: false,
 			},
@@ -393,7 +394,7 @@ func TestForwardEtcdLeadership(t *testing.T) {
 				name:    "returns an error if the leader candidate's noderef is nil",
 				machine: defaultMachine(),
 				leaderCandidate: defaultMachine(func(m *clusterv1.Machine) {
-					m.Status.NodeRef = nil
+					m.Status.NodeRef = clusterv1.MachineNodeReference{}
 				}),
 				expectErr: true,
 			},
@@ -553,32 +554,6 @@ func TestForwardEtcdLeadership(t *testing.T) {
 }
 
 func TestReconcileEtcdMembersAndControlPlaneNodes(t *testing.T) {
-	kubeadmConfig := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kubeadmConfigKey,
-			Namespace: metav1.NamespaceSystem,
-		},
-		Data: map[string]string{
-			clusterStatusKey: utilyaml.Raw(`
-				apiEndpoints:
-				  ip-10-0-0-1.ec2.internal:
-				    advertiseAddress: 10.0.0.1
-				    bindPort: 6443
-				  ip-10-0-0-2.ec2.internal:
-				    advertiseAddress: 10.0.0.2
-				    bindPort: 6443
-				    someFieldThatIsAddedInTheFuture: bar
-				  ip-10-0-0-3.ec2.internal:
-				    advertiseAddress: 10.0.0.3
-				    bindPort: 6443
-				apiVersion: kubeadm.k8s.io/v1beta2
-				kind: ClusterStatus
-				`),
-		},
-	}
-	kubeadmConfigWithoutClusterStatus := kubeadmConfig.DeepCopy()
-	delete(kubeadmConfigWithoutClusterStatus.Data, clusterStatusKey)
-
 	node1 := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ip-10-0-0-1.ec2.internal",
@@ -613,12 +588,12 @@ func TestReconcileEtcdMembersAndControlPlaneNodes(t *testing.T) {
 		nodes               []string
 		etcdClientGenerator etcdClientFor
 		expectErr           bool
-		assert              func(*WithT, client.Client)
+		assert              func(*WithT)
 	}{
 		{
 			// no op if nodes and members match
 			name: "no op if nodes and members match",
-			objs: []client.Object{node1.DeepCopy(), node2.DeepCopy(), node3.DeepCopy(), kubeadmConfigWithoutClusterStatus.DeepCopy()},
+			objs: []client.Object{node1.DeepCopy(), node2.DeepCopy(), node3.DeepCopy()},
 			members: []*etcd.Member{
 				{Name: node1.Name, ID: uint64(1)},
 				{Name: node2.Name, ID: uint64(2)},
@@ -631,24 +606,15 @@ func TestReconcileEtcdMembersAndControlPlaneNodes(t *testing.T) {
 				},
 			},
 			expectErr: false,
-			assert: func(g *WithT, c client.Client) {
+			assert: func(g *WithT) {
 				g.Expect(fakeEtcdClient.RemovedMember).To(Equal(uint64(0))) // no member removed
-
-				var actualConfig corev1.ConfigMap
-				g.Expect(c.Get(
-					ctx,
-					client.ObjectKey{Name: kubeadmConfigKey, Namespace: metav1.NamespaceSystem},
-					&actualConfig,
-				)).To(Succeed())
-				// Kubernetes version >= 1.22.0 does not have ClusterStatus
-				g.Expect(actualConfig.Data).ToNot(HaveKey(clusterStatusKey))
 			},
 		},
 		{
 			// the node to be removed is ip-10-0-0-3.ec2.internal since the
 			// other two have nodes
 			name: "successfully removes the etcd member without a node",
-			objs: []client.Object{node1.DeepCopy(), node2.DeepCopy(), kubeadmConfigWithoutClusterStatus.DeepCopy()},
+			objs: []client.Object{node1.DeepCopy(), node2.DeepCopy()},
 			members: []*etcd.Member{
 				{Name: node1.Name, ID: uint64(1)},
 				{Name: node2.Name, ID: uint64(2)},
@@ -661,23 +627,14 @@ func TestReconcileEtcdMembersAndControlPlaneNodes(t *testing.T) {
 				},
 			},
 			expectErr: false,
-			assert: func(g *WithT, c client.Client) {
+			assert: func(g *WithT) {
 				g.Expect(fakeEtcdClient.RemovedMember).To(Equal(uint64(3)))
-
-				var actualConfig corev1.ConfigMap
-				g.Expect(c.Get(
-					ctx,
-					client.ObjectKey{Name: kubeadmConfigKey, Namespace: metav1.NamespaceSystem},
-					&actualConfig,
-				)).To(Succeed())
-				// Kubernetes version >= 1.22.0 does not have ClusterStatus
-				g.Expect(actualConfig.Data).ToNot(HaveKey(clusterStatusKey))
 			},
 		},
 		{
 			// only one node left, no removal should happen
 			name: "return error if there aren't enough control plane nodes",
-			objs: []client.Object{node1.DeepCopy(), kubeadmConfig.DeepCopy()},
+			objs: []client.Object{node1.DeepCopy()},
 			members: []*etcd.Member{
 				{Name: "ip-10-0-0-1.ec2.internal", ID: uint64(1)},
 				{Name: "ip-10-0-0-2.ec2.internal", ID: uint64(2)},
@@ -716,7 +673,7 @@ func TestReconcileEtcdMembersAndControlPlaneNodes(t *testing.T) {
 			g.Expect(err).ToNot(HaveOccurred())
 
 			if tt.assert != nil {
-				tt.assert(g, env.Client)
+				tt.assert(g)
 			}
 		})
 	}
@@ -744,7 +701,7 @@ func (c *fakeEtcdClientGenerator) forLeader(_ context.Context, _ []string) (*etc
 func defaultMachine(transforms ...func(m *clusterv1.Machine)) *clusterv1.Machine {
 	m := &clusterv1.Machine{
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "machine-node",
 			},
 		},

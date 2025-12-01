@@ -21,13 +21,12 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
@@ -106,16 +105,18 @@ func TestPatch(t *testing.T) {
 				},
 			},
 			Spec: clusterv1.MachineSpec{
-				ClusterName:      "cluster-1",
-				Version:          ptr.To("v1.25.0"),
-				NodeDrainTimeout: &metav1.Duration{Duration: 10 * time.Second},
+				ClusterName: "cluster-1",
+				Version:     "v1.25.0",
+				Deletion: clusterv1.MachineDeletionSpec{
+					NodeDrainTimeoutSeconds: ptr.To(int32(10)),
+				},
 				Bootstrap: clusterv1.Bootstrap{
 					DataSecretName: ptr.To("data-secret"),
 				},
-				InfrastructureRef: corev1.ObjectReference{
-					// The namespace needs to get set here. Otherwise the defaulting webhook always sets this field again
-					// which would lead to an resourceVersion bump at the 3rd step and to a flaky test.
-					Namespace: ns.Name,
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: builder.InfrastructureGroupVersion.Group,
+					Kind:     builder.TestInfrastructureMachineKind,
+					Name:     "inframachine",
 				},
 			},
 		}
@@ -134,7 +135,7 @@ func TestPatch(t *testing.T) {
 		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(originalObject), originalObject)).To(Succeed())
 		// Modify the object
 		modifiedObject := initialObject.DeepCopy()
-		modifiedObject.Spec.NodeDrainTimeout = &metav1.Duration{Duration: 5 * time.Second}
+		modifiedObject.Spec.Deletion.NodeDrainTimeoutSeconds = ptr.To(int32(5))
 		// Compute request identifier, so we can later verify that the update call was not cached.
 		modifiedUnstructured, err := prepareModified(env.Scheme(), modifiedObject)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -161,7 +162,7 @@ func TestPatch(t *testing.T) {
 		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(originalObject), originalObject)).To(Succeed())
 		// Modify the object
 		modifiedObject = initialObject.DeepCopy()
-		modifiedObject.Spec.NodeDrainTimeout = &metav1.Duration{Duration: 5 * time.Second}
+		modifiedObject.Spec.Deletion.NodeDrainTimeoutSeconds = ptr.To(int32(5))
 		// Compute request identifier, so we can later verify that the update call was cached.
 		modifiedUnstructured, err = prepareModified(env.Scheme(), modifiedObject)
 		g.Expect(err).ToNot(HaveOccurred())
