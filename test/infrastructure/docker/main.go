@@ -49,20 +49,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/crdmigrator"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
 	infrav1alpha3 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha3"
 	infrav1alpha4 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha4"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1beta1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/controllers"
 	infraexpv1alpha3 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1alpha3"
 	infraexpv1alpha4 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1alpha4"
-	infraexpv1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta1"
+	infraexpv1beta1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta1"
+	infraexpv1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta2"
 	expcontrollers "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/controllers"
 	infraexpwebhooks "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/webhooks"
 	infrawebhooks "sigs.k8s.io/cluster-api/test/infrastructure/docker/webhooks"
@@ -111,12 +112,13 @@ func init() {
 	_ = apiextensionsv1.AddToScheme(scheme)
 	_ = infrav1alpha3.AddToScheme(scheme)
 	_ = infrav1alpha4.AddToScheme(scheme)
+	_ = infrav1beta1.AddToScheme(scheme)
 	_ = infrav1.AddToScheme(scheme)
 	_ = infraexpv1alpha3.AddToScheme(scheme)
 	_ = infraexpv1alpha4.AddToScheme(scheme)
+	_ = infraexpv1beta1.AddToScheme(scheme)
 	_ = infraexpv1.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
-	_ = expv1.AddToScheme(scheme)
 
 	// scheme used for operating on the cloud resource.
 	_ = cloudv1.AddToScheme(inmemoryScheme)
@@ -208,8 +210,6 @@ func InitFlags(fs *pflag.FlagSet) {
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devclustertemplates;devmachinetemplates,verbs=get;list;watch;patch;update
 
 func main() {
-	setupLog.Info(fmt.Sprintf("Version: %+v", version.Get().String()))
-
 	if _, err := os.ReadDir("/tmp/"); err != nil {
 		setupLog.Error(err, "Unable to start manager")
 		os.Exit(1)
@@ -220,18 +220,21 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "Failed to set default log level")
+		fmt.Printf("Failed to set default log level: %v\n", err)
 		os.Exit(1)
 	}
 	pflag.Parse()
 
 	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
-		setupLog.Error(err, "Unable to start manager")
+		fmt.Printf("Unable to start manager: %v\n", err)
 		os.Exit(1)
 	}
 
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
+
+	// Note: setupLog can only be used after ctrl.SetLogger was called
+	setupLog.Info(fmt.Sprintf("Version: %s (git commit: %s)", version.Get().String(), version.Get().GitCommit))
 
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS
@@ -448,6 +451,15 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		os.Exit(1)
 	}
 
+	if err := (&controllers.DockerMachineTemplateReconciler{
+		Client:           mgr.GetClient(),
+		ContainerRuntime: runtimeClient,
+		WatchFilterValue: watchFilterValue,
+	}).SetupWithManager(ctx, mgr, controller.Options{}); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "DockerMachineTemplate")
+		os.Exit(1)
+	}
+
 	if feature.Gates.Enabled(feature.MachinePool) {
 		if err := (&expcontrollers.DockerMachinePoolReconciler{
 			Client:           mgr.GetClient(),
@@ -481,6 +493,15 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		APIServerMux:     apiServerMux,
 	}).SetupWithManager(ctx, mgr, controller.Options{}); err != nil {
 		setupLog.Error(err, "Unable to create controller", "controller", "DevCluster")
+		os.Exit(1)
+	}
+
+	if err := (&controllers.DevMachineTemplateReconciler{
+		Client:           mgr.GetClient(),
+		ContainerRuntime: runtimeClient,
+		WatchFilterValue: watchFilterValue,
+	}).SetupWithManager(ctx, mgr, controller.Options{}); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "DevMachineTemplate")
 		os.Exit(1)
 	}
 }

@@ -24,21 +24,16 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/secret"
-)
-
-const (
-	// KubeadmControlPlaneControllerName defines the controller used when creating clients.
-	KubeadmControlPlaneControllerName = "kubeadm-controlplane-controller"
 )
 
 // ManagementCluster defines all behaviors necessary for something to function as a management cluster.
@@ -46,7 +41,7 @@ type ManagementCluster interface {
 	client.Reader
 
 	GetMachinesForCluster(ctx context.Context, cluster *clusterv1.Cluster, filters ...collections.Func) (collections.Machines, error)
-	GetMachinePoolsForCluster(ctx context.Context, cluster *clusterv1.Cluster) (*expv1.MachinePoolList, error)
+	GetMachinePoolsForCluster(ctx context.Context, cluster *clusterv1.Cluster) (*clusterv1.MachinePoolList, error)
 	GetWorkloadCluster(ctx context.Context, clusterKey client.ObjectKey) (WorkloadCluster, error)
 }
 
@@ -57,6 +52,7 @@ type Management struct {
 	ClusterCache        clustercache.ClusterCache
 	EtcdDialTimeout     time.Duration
 	EtcdCallTimeout     time.Duration
+	EtcdLogger          *zap.Logger
 }
 
 // RemoteClusterConnectionError represents a failure to connect to a remote cluster.
@@ -88,14 +84,14 @@ func (m *Management) GetMachinesForCluster(ctx context.Context, cluster *cluster
 }
 
 // GetMachinePoolsForCluster returns a list of machine pools owned by the cluster.
-func (m *Management) GetMachinePoolsForCluster(ctx context.Context, cluster *clusterv1.Cluster) (*expv1.MachinePoolList, error) {
+func (m *Management) GetMachinePoolsForCluster(ctx context.Context, cluster *clusterv1.Cluster) (*clusterv1.MachinePoolList, error) {
 	selectors := []client.ListOption{
 		client.InNamespace(cluster.GetNamespace()),
 		client.MatchingLabels{
 			clusterv1.ClusterNameLabel: cluster.GetName(),
 		},
 	}
-	machinePoolList := &expv1.MachinePoolList{}
+	machinePoolList := &clusterv1.MachinePoolList{}
 	err := m.Client.List(ctx, machinePoolList, selectors...)
 	return machinePoolList, err
 }
@@ -158,7 +154,7 @@ func (m *Management) GetWorkloadCluster(ctx context.Context, clusterKey client.O
 		restConfig:          restConfig,
 		Client:              c,
 		CoreDNSMigrator:     &CoreDNSMigrator{},
-		etcdClientGenerator: NewEtcdClientGenerator(restConfig, tlsConfig, m.EtcdDialTimeout, m.EtcdCallTimeout),
+		etcdClientGenerator: NewEtcdClientGenerator(restConfig, tlsConfig, m.EtcdDialTimeout, m.EtcdCallTimeout, m.EtcdLogger),
 	}, nil
 }
 

@@ -32,15 +32,19 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/pkg/errors"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/component-base/logs"
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
@@ -55,21 +59,19 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	bootstrapwebhooks "sigs.k8s.io/cluster-api/bootstrap/kubeadm/webhooks"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/log"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	controlplanewebhooks "sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
-	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 	expipamwebhooks "sigs.k8s.io/cluster-api/exp/ipam/webhooks"
-	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
 	expapiwebhooks "sigs.k8s.io/cluster-api/exp/webhooks"
 	"sigs.k8s.io/cluster-api/feature"
 	internalwebhooks "sigs.k8s.io/cluster-api/internal/webhooks"
-	runtimewebhooks "sigs.k8s.io/cluster-api/internal/webhooks/runtime"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 	"sigs.k8s.io/cluster-api/version"
@@ -104,29 +106,33 @@ func init() {
 	// Add logger for ginkgo.
 	klog.SetOutput(ginkgo.GinkgoWriter)
 
-	// Calculate the scheme.
-	utilruntime.Must(apiextensionsv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(admissionv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(clusterv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(bootstrapv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(expv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(controlplanev1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(admissionv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(runtimev1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(ipamv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(builder.AddTransitionV1Beta2ToScheme(scheme.Scheme))
-	utilruntime.Must(addonsv1.AddToScheme(scheme.Scheme))
+	// Calculate the global scheme used by fakeclients.
+	registerSchemes(scheme.Scheme)
+}
+
+func registerSchemes(s *runtime.Scheme) {
+	utilruntime.Must(admissionv1.AddToScheme(s))
+	utilruntime.Must(apiextensionsv1.AddToScheme(s))
+
+	utilruntime.Must(addonsv1.AddToScheme(s))
+	utilruntime.Must(bootstrapv1.AddToScheme(s))
+	utilruntime.Must(clusterv1.AddToScheme(s))
+	utilruntime.Must(controlplanev1.AddToScheme(s))
+	utilruntime.Must(ipamv1.AddToScheme(s))
+	utilruntime.Must(runtimev1.AddToScheme(s))
 }
 
 // RunInput is the input for Run.
 type RunInput struct {
-	M                   *testing.M
-	ManagerUncachedObjs []client.Object
-	ManagerCacheOptions cache.Options
-	SetupIndexes        func(ctx context.Context, mgr ctrl.Manager)
-	SetupReconcilers    func(ctx context.Context, mgr ctrl.Manager)
-	SetupEnv            func(e *Environment)
-	MinK8sVersion       string
+	M                           *testing.M
+	ManagerUncachedObjs         []client.Object
+	ManagerCacheOptions         cache.Options
+	SetupIndexes                func(ctx context.Context, mgr ctrl.Manager)
+	SetupReconcilers            func(ctx context.Context, mgr ctrl.Manager)
+	SetupEnv                    func(e *Environment)
+	MinK8sVersion               string
+	AdditionalSchemeBuilder     runtime.SchemeBuilder
+	AdditionalCRDDirectoryPaths []string
 }
 
 // Run executes the tests of the given testing.M in a test environment.
@@ -147,8 +153,20 @@ func Run(ctx context.Context, input RunInput) int {
 		return input.M.Run()
 	}
 
+	// Calculate the scheme.
+	scheme := runtime.NewScheme()
+	registerSchemes(scheme)
+	// Register additional schemes from k8s APIs.
+	utilruntime.Must(appsv1.AddToScheme(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
+	utilruntime.Must(rbacv1.AddToScheme(scheme))
+	// Register additionally passed schemes.
+	if input.AdditionalSchemeBuilder != nil {
+		utilruntime.Must(input.AdditionalSchemeBuilder.AddToScheme(scheme))
+	}
+
 	// Bootstrapping test environment
-	env := newEnvironment(input.ManagerCacheOptions, input.ManagerUncachedObjs...)
+	env := newEnvironment(scheme, input.AdditionalCRDDirectoryPaths, input.ManagerCacheOptions, input.ManagerUncachedObjs...)
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	env.cancelManager = cancel
@@ -233,20 +251,24 @@ type Environment struct {
 //
 // This function should be called only once for each package you're running tests within,
 // usually the environment is initialized in a suite_test.go file within a `BeforeSuite` ginkgo block.
-func newEnvironment(managerCacheOptions cache.Options, uncachedObjs ...client.Object) *Environment {
+func newEnvironment(scheme *runtime.Scheme, additionalCRDDirectoryPaths []string, managerCacheOptions cache.Options, uncachedObjs ...client.Object) *Environment {
 	// Get the root of the current file to use in CRD paths.
 	_, filename, _, _ := goruntime.Caller(0) //nolint:dogsled
 	root := path.Join(path.Dir(filename), "..", "..", "..")
 
+	crdDirectoryPaths := []string{
+		filepath.Join(root, "config", "crd", "bases"),
+		filepath.Join(root, "controlplane", "kubeadm", "config", "crd", "bases"),
+		filepath.Join(root, "bootstrap", "kubeadm", "config", "crd", "bases"),
+	}
+	for _, path := range additionalCRDDirectoryPaths {
+		crdDirectoryPaths = append(crdDirectoryPaths, filepath.Join(root, path))
+	}
+
 	// Create the test environment.
 	env := &envtest.Environment{
 		ErrorIfCRDPathMissing: true,
-		CRDDirectoryPaths: []string{
-			filepath.Join(root, "config", "crd", "bases"),
-			filepath.Join(root, "controlplane", "kubeadm", "config", "crd", "bases"),
-			filepath.Join(root, "bootstrap", "kubeadm", "config", "crd", "bases"),
-			filepath.Join(root, "util", "test", "builder", "crd"),
-		},
+		CRDDirectoryPaths:     crdDirectoryPaths,
 		CRDs: []*apiextensionsv1.CustomResourceDefinition{
 			builder.GenericBootstrapConfigCRD.DeepCopy(),
 			builder.GenericBootstrapConfigTemplateCRD.DeepCopy(),
@@ -296,7 +318,7 @@ func newEnvironment(managerCacheOptions cache.Options, uncachedObjs ...client.Ob
 		Controller: config.Controller{
 			UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
 		},
-		Scheme: scheme.Scheme,
+		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: "0",
 		},
@@ -323,7 +345,7 @@ func newEnvironment(managerCacheOptions cache.Options, uncachedObjs ...client.Ob
 	}
 
 	// Set minNodeStartupTimeout for Test, so it does not need to be at least 30s
-	internalwebhooks.SetMinNodeStartupTimeout(metav1.Duration{Duration: 1 * time.Millisecond})
+	internalwebhooks.SetMinNodeStartupTimeoutSeconds(0)
 
 	if err := (&webhooks.Cluster{Client: mgr.GetClient()}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook: %+v", err)
@@ -367,7 +389,7 @@ func newEnvironment(managerCacheOptions cache.Options, uncachedObjs ...client.Ob
 	if err := (&expapiwebhooks.MachinePool{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for machinepool: %+v", err)
 	}
-	if err := (&runtimewebhooks.ExtensionConfig{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.ExtensionConfig{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for extensionconfig: %+v", err)
 	}
 	if err := (&expipamwebhooks.IPAddress{}).SetupWebhookWithManager(mgr); err != nil {
@@ -389,12 +411,12 @@ func newEnvironment(managerCacheOptions cache.Options, uncachedObjs ...client.Ob
 func (e *Environment) start(ctx context.Context) {
 	go func() {
 		fmt.Println("Starting the test environment manager")
-		if err := e.Manager.Start(ctx); err != nil {
+		if err := e.Start(ctx); err != nil {
 			panic(fmt.Sprintf("Failed to start the test environment manager: %v", err))
 		}
 	}()
-	<-e.Manager.Elected()
-	e.waitForWebhooks()
+	<-e.Elected()
+	e.waitForWebhooks(ctx)
 }
 
 // stop stops the test environment.
@@ -405,14 +427,17 @@ func (e *Environment) stop() error {
 }
 
 // waitForWebhooks waits for the webhook server to be available.
-func (e *Environment) waitForWebhooks() {
+func (e *Environment) waitForWebhooks(ctx context.Context) {
 	port := e.env.WebhookInstallOptions.LocalServingPort
 
 	klog.V(2).Infof("Waiting for webhook port %d to be open prior to running tests", port)
 	timeout := 1 * time.Second
 	for {
 		time.Sleep(1 * time.Second)
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), timeout)
+		dialer := &net.Dialer{
+			Timeout: timeout,
+		}
+		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
 			klog.V(2).Infof("Webhook port is not ready, will retry in %v: %s", timeout, err)
 			continue
@@ -434,7 +459,7 @@ func (e *Environment) CreateKubeconfigSecret(ctx context.Context, cluster *clust
 func (e *Environment) Cleanup(ctx context.Context, objs ...client.Object) error {
 	errs := []error{}
 	for _, o := range objs {
-		err := e.Client.Delete(ctx, o)
+		err := e.Delete(ctx, o)
 		if apierrors.IsNotFound(err) {
 			continue
 		}
@@ -481,7 +506,7 @@ func (e *Environment) CleanupAndWait(ctx context.Context, objs ...client.Object)
 //
 // NOTE: Waiting for the cache to be updated helps in preventing test flakes due to the cache sync delays.
 func (e *Environment) CreateAndWait(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	if err := e.Client.Create(ctx, obj, opts...); err != nil {
+	if err := e.Create(ctx, obj, opts...); err != nil {
 		return err
 	}
 
@@ -518,7 +543,7 @@ func (e *Environment) PatchAndWait(ctx context.Context, obj client.Object, opts 
 	// Store old resource version, empty string if not found.
 	oldResourceVersion := objCopy.GetResourceVersion()
 
-	if err := e.Client.Patch(ctx, obj, client.Apply, opts...); err != nil {
+	if err := e.Patch(ctx, obj, client.Apply, opts...); err != nil {
 		return err
 	}
 
@@ -552,7 +577,7 @@ func (e *Environment) CreateNamespace(ctx context.Context, generateName string) 
 			},
 		},
 	}
-	if err := e.Client.Create(ctx, ns); err != nil {
+	if err := e.Create(ctx, ns); err != nil {
 		return nil, err
 	}
 
@@ -594,5 +619,62 @@ func verifyPanicMetrics() error {
 		return kerrors.NewAggregate(errs)
 	}
 
+	return nil
+}
+
+// ApplyCRDs allows you to add or replace CRDs after test env has been started.
+func (e *Environment) ApplyCRDs(ctx context.Context, crdPath string) error {
+	installOpts := envtest.CRDInstallOptions{
+		Scheme:       e.GetScheme(),
+		MaxTime:      10 * time.Second,
+		PollInterval: 100 * time.Millisecond,
+		Paths: []string{
+			crdPath,
+		},
+		ErrorIfPathMissing: true,
+	}
+
+	// Read the CRD YAMLs into options.CRDs.
+	if err := envtest.ReadCRDFiles(&installOpts); err != nil {
+		return fmt.Errorf("unable to read CRD files: %w", err)
+	}
+
+	// Apply the CRDs.
+	if err := applyCRDs(ctx, e.GetClient(), installOpts.CRDs); err != nil {
+		return fmt.Errorf("unable to create CRD instances: %w", err)
+	}
+
+	// Wait for the CRDs to appear in discovery.
+	if err := envtest.WaitForCRDs(e.GetConfig(), installOpts.CRDs, installOpts); err != nil {
+		return fmt.Errorf("something went wrong waiting for CRDs to appear as API resources: %w", err)
+	}
+
+	return nil
+}
+
+func applyCRDs(ctx context.Context, c client.Client, crds []*apiextensionsv1.CustomResourceDefinition) error {
+	for _, crd := range crds {
+		existingCrd := crd.DeepCopy()
+		err := c.Get(ctx, client.ObjectKey{Name: crd.GetName()}, existingCrd)
+		switch {
+		case apierrors.IsNotFound(err):
+			if err := c.Create(ctx, crd); err != nil {
+				return fmt.Errorf("unable to create CRD %s: %w", crd.GetName(), err)
+			}
+		case err != nil:
+			return fmt.Errorf("unable to get CRD %s to check if it exists: %w", crd.GetName(), err)
+		default:
+			if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+				if err := c.Get(ctx, client.ObjectKey{Name: crd.GetName()}, existingCrd); err != nil {
+					return err
+				}
+				// Note: Intentionally only overwriting spec and thus preserving metadata labels, annotations, etc.
+				existingCrd.Spec = crd.Spec
+				return c.Update(ctx, existingCrd)
+			}); err != nil {
+				return fmt.Errorf("unable to update CRD %s: %w", crd.GetName(), err)
+			}
+		}
+	}
 	return nil
 }

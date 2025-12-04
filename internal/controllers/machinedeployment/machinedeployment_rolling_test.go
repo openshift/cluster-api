@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/internal/controllers/machinedeployment/mdutil"
 )
 
@@ -79,11 +79,13 @@ func TestReconcileNewMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Strategy: &clusterv1.MachineDeploymentStrategy{
-						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-						RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-							MaxUnavailable: intOrStrPtr(0),
-							MaxSurge:       intOrStrPtr(2),
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+							Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
+							RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+								MaxUnavailable: intOrStrPtr(0),
+								MaxSurge:       intOrStrPtr(2),
+							},
 						},
 					},
 					Replicas: ptr.To[int32](2),
@@ -108,11 +110,13 @@ func TestReconcileNewMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Strategy: &clusterv1.MachineDeploymentStrategy{
-						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-						RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-							MaxUnavailable: intOrStrPtr(0),
-							MaxSurge:       intOrStrPtr(2),
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+							Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
+							RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+								MaxUnavailable: intOrStrPtr(0),
+								MaxSurge:       intOrStrPtr(2),
+							},
 						},
 					},
 					Replicas: ptr.To[int32](0),
@@ -137,11 +141,13 @@ func TestReconcileNewMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Strategy: &clusterv1.MachineDeploymentStrategy{
-						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-						RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-							MaxUnavailable: intOrStrPtr(0),
-							MaxSurge:       intOrStrPtr(2),
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+							Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
+							RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+								MaxUnavailable: intOrStrPtr(0),
+								MaxSurge:       intOrStrPtr(2),
+							},
 						},
 					},
 					Replicas: ptr.To[int32](3),
@@ -167,7 +173,7 @@ func TestReconcileNewMachineSet(t *testing.T) {
 						Replicas: ptr.To[int32](3),
 					},
 					Status: clusterv1.MachineSetStatus{
-						Replicas: 3,
+						Replicas: ptr.To[int32](3),
 					},
 				},
 			},
@@ -181,11 +187,13 @@ func TestReconcileNewMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Strategy: &clusterv1.MachineDeploymentStrategy{
-						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-						RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-							MaxUnavailable: intOrStrPtr(0),
-							MaxSurge:       intOrStrPtr(0),
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+							Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
+							RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+								MaxUnavailable: intOrStrPtr(0),
+								MaxSurge:       intOrStrPtr(0),
+							},
 						},
 					},
 					Replicas: ptr.To[int32](1),
@@ -211,7 +219,7 @@ func TestReconcileNewMachineSet(t *testing.T) {
 						Replicas: ptr.To[int32](0),
 					},
 					Status: clusterv1.MachineSetStatus{
-						Replicas: 1,
+						Replicas: ptr.To[int32](1),
 					},
 				},
 			},
@@ -225,11 +233,13 @@ func TestReconcileNewMachineSet(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Strategy: &clusterv1.MachineDeploymentStrategy{
-						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-						RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-							MaxUnavailable: intOrStrPtr(0),
-							MaxSurge:       intOrStrPtr(0),
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+							Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
+							RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+								MaxUnavailable: intOrStrPtr(0),
+								MaxSurge:       intOrStrPtr(0),
+							},
 						},
 					},
 					Replicas: ptr.To[int32](2),
@@ -348,11 +358,13 @@ func TestReconcileOldMachineSets(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Strategy: &clusterv1.MachineDeploymentStrategy{
-						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-						RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-							MaxUnavailable: intOrStrPtr(1),
-							MaxSurge:       intOrStrPtr(3),
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+							Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
+							RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+								MaxUnavailable: intOrStrPtr(1),
+								MaxSurge:       intOrStrPtr(3),
+							},
 						},
 					},
 					Replicas: ptr.To[int32](2),
@@ -367,7 +379,7 @@ func TestReconcileOldMachineSets(t *testing.T) {
 					Replicas: ptr.To[int32](0),
 				},
 				Status: clusterv1.MachineSetStatus{
-					AvailableReplicas: 2,
+					AvailableReplicas: ptr.To[int32](2),
 				},
 			},
 			oldMachineSets: []*clusterv1.MachineSet{
@@ -380,7 +392,7 @@ func TestReconcileOldMachineSets(t *testing.T) {
 						Replicas: ptr.To[int32](2),
 					},
 					Status: clusterv1.MachineSetStatus{
-						AvailableReplicas: 2,
+						AvailableReplicas: ptr.To[int32](2),
 					},
 				},
 				{
@@ -392,7 +404,7 @@ func TestReconcileOldMachineSets(t *testing.T) {
 						Replicas: ptr.To[int32](1),
 					},
 					Status: clusterv1.MachineSetStatus{
-						AvailableReplicas: 1,
+						AvailableReplicas: ptr.To[int32](1),
 					},
 				},
 			},
@@ -406,11 +418,13 @@ func TestReconcileOldMachineSets(t *testing.T) {
 					Name:      "bar",
 				},
 				Spec: clusterv1.MachineDeploymentSpec{
-					Strategy: &clusterv1.MachineDeploymentStrategy{
-						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-						RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-							MaxUnavailable: intOrStrPtr(2),
-							MaxSurge:       intOrStrPtr(3),
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+							Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
+							RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+								MaxUnavailable: intOrStrPtr(2),
+								MaxSurge:       intOrStrPtr(3),
+							},
 						},
 					},
 					Replicas: ptr.To[int32](10),
@@ -425,9 +439,7 @@ func TestReconcileOldMachineSets(t *testing.T) {
 					Replicas: ptr.To[int32](5),
 				},
 				Status: clusterv1.MachineSetStatus{
-					Replicas:          5,
-					ReadyReplicas:     0,
-					AvailableReplicas: 0,
+					Replicas: ptr.To[int32](5),
 				},
 			},
 			oldMachineSets: []*clusterv1.MachineSet{
@@ -440,9 +452,9 @@ func TestReconcileOldMachineSets(t *testing.T) {
 						Replicas: ptr.To[int32](8),
 					},
 					Status: clusterv1.MachineSetStatus{
-						Replicas:          10,
-						ReadyReplicas:     8,
-						AvailableReplicas: 8,
+						Replicas:          ptr.To[int32](10),
+						ReadyReplicas:     ptr.To[int32](8),
+						AvailableReplicas: ptr.To[int32](8),
 					},
 				},
 			},

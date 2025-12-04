@@ -24,26 +24,27 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/annotations"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 )
 
 // ConditionSetter combines the client.Object and Setter interface.
 type ConditionSetter interface {
-	v1beta2conditions.Setter
+	conditions.Setter
 	client.Object
 }
 
 // EnsurePausedCondition sets the paused condition on the object and returns if it should be considered as paused.
 func EnsurePausedCondition(ctx context.Context, c client.Client, cluster *clusterv1.Cluster, obj ConditionSetter) (isPaused bool, requeue bool, err error) {
-	oldCondition := v1beta2conditions.Get(obj, clusterv1.PausedV1Beta2Condition)
-	newCondition := pausedCondition(c.Scheme(), cluster, obj, clusterv1.PausedV1Beta2Condition)
+	oldCondition := conditions.Get(obj, clusterv1.PausedCondition)
+	newCondition := pausedCondition(c.Scheme(), cluster, obj, clusterv1.PausedCondition)
 
 	isPaused = newCondition.Status == metav1.ConditionTrue
 	pausedStatusChanged := oldCondition == nil || oldCondition.Status != newCondition.Status
@@ -61,14 +62,14 @@ func EnsurePausedCondition(ctx context.Context, c client.Client, cluster *cluste
 
 	if oldCondition != nil {
 		// Return early if the paused condition did not change at all.
-		if v1beta2conditions.HasSameState(oldCondition, &newCondition) {
+		if conditions.HasSameState(oldCondition, &newCondition) {
 			return isPaused, false, nil
 		}
 
 		// Set condition and return early if only observed generation changed and obj is not paused.
 		// In this case we want to avoid the additional reconcile that we would get by requeueing.
-		if v1beta2conditions.HasSameStateExceptObservedGeneration(oldCondition, &newCondition) && !isPaused {
-			v1beta2conditions.Set(obj, newCondition)
+		if conditions.HasSameStateExceptObservedGeneration(oldCondition, &newCondition) && !isPaused {
+			conditions.Set(obj, newCondition)
 			return isPaused, false, nil
 		}
 	}
@@ -78,10 +79,10 @@ func EnsurePausedCondition(ctx context.Context, c client.Client, cluster *cluste
 		return isPaused, false, err
 	}
 
-	v1beta2conditions.Set(obj, newCondition)
+	conditions.Set(obj, newCondition)
 
-	if err := patchHelper.Patch(ctx, obj, patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-		clusterv1.PausedV1Beta2Condition,
+	if err := patchHelper.Patch(ctx, obj, patch.WithOwnedConditions{Conditions: []string{
+		clusterv1.PausedCondition,
 	}}); err != nil {
 		return isPaused, false, err
 	}
@@ -91,9 +92,9 @@ func EnsurePausedCondition(ctx context.Context, c client.Client, cluster *cluste
 
 // pausedCondition sets the paused condition on the object and returns if it should be considered as paused.
 func pausedCondition(scheme *runtime.Scheme, cluster *clusterv1.Cluster, obj ConditionSetter, targetConditionType string) metav1.Condition {
-	if (cluster != nil && cluster.Spec.Paused) || annotations.HasPaused(obj) {
+	if (cluster != nil && ptr.Deref(cluster.Spec.Paused, false)) || annotations.HasPaused(obj) {
 		var messages []string
-		if cluster != nil && cluster.Spec.Paused {
+		if cluster != nil && ptr.Deref(cluster.Spec.Paused, false) {
 			messages = append(messages, "Cluster spec.paused is set to true")
 		}
 		if annotations.HasPaused(obj) {
@@ -107,7 +108,7 @@ func pausedCondition(scheme *runtime.Scheme, cluster *clusterv1.Cluster, obj Con
 		return metav1.Condition{
 			Type:               targetConditionType,
 			Status:             metav1.ConditionTrue,
-			Reason:             clusterv1.PausedV1Beta2Reason,
+			Reason:             clusterv1.PausedReason,
 			Message:            strings.Join(messages, ", "),
 			ObservedGeneration: obj.GetGeneration(),
 		}
@@ -116,7 +117,7 @@ func pausedCondition(scheme *runtime.Scheme, cluster *clusterv1.Cluster, obj Con
 	return metav1.Condition{
 		Type:               targetConditionType,
 		Status:             metav1.ConditionFalse,
-		Reason:             clusterv1.NotPausedV1Beta2Reason,
+		Reason:             clusterv1.NotPausedReason,
 		ObservedGeneration: obj.GetGeneration(),
 	}
 }

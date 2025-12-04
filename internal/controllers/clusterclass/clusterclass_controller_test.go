@@ -30,22 +30,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/component-base/featuregate"
 	utilfeature "k8s.io/component-base/featuregate/testing"
-	utilversion "k8s.io/component-base/version"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	runtimev1 "sigs.k8s.io/cluster-api/exp/runtime/api/v1alpha1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimeclient "sigs.k8s.io/cluster-api/exp/runtime/client"
-	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/feature"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
+	"sigs.k8s.io/cluster-api/internal/topology/variables"
 	"sigs.k8s.io/cluster-api/util/cache"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
@@ -108,7 +108,7 @@ func TestClusterClassReconciler_reconcile(t *testing.T) {
 		WithVariables(
 			clusterv1.ClusterClassVariable{
 				Name:     "hdd",
-				Required: true,
+				Required: ptr.To(true),
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type: "string",
@@ -116,11 +116,12 @@ func TestClusterClassReconciler_reconcile(t *testing.T) {
 				},
 			},
 			clusterv1.ClusterClassVariable{
-				Name: "cpu",
+				Name:     "cpu",
+				Required: ptr.To(false),
 				Schema: clusterv1.VariableSchema{
 					OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 						Type: "integer",
-						XMetadata: &clusterv1.VariableSchemaMetadata{
+						XMetadata: clusterv1.VariableSchemaMetadata{
 							Labels: map[string]string{
 								"some-label": "some-label-value",
 							},
@@ -130,7 +131,7 @@ func TestClusterClassReconciler_reconcile(t *testing.T) {
 						},
 					},
 				},
-				Metadata: clusterv1.ClusterClassVariableMetadata{
+				DeprecatedV1Beta1Metadata: clusterv1.ClusterClassVariableMetadata{
 					Labels: map[string]string{
 						"some-label": "some-label-value",
 					},
@@ -187,8 +188,8 @@ func assertStatusVariables(actualClusterClass *clusterv1.ClusterClass) error {
 				continue
 			}
 			found = true
-			if statusVar.DefinitionsConflict {
-				return errors.Errorf("ClusterClass status %s variable DefinitionsConflict does not match. Expected %v , got %v", specVar.Name, false, statusVar.DefinitionsConflict)
+			if ptr.Deref(statusVar.DefinitionsConflict, false) {
+				return errors.Errorf("ClusterClass status %s variable DefinitionsConflict does not match. Expected %v , got %v", specVar.Name, false, *statusVar.DefinitionsConflict)
 			}
 			if len(statusVar.Definitions) != 1 {
 				return errors.Errorf("ClusterClass status has multiple definitions for variable %s. Expected a single definition", specVar.Name)
@@ -198,14 +199,17 @@ func assertStatusVariables(actualClusterClass *clusterv1.ClusterClass) error {
 			if statusVarDefinition.From != clusterv1.VariableDefinitionFromInline {
 				return errors.Errorf("ClusterClass status variable %s from field does not match. Expected %s. Got %s", statusVar.Name, clusterv1.VariableDefinitionFromInline, statusVarDefinition.From)
 			}
-			if specVar.Required != statusVarDefinition.Required {
-				return errors.Errorf("ClusterClass status variable %s required field does not match. Expecte %v. Got %v", specVar.Name, statusVarDefinition.Required, statusVarDefinition.Required)
+			if specVar.Required == nil || statusVarDefinition.Required == nil {
+				return errors.Errorf("ClusterClass spec or status variable %s is nil, expected both to be set", specVar.Name)
+			}
+			if *specVar.Required != *statusVarDefinition.Required {
+				return errors.Errorf("ClusterClass status variable %s required field does not match. Expected %v. Got %v", specVar.Name, *statusVarDefinition.Required, *statusVarDefinition.Required)
 			}
 			if !cmp.Equal(specVar.Schema, statusVarDefinition.Schema) {
 				return errors.Errorf("ClusterClass status variable %s schema does not match. Expected %v. Got %v", specVar.Name, specVar.Schema, statusVarDefinition.Schema)
 			}
-			if !cmp.Equal(specVar.Metadata, statusVarDefinition.Metadata) {
-				return errors.Errorf("ClusterClass status variable %s metadata does not match. Expected %v. Got %v", specVar.Name, specVar.Metadata, statusVarDefinition.Metadata)
+			if !cmp.Equal(specVar.DeprecatedV1Beta1Metadata, statusVarDefinition.DeprecatedV1Beta1Metadata) {
+				return errors.Errorf("ClusterClass status variable %s metadata does not match. Expected %v. Got %v", specVar.Name, specVar.DeprecatedV1Beta1Metadata, statusVarDefinition.DeprecatedV1Beta1Metadata)
 			}
 		}
 		if !found {
@@ -220,7 +224,7 @@ func assertInfrastructureClusterTemplate(ctx context.Context, actualClusterClass
 	actualInfraClusterTemplate := builder.InfrastructureClusterTemplate("", "").Build()
 	actualInfraClusterTemplateKey := client.ObjectKey{
 		Namespace: ns.Name,
-		Name:      actualClusterClass.Spec.Infrastructure.Ref.Name,
+		Name:      actualClusterClass.Spec.Infrastructure.TemplateRef.Name,
 	}
 	if err := env.Get(ctx, actualInfraClusterTemplateKey, actualInfraClusterTemplate); err != nil {
 		return err
@@ -230,7 +234,7 @@ func assertInfrastructureClusterTemplate(ctx context.Context, actualClusterClass
 	}
 
 	// Assert the ClusterClass has the expected APIVersion and Kind of to the infrastructure cluster template
-	return referenceExistsWithCorrectKindAndAPIVersion(actualClusterClass.Spec.Infrastructure.Ref,
+	return referenceExistsWithCorrectKindAndAPIVersion(actualClusterClass.Spec.Infrastructure.TemplateRef,
 		builder.GenericInfrastructureClusterTemplateKind,
 		builder.InfrastructureGroupVersion)
 }
@@ -240,7 +244,7 @@ func assertControlPlaneTemplate(ctx context.Context, actualClusterClass *cluster
 	actualControlPlaneTemplate := builder.ControlPlaneTemplate("", "").Build()
 	actualControlPlaneTemplateKey := client.ObjectKey{
 		Namespace: ns.Name,
-		Name:      actualClusterClass.Spec.ControlPlane.Ref.Name,
+		Name:      actualClusterClass.Spec.ControlPlane.TemplateRef.Name,
 	}
 	if err := env.Get(ctx, actualControlPlaneTemplateKey, actualControlPlaneTemplate); err != nil {
 		return err
@@ -250,18 +254,18 @@ func assertControlPlaneTemplate(ctx context.Context, actualClusterClass *cluster
 	}
 
 	// Assert the ClusterClass has the expected APIVersion and Kind to the control plane template
-	if err := referenceExistsWithCorrectKindAndAPIVersion(actualClusterClass.Spec.ControlPlane.Ref,
+	if err := referenceExistsWithCorrectKindAndAPIVersion(actualClusterClass.Spec.ControlPlane.TemplateRef,
 		builder.GenericControlPlaneTemplateKind,
 		builder.ControlPlaneGroupVersion); err != nil {
 		return err
 	}
 
 	// If the control plane has machine infra assert that the infra machine template has the correct owner reference.
-	if actualClusterClass.Spec.ControlPlane.MachineInfrastructure != nil && actualClusterClass.Spec.ControlPlane.MachineInfrastructure.Ref != nil {
+	if actualClusterClass.Spec.ControlPlane.MachineInfrastructure.TemplateRef.IsDefined() {
 		actualInfrastructureMachineTemplate := builder.InfrastructureMachineTemplate("", "").Build()
 		actualInfrastructureMachineTemplateKey := client.ObjectKey{
 			Namespace: ns.Name,
-			Name:      actualClusterClass.Spec.ControlPlane.MachineInfrastructure.Ref.Name,
+			Name:      actualClusterClass.Spec.ControlPlane.MachineInfrastructure.TemplateRef.Name,
 		}
 		if err := env.Get(ctx, actualInfrastructureMachineTemplateKey, actualInfrastructureMachineTemplate); err != nil {
 			return err
@@ -271,7 +275,7 @@ func assertControlPlaneTemplate(ctx context.Context, actualClusterClass *cluster
 		}
 
 		// Assert the ClusterClass has the expected APIVersion and Kind to the infrastructure machine template
-		if err := referenceExistsWithCorrectKindAndAPIVersion(actualClusterClass.Spec.ControlPlane.MachineInfrastructure.Ref,
+		if err := referenceExistsWithCorrectKindAndAPIVersion(actualClusterClass.Spec.ControlPlane.MachineInfrastructure.TemplateRef,
 			builder.GenericInfrastructureMachineTemplateKind,
 			builder.InfrastructureGroupVersion); err != nil {
 			return err
@@ -295,7 +299,7 @@ func assertMachineDeploymentClass(ctx context.Context, actualClusterClass *clust
 	actualInfrastructureMachineTemplate := builder.InfrastructureMachineTemplate("", "").Build()
 	actualInfrastructureMachineTemplateKey := client.ObjectKey{
 		Namespace: ns.Name,
-		Name:      mdClass.Template.Infrastructure.Ref.Name,
+		Name:      mdClass.Infrastructure.TemplateRef.Name,
 	}
 	if err := env.Get(ctx, actualInfrastructureMachineTemplateKey, actualInfrastructureMachineTemplate); err != nil {
 		return err
@@ -305,7 +309,7 @@ func assertMachineDeploymentClass(ctx context.Context, actualClusterClass *clust
 	}
 
 	// Assert the MachineDeploymentClass has the expected APIVersion and Kind to the infrastructure machine template
-	if err := referenceExistsWithCorrectKindAndAPIVersion(mdClass.Template.Infrastructure.Ref,
+	if err := referenceExistsWithCorrectKindAndAPIVersion(mdClass.Infrastructure.TemplateRef,
 		builder.GenericInfrastructureMachineTemplateKind,
 		builder.InfrastructureGroupVersion); err != nil {
 		return err
@@ -315,7 +319,7 @@ func assertMachineDeploymentClass(ctx context.Context, actualClusterClass *clust
 	actualBootstrapTemplate := builder.BootstrapTemplate("", "").Build()
 	actualBootstrapTemplateKey := client.ObjectKey{
 		Namespace: ns.Name,
-		Name:      mdClass.Template.Bootstrap.Ref.Name,
+		Name:      mdClass.Bootstrap.TemplateRef.Name,
 	}
 	if err := env.Get(ctx, actualBootstrapTemplateKey, actualBootstrapTemplate); err != nil {
 		return err
@@ -325,7 +329,7 @@ func assertMachineDeploymentClass(ctx context.Context, actualClusterClass *clust
 	}
 
 	// Assert the MachineDeploymentClass has the expected APIVersion and Kind to the bootstrap template
-	return referenceExistsWithCorrectKindAndAPIVersion(mdClass.Template.Bootstrap.Ref,
+	return referenceExistsWithCorrectKindAndAPIVersion(mdClass.Bootstrap.TemplateRef,
 		builder.GenericBootstrapConfigTemplateKind,
 		builder.BootstrapGroupVersion)
 }
@@ -344,7 +348,7 @@ func assertMachinePoolClass(ctx context.Context, actualClusterClass *clusterv1.C
 	actualInfrastructureMachinePoolTemplate := builder.InfrastructureMachinePoolTemplate("", "").Build()
 	actualInfrastructureMachinePoolTemplateKey := client.ObjectKey{
 		Namespace: ns.Name,
-		Name:      mpClass.Template.Infrastructure.Ref.Name,
+		Name:      mpClass.Infrastructure.TemplateRef.Name,
 	}
 	if err := env.Get(ctx, actualInfrastructureMachinePoolTemplateKey, actualInfrastructureMachinePoolTemplate); err != nil {
 		return err
@@ -354,7 +358,7 @@ func assertMachinePoolClass(ctx context.Context, actualClusterClass *clusterv1.C
 	}
 
 	// Assert the MachinePoolClass has the expected APIVersion and Kind to the infrastructure machinepool template
-	if err := referenceExistsWithCorrectKindAndAPIVersion(mpClass.Template.Infrastructure.Ref,
+	if err := referenceExistsWithCorrectKindAndAPIVersion(mpClass.Infrastructure.TemplateRef,
 		builder.GenericInfrastructureMachinePoolTemplateKind,
 		builder.InfrastructureGroupVersion); err != nil {
 		return err
@@ -364,7 +368,7 @@ func assertMachinePoolClass(ctx context.Context, actualClusterClass *clusterv1.C
 	actualBootstrapTemplate := builder.BootstrapTemplate("", "").Build()
 	actualBootstrapTemplateKey := client.ObjectKey{
 		Namespace: ns.Name,
-		Name:      mpClass.Template.Bootstrap.Ref.Name,
+		Name:      mpClass.Bootstrap.TemplateRef.Name,
 	}
 	if err := env.Get(ctx, actualBootstrapTemplateKey, actualBootstrapTemplate); err != nil {
 		return err
@@ -374,7 +378,7 @@ func assertMachinePoolClass(ctx context.Context, actualClusterClass *clusterv1.C
 	}
 
 	// Assert the MachinePoolClass has the expected APIVersion and Kind to the bootstrap template
-	return referenceExistsWithCorrectKindAndAPIVersion(mpClass.Template.Bootstrap.Ref,
+	return referenceExistsWithCorrectKindAndAPIVersion(mpClass.Bootstrap.TemplateRef,
 		builder.GenericBootstrapConfigTemplateKind,
 		builder.BootstrapGroupVersion)
 }
@@ -421,11 +425,12 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 		WithVariables(
 			[]clusterv1.ClusterClassVariable{
 				{
-					Name: "cpu",
+					Name:     "cpu",
+					Required: ptr.To(true),
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type: "integer",
-							XMetadata: &clusterv1.VariableSchemaMetadata{
+							XMetadata: clusterv1.VariableSchemaMetadata{
 								Labels: map[string]string{
 									"some-label": "some-label-value",
 								},
@@ -440,7 +445,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 							}},
 						},
 					},
-					Metadata: clusterv1.ClusterClassVariableMetadata{
+					DeprecatedV1Beta1Metadata: clusterv1.ClusterClassVariableMetadata{
 						Labels: map[string]string{
 							"some-label": "some-label-value",
 						},
@@ -450,7 +455,8 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					},
 				},
 				{
-					Name: "memory",
+					Name:     "memory",
+					Required: ptr.To(false),
 					Schema: clusterv1.VariableSchema{
 						OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 							Type: "string",
@@ -479,11 +485,12 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: clusterv1.VariableDefinitionFromInline,
+							From:     clusterv1.VariableDefinitionFromInline,
+							Required: ptr.To(true),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "integer",
-									XMetadata: &clusterv1.VariableSchemaMetadata{
+									XMetadata: clusterv1.VariableSchemaMetadata{
 										Labels: map[string]string{
 											"some-label": "some-label-value",
 										},
@@ -498,7 +505,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 									}},
 								},
 							},
-							Metadata: clusterv1.ClusterClassVariableMetadata{
+							DeprecatedV1Beta1Metadata: clusterv1.ClusterClassVariableMetadata{
 								Labels: map[string]string{
 									"some-label": "some-label-value",
 								},
@@ -508,12 +515,14 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 							},
 						},
 					},
+					DefinitionsConflict: ptr.To(false),
 				},
 				{
 					Name: "memory",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: clusterv1.VariableDefinitionFromInline,
+							From:     clusterv1.VariableDefinitionFromInline,
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "string",
@@ -525,6 +534,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 							},
 						},
 					},
+					DefinitionsConflict: ptr.To(false),
 				},
 			},
 		},
@@ -535,7 +545,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					{
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
-							DiscoverVariablesExtension: ptr.To("variables-one"),
+							DiscoverVariablesExtension: "variables-one",
 						},
 					},
 				}).
@@ -544,14 +554,15 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				CommonResponse: runtimehooksv1.CommonResponse{
 					Status: runtimehooksv1.ResponseStatusSuccess,
 				},
-				Variables: []clusterv1.ClusterClassVariable{
+				Variables: []clusterv1beta1.ClusterClassVariable{
 					{
 						Name: "cpu",
 						// Note: This schema must be exactly equal to the one in clusterClassWithInlineVariables to avoid conflicts.
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Required: true,
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "integer",
-								XMetadata: &clusterv1.VariableSchemaMetadata{
+								XMetadata: &clusterv1beta1.VariableSchemaMetadata{
 									Labels: map[string]string{
 										"some-label": "some-label-value",
 									},
@@ -559,14 +570,14 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 										"some-annotation": "some-annotation-value",
 									},
 								},
-								XValidations: []clusterv1.ValidationRule{{
+								XValidations: []clusterv1beta1.ValidationRule{{
 									Rule:    "self >= 1",
 									Message: "integer must be greater or equal than 1",
-									Reason:  clusterv1.FieldValueInvalid,
+									Reason:  clusterv1beta1.FieldValueInvalid,
 								}},
 							},
 						},
-						Metadata: clusterv1.ClusterClassVariableMetadata{
+						Metadata: clusterv1beta1.ClusterClassVariableMetadata{
 							Labels: map[string]string{
 								"some-label": "some-label-value",
 							},
@@ -576,11 +587,12 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 						},
 					},
 					{
-						Name: "memory",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Name:     "memory",
+						Required: false,
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
-								XValidations: []clusterv1.ValidationRule{{
+								XValidations: []clusterv1beta1.ValidationRule{{
 									Rule:              "true",
 									MessageExpression: "'test error message, got value %s'.format([self])",
 								}},
@@ -589,10 +601,10 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					},
 					{
 						Name: "location",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
-								XMetadata: &clusterv1.VariableSchemaMetadata{
+								XMetadata: &clusterv1beta1.VariableSchemaMetadata{
 									Labels: map[string]string{
 										"some-label": "some-label-value",
 									},
@@ -602,7 +614,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 								},
 							},
 						},
-						Metadata: clusterv1.ClusterClassVariableMetadata{
+						Metadata: clusterv1beta1.ClusterClassVariableMetadata{
 							Labels: map[string]string{
 								"some-label": "some-label-value",
 							},
@@ -616,14 +628,15 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 			want: []clusterv1.ClusterClassStatusVariable{
 				{
 					Name:                "cpu",
-					DefinitionsConflict: false,
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: clusterv1.VariableDefinitionFromInline,
+							From:     clusterv1.VariableDefinitionFromInline,
+							Required: ptr.To(true),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "integer",
-									XMetadata: &clusterv1.VariableSchemaMetadata{
+									XMetadata: clusterv1.VariableSchemaMetadata{
 										Labels: map[string]string{
 											"some-label": "some-label-value",
 										},
@@ -638,7 +651,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 									}},
 								},
 							},
-							Metadata: clusterv1.ClusterClassVariableMetadata{
+							DeprecatedV1Beta1Metadata: clusterv1.ClusterClassVariableMetadata{
 								Labels: map[string]string{
 									"some-label": "some-label-value",
 								},
@@ -648,11 +661,12 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 							},
 						},
 						{
-							From: "patch1",
+							From:     "patch1",
+							Required: ptr.To(true),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "integer",
-									XMetadata: &clusterv1.VariableSchemaMetadata{
+									XMetadata: clusterv1.VariableSchemaMetadata{
 										Labels: map[string]string{
 											"some-label": "some-label-value",
 										},
@@ -667,7 +681,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 									}},
 								},
 							},
-							Metadata: clusterv1.ClusterClassVariableMetadata{
+							DeprecatedV1Beta1Metadata: clusterv1.ClusterClassVariableMetadata{
 								Labels: map[string]string{
 									"some-label": "some-label-value",
 								},
@@ -680,14 +694,15 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				},
 				{
 					Name:                "location",
-					DefinitionsConflict: false,
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: "patch1",
+							From:     "patch1",
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "string",
-									XMetadata: &clusterv1.VariableSchemaMetadata{
+									XMetadata: clusterv1.VariableSchemaMetadata{
 										Labels: map[string]string{
 											"some-label": "some-label-value",
 										},
@@ -697,7 +712,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 									},
 								},
 							},
-							Metadata: clusterv1.ClusterClassVariableMetadata{
+							DeprecatedV1Beta1Metadata: clusterv1.ClusterClassVariableMetadata{
 								Labels: map[string]string{
 									"some-label": "some-label-value",
 								},
@@ -710,10 +725,11 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				},
 				{
 					Name:                "memory",
-					DefinitionsConflict: false,
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: clusterv1.VariableDefinitionFromInline,
+							From:     clusterv1.VariableDefinitionFromInline,
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "string",
@@ -725,7 +741,8 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 							},
 						},
 						{
-							From: "patch1",
+							From:     "patch1",
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "string",
@@ -747,7 +764,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					{
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
-							DiscoverVariablesExtension: ptr.To("variables-one"),
+							DiscoverVariablesExtension: "variables-one",
 						},
 					},
 				}).
@@ -756,12 +773,12 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				CommonResponse: runtimehooksv1.CommonResponse{
 					Status: runtimehooksv1.ResponseStatusSuccess,
 				},
-				Variables: []clusterv1.ClusterClassVariable{
+				Variables: []clusterv1beta1.ClusterClassVariable{
 					{
 						Name: "cpu",
 						// Note: This schema conflicts with the schema in clusterClassWithInlineVariables.
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
 							},
 						},
@@ -779,7 +796,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					{
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
-							DiscoverVariablesExtension: ptr.To("variables-one"),
+							DiscoverVariablesExtension: "variables-one",
 						},
 					},
 				}).
@@ -788,21 +805,21 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				CommonResponse: runtimehooksv1.CommonResponse{
 					Status: runtimehooksv1.ResponseStatusSuccess,
 				},
-				Variables: []clusterv1.ClusterClassVariable{
+				Variables: []clusterv1beta1.ClusterClassVariable{
 					{
 						Name: "cpu",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
 							},
 						},
 					},
 					{
 						Name: "memory",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
-								XValidations: []clusterv1.ValidationRule{{
+								XValidations: []clusterv1beta1.ValidationRule{{
 									Rule:              "true",
 									MessageExpression: "'test error message, got value %s'.format([self])",
 								}},
@@ -811,15 +828,15 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					},
 					{
 						Name: "httpProxy",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "object",
-								Properties: map[string]clusterv1.JSONSchemaProps{
+								Properties: map[string]clusterv1beta1.JSONSchemaProps{
 									"enabled": {
 										Type: "boolean",
 									},
 								},
-								XValidations: []clusterv1.ValidationRule{{
+								XValidations: []clusterv1beta1.ValidationRule{{
 									Rule:              "true",
 									MessageExpression: "'test error message, got value %s'.format([self.enabled])",
 									FieldPath:         ".enabled",
@@ -829,10 +846,10 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					},
 					{
 						Name: "location",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
-								XMetadata: &clusterv1.VariableSchemaMetadata{
+								XMetadata: &clusterv1beta1.VariableSchemaMetadata{
 									Labels: map[string]string{
 										"some-label": "some-label-value",
 									},
@@ -842,7 +859,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 								},
 							},
 						},
-						Metadata: clusterv1.ClusterClassVariableMetadata{
+						Metadata: clusterv1beta1.ClusterClassVariableMetadata{
 							Labels: map[string]string{
 								"some-label": "some-label-value",
 							},
@@ -856,10 +873,11 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 			want: []clusterv1.ClusterClassStatusVariable{
 				{
 					Name:                "cpu",
-					DefinitionsConflict: false,
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: "patch1",
+							From:     "patch1",
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "string",
@@ -869,10 +887,12 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					},
 				},
 				{
-					Name: "httpProxy",
+					Name:                "httpProxy",
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: "patch1",
+							From:     "patch1",
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "object",
@@ -893,14 +913,15 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				},
 				{
 					Name:                "location",
-					DefinitionsConflict: false,
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: "patch1",
+							From:     "patch1",
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "string",
-									XMetadata: &clusterv1.VariableSchemaMetadata{
+									XMetadata: clusterv1.VariableSchemaMetadata{
 										Labels: map[string]string{
 											"some-label": "some-label-value",
 										},
@@ -910,7 +931,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 									},
 								},
 							},
-							Metadata: clusterv1.ClusterClassVariableMetadata{
+							DeprecatedV1Beta1Metadata: clusterv1.ClusterClassVariableMetadata{
 								Labels: map[string]string{
 									"some-label": "some-label-value",
 								},
@@ -923,10 +944,11 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				},
 				{
 					Name:                "memory",
-					DefinitionsConflict: false,
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							From: "patch1",
+							From:     "patch1",
+							Required: ptr.To(false),
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
 									Type: "string",
@@ -948,7 +970,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					{
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
-							DiscoverVariablesExtension: ptr.To("variables-one"),
+							DiscoverVariablesExtension: "variables-one",
 						},
 					},
 				}).
@@ -957,19 +979,19 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				CommonResponse: runtimehooksv1.CommonResponse{
 					Status: runtimehooksv1.ResponseStatusSuccess,
 				},
-				Variables: []clusterv1.ClusterClassVariable{
+				Variables: []clusterv1beta1.ClusterClassVariable{
 					{
 						Name: "cpu",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
 							},
 						},
 					},
 					{
 						Name: "cpu",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "integer",
 							},
 						},
@@ -988,7 +1010,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					{
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
-							DiscoverVariablesExtension: ptr.To("variables-one"),
+							DiscoverVariablesExtension: "variables-one",
 						},
 					},
 				}).
@@ -997,13 +1019,13 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				CommonResponse: runtimehooksv1.CommonResponse{
 					Status: runtimehooksv1.ResponseStatusSuccess,
 				},
-				Variables: []clusterv1.ClusterClassVariable{
+				Variables: []clusterv1beta1.ClusterClassVariable{
 					{
 						Name: "httpProxy",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "object",
-								Properties: map[string]clusterv1.JSONSchemaProps{
+								Properties: map[string]clusterv1beta1.JSONSchemaProps{
 									"enabled": {
 										Type:    "boolean",
 										Default: &apiextensionsv1.JSON{Raw: []byte(`false`)},
@@ -1033,7 +1055,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					{
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
-							DiscoverVariablesExtension: ptr.To("variables-one"),
+							DiscoverVariablesExtension: "variables-one",
 						},
 					},
 				}).
@@ -1042,19 +1064,19 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				CommonResponse: runtimehooksv1.CommonResponse{
 					Status: runtimehooksv1.ResponseStatusSuccess,
 				},
-				Variables: []clusterv1.ClusterClassVariable{
+				Variables: []clusterv1beta1.ClusterClassVariable{
 					{
 						Name: "cpu",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "object",
-								Properties: map[string]clusterv1.JSONSchemaProps{
+								Properties: map[string]clusterv1beta1.JSONSchemaProps{
 									"nestedField": {
 										Type: "integer",
 										Default: &apiextensionsv1.JSON{
 											Raw: []byte(`0`), // Default value is invalid according to CEL.
 										},
-										XValidations: []clusterv1.ValidationRule{{
+										XValidations: []clusterv1beta1.ValidationRule{{
 											Rule: "self >= 1",
 										}},
 									},
@@ -1064,10 +1086,10 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					},
 					{
 						Name: "anotherCPU",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "integer",
-								XValidations: []clusterv1.ValidationRule{{
+								XValidations: []clusterv1beta1.ValidationRule{{
 									Rule:              "self >= 1",
 									MessageExpression: "'Expected integer greater or equal to 1, got ' + this does not compile", // does not compile
 								}},
@@ -1102,7 +1124,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 					{
 						Name: "patch1",
 						External: &clusterv1.ExternalPatchDefinition{
-							DiscoverVariablesExtension: ptr.To("variables-one"),
+							DiscoverVariablesExtension: "variables-one",
 						},
 					},
 				}).
@@ -1111,13 +1133,13 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				CommonResponse: runtimehooksv1.CommonResponse{
 					Status: runtimehooksv1.ResponseStatusSuccess,
 				},
-				Variables: []clusterv1.ClusterClassVariable{
+				Variables: []clusterv1beta1.ClusterClassVariable{
 					{
 						Name: "someIP",
-						Schema: clusterv1.VariableSchema{
-							OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+						Schema: clusterv1beta1.VariableSchema{
+							OpenAPIV3Schema: clusterv1beta1.JSONSchemaProps{
 								Type: "string",
-								XValidations: []clusterv1.ValidationRule{{
+								XValidations: []clusterv1beta1.ValidationRule{{
 									// Note: IP will be only available if the compatibility version is 1.30
 									Rule: "ip(self).family() == 6",
 								}},
@@ -1163,14 +1185,11 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 
 			// Pin the compatibility version used in variable CEL validation to 1.29, so we don't have to continuously refactor
 			// the unit tests that verify that compatibility is handled correctly.
-			effectiveVer := featuregate.DefaultComponentGlobalsRegistry.EffectiveVersionFor(featuregate.DefaultKubeComponent)
-			if effectiveVer != nil {
-				g.Expect(effectiveVer.MinCompatibilityVersion()).To(Equal(version.MustParse("v1.29")))
-			} else {
-				v := utilversion.DefaultKubeEffectiveVersion()
-				v.SetMinCompatibilityVersion(version.MustParse("v1.29"))
-				g.Expect(featuregate.DefaultComponentGlobalsRegistry.Register(featuregate.DefaultKubeComponent, v, nil)).To(Succeed())
-			}
+			backupEnvSetVersion := variables.GetEnvSetVersion()
+			defer func() {
+				variables.SetEnvSetVersion(backupEnvSetVersion)
+			}()
+			variables.SetEnvSetVersion(version.MustParse("1.29"))
 
 			s := &scope{
 				clusterClass: tt.clusterClass,
@@ -1224,20 +1243,20 @@ func TestReconciler_extensionConfigToClusterClass(t *testing.T) {
 	// These ClusterClasses will be reconciled as they both reference the passed ExtensionConfig `runtime1`.
 	onePatchClusterClass := builder.ClusterClass(metav1.NamespaceDefault, "cc1").
 		WithPatches([]clusterv1.ClusterClassPatch{
-			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime1")}},
+			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: "discover-variables.runtime1"}},
 		}).
 		Build()
 	twoPatchClusterClass := builder.ClusterClass(metav1.NamespaceDefault, "cc2").
 		WithPatches([]clusterv1.ClusterClassPatch{
-			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime1")}},
-			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.runtime2")}},
+			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: "discover-variables.runtime1"}},
+			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: "discover-variables.runtime2"}},
 		}).
 		Build()
 
 	// This ClusterClasses will not be reconciled as it does not reference the passed ExtensionConfig `runtime1`.
 	notReconciledClusterClass := builder.ClusterClass(metav1.NamespaceDefault, "cc3").
 		WithPatches([]clusterv1.ClusterClassPatch{
-			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: ptr.To("discover-variables.other-runtime-class")}},
+			{External: &clusterv1.ExternalPatchDefinition{DiscoverVariablesExtension: "discover-variables.other-runtime-class"}},
 		}).
 		Build()
 

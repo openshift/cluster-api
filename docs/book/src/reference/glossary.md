@@ -99,6 +99,9 @@ Cluster API Provider Outscale
 ### CAPOCI
 Cluster API Provider Oracle Cloud Infrastructure (OCI)
 
+### CAPS
+Cluster API Provider Scaleway
+
 ### CAPT
 Cluster API Provider Tinkerbell
 
@@ -119,6 +122,9 @@ Cluster API IPAM Provider In Cluster
 
 ### CAIPAMX
 Cluster API IPAM Provider Nutanix
+
+### CAIPAM3
+Cluster API IPAM Provider Metal3
 
 ### CAREX
 Cluster API Runtime Extensions Provider Nutanix

@@ -26,11 +26,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 const (
@@ -51,7 +52,7 @@ func TestGetorCreateClusterResourceSetBinding(t *testing.T) {
 			Name:      testClusterWithBinding.Name,
 		},
 		Spec: addonsv1.ClusterResourceSetBindingSpec{
-			Bindings: []*addonsv1.ResourceSetBinding{
+			Bindings: []addonsv1.ResourceSetBinding{
 				{
 					ClusterResourceSetName: "test-clusterResourceSet",
 					Resources: []addonsv1.ResourceBinding{
@@ -60,9 +61,9 @@ func TestGetorCreateClusterResourceSetBinding(t *testing.T) {
 								Name: "mySecret",
 								Kind: "Secret",
 							},
-							Applied:         true,
+							Applied:         ptr.To(true),
 							Hash:            "xyz",
-							LastAppliedTime: &metav1.Time{Time: time.Now().UTC()},
+							LastAppliedTime: metav1.Time{Time: time.Now().UTC()},
 						},
 					},
 				},

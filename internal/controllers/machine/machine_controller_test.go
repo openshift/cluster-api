@@ -41,16 +41,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/api/v1beta1/index"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	externalfake "sigs.k8s.io/cluster-api/controllers/external/fake"
 	"sigs.k8s.io/cluster-api/feature"
+	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/cache"
 	"sigs.k8s.io/cluster-api/util/conditions"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
@@ -63,7 +66,7 @@ func TestWatches(t *testing.T) {
 	infraMachine := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-config1",
 				"namespace": ns.Name,
@@ -86,7 +89,7 @@ func TestWatches(t *testing.T) {
 	defaultBootstrap := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericBootstrapConfig",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config-machinereconcile",
 				"namespace": ns.Name,
@@ -100,6 +103,13 @@ func TestWatches(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "machine-reconcile-",
 			Namespace:    ns.Name,
+		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
 		},
 	}
 
@@ -117,7 +127,7 @@ func TestWatches(t *testing.T) {
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
 	testClusterOriginal := client.MergeFrom(testCluster.DeepCopy())
-	testCluster.Status.InfrastructureReady = true
+	testCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, testCluster, testClusterOriginal)).To(Succeed())
 
 	g.Expect(env.Create(ctx, defaultBootstrap)).To(Succeed())
@@ -131,13 +141,13 @@ func TestWatches(t *testing.T) {
 	// Patch infra machine ready
 	patchHelper, err := patch.NewHelper(infraMachine, env)
 	g.Expect(err).ShouldNot(HaveOccurred())
-	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "initialization", "provisioned")).To(Succeed())
 	g.Expect(patchHelper.Patch(ctx, infraMachine, patch.WithStatusObservedGeneration{})).To(Succeed())
 
 	// Patch bootstrap ready
 	patchHelper, err = patch.NewHelper(defaultBootstrap, env)
 	g.Expect(err).ShouldNot(HaveOccurred())
-	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "initialization", "dataSecretCreated")).To(Succeed())
 	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, "secretData", "status", "dataSecretName")).To(Succeed())
 	g.Expect(patchHelper.Patch(ctx, defaultBootstrap, patch.WithStatusObservedGeneration{})).To(Succeed())
 
@@ -151,18 +161,16 @@ func TestWatches(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: testCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  ns.Name,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "GenericBootstrapConfig",
-					Name:       "bootstrap-config-machinereconcile",
-					Namespace:  ns.Name,
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+					Kind:     "GenericBootstrapConfig",
+					Name:     "bootstrap-config-machinereconcile",
 				},
 			},
 		},
@@ -180,7 +188,7 @@ func TestWatches(t *testing.T) {
 		if err := env.Get(ctx, key, machine); err != nil {
 			return false
 		}
-		return machine.Status.NodeRef != nil
+		return machine.Status.NodeRef.IsDefined()
 	}, timeout).Should(BeTrue())
 
 	// Node deletion will trigger node watchers and a request will be added to the queue.
@@ -194,7 +202,10 @@ func TestWatches(t *testing.T) {
 		if err := env.Get(ctx, key, machine); err != nil {
 			return false
 		}
-		return machine.Status.FailureMessage != nil
+		if machine.Status.Deprecated == nil || machine.Status.Deprecated.V1Beta1 == nil {
+			return false
+		}
+		return machine.Status.Deprecated.V1Beta1.FailureMessage != nil
 	}, timeout).Should(BeTrue())
 }
 
@@ -206,7 +217,7 @@ func TestWatchesDelete(t *testing.T) {
 	infraMachine := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-config1",
 				"namespace": ns.Name,
@@ -231,7 +242,7 @@ func TestWatchesDelete(t *testing.T) {
 	defaultBootstrap := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericBootstrapConfig",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config-machinereconcile",
 				"namespace": ns.Name,
@@ -253,7 +264,12 @@ func TestWatchesDelete(t *testing.T) {
 			// the machine immediately after creation.
 			// This avoids going through reconcileExternal, which adds watches
 			// for the provider machine and the bootstrap config objects.
-			Paused: true,
+			Paused: ptr.To(true),
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.InfrastructureGroupVersion.Group,
+				Kind:     builder.GenericInfrastructureClusterKind,
+				Name:     "infracluster1",
+			},
 		},
 	}
 
@@ -269,13 +285,13 @@ func TestWatchesDelete(t *testing.T) {
 	// Patch infra machine ready
 	patchHelper, err := patch.NewHelper(infraMachine, env)
 	g.Expect(err).ShouldNot(HaveOccurred())
-	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "initialization", "provisioned")).To(Succeed())
 	g.Expect(patchHelper.Patch(ctx, infraMachine, patch.WithStatusObservedGeneration{})).To(Succeed())
 
 	// Patch bootstrap ready
 	patchHelper, err = patch.NewHelper(defaultBootstrap, env)
 	g.Expect(err).ShouldNot(HaveOccurred())
-	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "initialization", "dataSecretCreated")).To(Succeed())
 	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, "secretData", "status", "dataSecretName")).To(Succeed())
 	g.Expect(patchHelper.Patch(ctx, defaultBootstrap, patch.WithStatusObservedGeneration{})).To(Succeed())
 
@@ -289,18 +305,16 @@ func TestWatchesDelete(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: testCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  ns.Name,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "GenericBootstrapConfig",
-					Name:       "bootstrap-config-machinereconcile",
-					Namespace:  ns.Name,
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+					Kind:     "GenericBootstrapConfig",
+					Name:     "bootstrap-config-machinereconcile",
 				},
 			},
 		},
@@ -317,7 +331,7 @@ func TestWatchesDelete(t *testing.T) {
 	g.Expect(env.Delete(ctx, machine)).To(Succeed())
 
 	// We unpause the cluster so the machine can be reconciled.
-	testCluster.Spec.Paused = false
+	testCluster.Spec.Paused = ptr.To(false)
 	g.Expect(env.Update(ctx, testCluster)).To(Succeed())
 
 	// Wait for reconciliation to happen.
@@ -388,7 +402,7 @@ func TestMachine_Reconcile(t *testing.T) {
 	infraMachine := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-config1",
 				"namespace": ns.Name,
@@ -402,7 +416,7 @@ func TestMachine_Reconcile(t *testing.T) {
 	defaultBootstrap := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericBootstrapConfig",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config-machinereconcile",
 				"namespace": ns.Name,
@@ -417,13 +431,20 @@ func TestMachine_Reconcile(t *testing.T) {
 			GenerateName: "machine-reconcile-",
 			Namespace:    ns.Name,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 
 	g.Expect(env.Create(ctx, testCluster)).To(Succeed())
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
 	testClusterOriginal := client.MergeFrom(testCluster.DeepCopy())
-	testCluster.Status.InfrastructureReady = true
+	testCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, testCluster, testClusterOriginal)).To(Succeed())
 
 	g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
@@ -441,23 +462,21 @@ func TestMachine_Reconcile(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: testCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  ns.Name,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "GenericBootstrapConfig",
-					Name:       "bootstrap-config-machinereconcile",
-					Namespace:  ns.Name,
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+					Kind:     "GenericBootstrapConfig",
+					Name:     "bootstrap-config-machinereconcile",
 				},
 			},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "test",
 			},
 		},
@@ -476,12 +495,12 @@ func TestMachine_Reconcile(t *testing.T) {
 
 	// Set bootstrap ready.
 	bootstrapPatch := client.MergeFrom(defaultBootstrap.DeepCopy())
-	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "ready")).ToNot(HaveOccurred())
+	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "initialization", "dataSecretCreated")).ToNot(HaveOccurred())
 	g.Expect(env.Status().Patch(ctx, defaultBootstrap, bootstrapPatch)).To(Succeed())
 
 	// Set infrastructure ready.
 	infraMachinePatch := client.MergeFrom(infraMachine.DeepCopy())
-	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "initialization", "provisioned")).To(Succeed())
 	g.Expect(env.Status().Patch(ctx, infraMachine, infraMachinePatch)).To(Succeed())
 
 	// Wait for Machine Ready Condition to become True.
@@ -489,11 +508,11 @@ func TestMachine_Reconcile(t *testing.T) {
 		if err := env.Get(ctx, key, machine); err != nil {
 			return false
 		}
-		if !conditions.Has(machine, clusterv1.InfrastructureReadyCondition) {
+		if !conditions.Has(machine, clusterv1.MachineInfrastructureReadyCondition) {
 			return false
 		}
-		readyCondition := conditions.Get(machine, clusterv1.ReadyCondition)
-		return readyCondition.Status == corev1.ConditionTrue
+		readyCondition := conditions.Get(machine, clusterv1.MachineInfrastructureReadyCondition)
+		return readyCondition.Status == metav1.ConditionTrue
 	}, timeout).Should(BeTrue())
 
 	g.Expect(env.Delete(ctx, machine)).ToNot(HaveOccurred())
@@ -647,11 +666,11 @@ func TestMachineOwnerReference(t *testing.T) {
 			ClusterName: "test-cluster",
 		},
 		Status: clusterv1.MachineStatus{
-			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
-				Type:   clusterv1.PausedV1Beta2Condition,
+			Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedCondition,
 				Status: metav1.ConditionFalse,
-				Reason: clusterv1.NotPausedV1Beta2Reason,
-			}}},
+				Reason: clusterv1.NotPausedReason,
+			}},
 		},
 	}
 
@@ -678,11 +697,11 @@ func TestMachineOwnerReference(t *testing.T) {
 			ClusterName: "test-cluster",
 		},
 		Status: clusterv1.MachineStatus{
-			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
-				Type:   clusterv1.PausedV1Beta2Condition,
+			Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedCondition,
 				Status: metav1.ConditionFalse,
-				Reason: clusterv1.NotPausedV1Beta2Reason,
-			}}},
+				Reason: clusterv1.NotPausedReason,
+			}},
 		},
 	}
 
@@ -807,7 +826,7 @@ func TestReconcileRequest(t *testing.T) {
 	infraConfig := unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-config1",
 				"namespace": metav1.NamespaceDefault,
@@ -860,16 +879,15 @@ func TestReconcileRequest(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					ClusterName: "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-						Kind:       "GenericInfrastructureMachine",
-						Name:       "infra-config1",
-						Namespace:  metav1.NamespaceDefault,
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+						Kind:     "GenericInfrastructureMachine",
+						Name:     "infra-config1",
 					},
 					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 					ObservedGeneration: 1,
@@ -890,16 +908,15 @@ func TestReconcileRequest(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					ClusterName: "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-						Kind:       "GenericInfrastructureMachine",
-						Name:       "infra-config1",
-						Namespace:  metav1.NamespaceDefault,
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+						Kind:     "GenericInfrastructureMachine",
+						Name:     "infra-config1",
 					},
 					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 					ObservedGeneration: 1,
@@ -924,11 +941,10 @@ func TestReconcileRequest(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					ClusterName: "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-						Kind:       "GenericInfrastructureMachine",
-						Name:       "infra-config1",
-						Namespace:  metav1.NamespaceDefault,
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+						Kind:     "GenericInfrastructureMachine",
+						Name:     "infra-config1",
 					},
 					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
@@ -977,12 +993,12 @@ func TestReconcileRequest(t *testing.T) {
 	}
 }
 
-func TestMachineConditions(t *testing.T) {
-	infraConfig := func(ready bool) *unstructured.Unstructured {
+func TestMachineV1Beta1Conditions(t *testing.T) {
+	infraConfig := func(provisioned bool) *unstructured.Unstructured {
 		return &unstructured.Unstructured{
 			Object: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -991,7 +1007,9 @@ func TestMachineConditions(t *testing.T) {
 					"providerID": "test://id-1",
 				},
 				"status": map[string]interface{}{
-					"ready": ready,
+					"initialization": map[string]interface{}{
+						"provisioned": provisioned,
+					},
 					"addresses": []interface{}{
 						map[string]interface{}{
 							"type":    "InternalIP",
@@ -1003,17 +1021,19 @@ func TestMachineConditions(t *testing.T) {
 		}
 	}
 
-	boostrapConfig := func(ready bool) *unstructured.Unstructured {
+	boostrapConfig := func(dataSecretCreated bool) *unstructured.Unstructured {
 		status := map[string]interface{}{
-			"ready": ready,
+			"initialization": map[string]interface{}{
+				"dataSecretCreated": dataSecretCreated,
+			},
 		}
-		if ready {
+		if dataSecretCreated {
 			status["dataSecretName"] = "data"
 		}
 		return &unstructured.Unstructured{
 			Object: map[string]interface{}{
 				"kind":       "GenericBootstrapConfig",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -1028,6 +1048,17 @@ func TestMachineConditions(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
 		},
+		Status: clusterv1.ClusterStatus{
+			Initialization: clusterv1.ClusterInitializationStatus{
+				InfrastructureProvisioned: ptr.To(true),
+			},
+			Conditions: []metav1.Condition{
+				{
+					Type:   clusterv1.ClusterControlPlaneInitializedCondition,
+					Status: metav1.ConditionTrue,
+				},
+			},
+		},
 	}
 
 	machine := clusterv1.Machine{
@@ -1040,33 +1071,31 @@ func TestMachineConditions(t *testing.T) {
 			Finalizers: []string{clusterv1.MachineFinalizer},
 		},
 		Spec: clusterv1.MachineSpec{
-			ProviderID:  ptr.To("test://id-1"),
+			ProviderID:  "test://id-1",
 			ClusterName: "test-cluster",
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  metav1.NamespaceDefault,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "GenericBootstrapConfig",
-					Name:       "bootstrap-config1",
-					Namespace:  metav1.NamespaceDefault,
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+					Kind:     "GenericBootstrapConfig",
+					Name:     "bootstrap-config1",
 				},
 			},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "test",
 			},
 			ObservedGeneration: 1,
-			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
-				Type:   clusterv1.PausedV1Beta2Condition,
+			Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedCondition,
 				Status: metav1.ConditionFalse,
-				Reason: clusterv1.NotPausedV1Beta2Reason,
-			}}},
+				Reason: clusterv1.NotPausedReason,
+			}},
 		},
 	}
 
@@ -1075,124 +1104,150 @@ func TestMachineConditions(t *testing.T) {
 			Name: "test",
 		},
 		Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionFalse},
+				{Type: corev1.NodeDiskPressure, Status: corev1.ConditionFalse},
+				{Type: corev1.NodePIDPressure, Status: corev1.ConditionFalse},
+			},
+		},
 	}
 
 	testcases := []struct {
-		name               string
-		infraReady         bool
-		bootstrapReady     bool
-		beforeFunc         func(bootstrap, infra *unstructured.Unstructured, m *clusterv1.Machine)
-		additionalObjects  []client.Object
-		conditionsToAssert []*clusterv1.Condition
-		wantErr            bool
+		name                       string
+		infraProvisioned           bool
+		bootstrapDataSecretCreated bool
+		beforeFunc                 func(bootstrap, infra *unstructured.Unstructured, m *clusterv1.Machine)
+		additionalObjects          []client.Object
+		conditionsToAssert         []metav1.Condition
+		v1beta1ConditionsToAssert  []*clusterv1.Condition
+		wantErr                    bool
 	}{
 		{
-			name:           "all conditions true",
-			infraReady:     true,
-			bootstrapReady: true,
+			name:                       "all conditions true",
+			infraProvisioned:           true,
+			bootstrapDataSecretCreated: true,
 			beforeFunc: func(_, _ *unstructured.Unstructured, m *clusterv1.Machine) {
 				// since these conditions are set by an external controller
-				conditions.MarkTrue(m, clusterv1.MachineHealthCheckSucceededCondition)
-				conditions.MarkTrue(m, clusterv1.MachineOwnerRemediatedCondition)
+				v1beta1conditions.MarkTrue(m, clusterv1.MachineHealthCheckSucceededV1Beta1Condition)
+				v1beta1conditions.MarkTrue(m, clusterv1.MachineOwnerRemediatedV1Beta1Condition)
 			},
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.TrueCondition(clusterv1.InfrastructureReadyCondition),
-				conditions.TrueCondition(clusterv1.BootstrapReadyCondition),
-				conditions.TrueCondition(clusterv1.MachineOwnerRemediatedCondition),
-				conditions.TrueCondition(clusterv1.MachineHealthCheckSucceededCondition),
-				conditions.TrueCondition(clusterv1.ReadyCondition),
+			conditionsToAssert: []metav1.Condition{
+				{Type: clusterv1.MachineReadyCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineReadyReason, Message: ""},
+				{Type: clusterv1.MachineBootstrapConfigReadyCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineBootstrapConfigReadyReason, Message: ""},
+				{Type: clusterv1.MachineInfrastructureReadyCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineInfrastructureReadyReason, Message: ""},
+			},
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.TrueCondition(clusterv1.InfrastructureReadyV1Beta1Condition),
+				v1beta1conditions.TrueCondition(clusterv1.BootstrapReadyV1Beta1Condition),
+				v1beta1conditions.TrueCondition(clusterv1.MachineOwnerRemediatedV1Beta1Condition),
+				v1beta1conditions.TrueCondition(clusterv1.MachineHealthCheckSucceededV1Beta1Condition),
+				v1beta1conditions.TrueCondition(clusterv1.ReadyV1Beta1Condition),
 			},
 		},
 		{
-			name:           "infra condition consumes reason from the infra config",
-			infraReady:     false,
-			bootstrapReady: true,
+			name:                       "infra condition consumes reason from the infra config",
+			infraProvisioned:           false,
+			bootstrapDataSecretCreated: true,
 			beforeFunc: func(_, infra *unstructured.Unstructured, _ *clusterv1.Machine) {
-				addConditionsToExternal(infra, clusterv1.Conditions{
-					{
-						Type:     clusterv1.ReadyCondition,
-						Status:   corev1.ConditionFalse,
-						Severity: clusterv1.ConditionSeverityInfo,
-						Reason:   "Custom reason",
-					},
+				addConditionToExternal(infra, metav1.Condition{
+					Type:   contract.InfrastructureMachine().ReadyConditionType(),
+					Status: metav1.ConditionFalse,
+					Reason: "Custom reason",
 				})
 			},
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.InfrastructureReadyCondition, "Custom reason", clusterv1.ConditionSeverityInfo, ""),
+			conditionsToAssert: []metav1.Condition{
+				{Type: clusterv1.MachineInfrastructureReadyCondition, Status: metav1.ConditionFalse, Reason: "Custom reason", Message: ""},
+			},
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.FalseCondition(clusterv1.InfrastructureReadyV1Beta1Condition, "Custom reason", "", ""),
 			},
 		},
 		{
-			name:           "infra condition consumes the fallback reason",
-			infraReady:     false,
-			bootstrapReady: true,
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.InfrastructureReadyCondition, clusterv1.WaitingForInfrastructureFallbackReason, clusterv1.ConditionSeverityInfo, ""),
-				conditions.FalseCondition(clusterv1.ReadyCondition, clusterv1.WaitingForInfrastructureFallbackReason, clusterv1.ConditionSeverityInfo, ""),
+			name:                       "infra condition consumes the fallback reason",
+			infraProvisioned:           false,
+			bootstrapDataSecretCreated: true,
+			conditionsToAssert: []metav1.Condition{
+				{Type: clusterv1.MachineInfrastructureReadyCondition, Status: metav1.ConditionFalse, Reason: clusterv1.MachineInfrastructureNotReadyReason, Message: "GenericInfrastructureMachine status.initialization.provisioned is false"},
+				{Type: clusterv1.MachineReadyCondition, Status: metav1.ConditionFalse, Reason: clusterv1.MachineNotReadyReason, Message: "* InfrastructureReady: GenericInfrastructureMachine status.initialization.provisioned is false"},
+			},
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.FalseCondition(clusterv1.InfrastructureReadyV1Beta1Condition, clusterv1.WaitingForInfrastructureFallbackV1Beta1Reason, clusterv1.ConditionSeverityInfo, ""),
+				v1beta1conditions.FalseCondition(clusterv1.ReadyV1Beta1Condition, clusterv1.WaitingForInfrastructureFallbackV1Beta1Reason, clusterv1.ConditionSeverityInfo, ""),
 			},
 		},
 		{
-			name:           "bootstrap condition consumes reason from the bootstrap config",
-			infraReady:     true,
-			bootstrapReady: false,
+			name:                       "bootstrap condition consumes reason from the bootstrap config",
+			infraProvisioned:           true,
+			bootstrapDataSecretCreated: false,
 			beforeFunc: func(bootstrap, _ *unstructured.Unstructured, _ *clusterv1.Machine) {
-				addConditionsToExternal(bootstrap, clusterv1.Conditions{
-					{
-						Type:     clusterv1.ReadyCondition,
-						Status:   corev1.ConditionFalse,
-						Severity: clusterv1.ConditionSeverityInfo,
-						Reason:   "Custom reason",
-					},
+				addConditionToExternal(bootstrap, metav1.Condition{
+					Type:   contract.Bootstrap().ReadyConditionType(),
+					Status: metav1.ConditionFalse,
+					Reason: "Custom reason",
 				})
 			},
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.BootstrapReadyCondition, "Custom reason", clusterv1.ConditionSeverityInfo, ""),
+			conditionsToAssert: []metav1.Condition{
+				{Type: clusterv1.MachineBootstrapConfigReadyCondition, Status: metav1.ConditionFalse, Reason: "Custom reason", Message: ""},
+			},
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.FalseCondition(clusterv1.BootstrapReadyV1Beta1Condition, "Custom reason", "", ""),
 			},
 		},
 		{
-			name:           "bootstrap condition consumes the fallback reason",
-			infraReady:     true,
-			bootstrapReady: false,
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.BootstrapReadyCondition, clusterv1.WaitingForDataSecretFallbackReason, clusterv1.ConditionSeverityInfo, ""),
-				conditions.FalseCondition(clusterv1.ReadyCondition, clusterv1.WaitingForDataSecretFallbackReason, clusterv1.ConditionSeverityInfo, ""),
+			name:                       "bootstrap condition consumes the fallback reason",
+			infraProvisioned:           true,
+			bootstrapDataSecretCreated: false,
+			conditionsToAssert: []metav1.Condition{
+				{Type: clusterv1.MachineBootstrapConfigReadyCondition, Status: metav1.ConditionFalse, Reason: clusterv1.MachineBootstrapConfigNotReadyReason, Message: "GenericBootstrapConfig status.initialization.dataSecretCreated is false"},
+				{Type: clusterv1.MachineReadyCondition, Status: metav1.ConditionFalse, Reason: clusterv1.MachineNotReadyReason, Message: "* BootstrapConfigReady: GenericBootstrapConfig status.initialization.dataSecretCreated is false"},
+			},
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.FalseCondition(clusterv1.BootstrapReadyV1Beta1Condition, clusterv1.WaitingForDataSecretFallbackV1Beta1Reason, clusterv1.ConditionSeverityInfo, ""),
+				v1beta1conditions.FalseCondition(clusterv1.ReadyV1Beta1Condition, clusterv1.WaitingForDataSecretFallbackV1Beta1Reason, clusterv1.ConditionSeverityInfo, ""),
 			},
 		},
 		// Assert summary conditions
 		// infra condition takes precedence over bootstrap condition in generating summary
 		{
-			name:           "ready condition summary consumes reason from the infra condition",
-			infraReady:     false,
-			bootstrapReady: false,
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.ReadyCondition, clusterv1.WaitingForInfrastructureFallbackReason, clusterv1.ConditionSeverityInfo, ""),
+			name:                       "ready condition summary use a generic reason in case of multiple issues",
+			infraProvisioned:           false,
+			bootstrapDataSecretCreated: false,
+			conditionsToAssert: []metav1.Condition{
+				{Type: clusterv1.MachineReadyCondition, Status: metav1.ConditionFalse, Reason: clusterv1.MachineNotReadyReason, Message: "* BootstrapConfigReady: GenericBootstrapConfig status.initialization.dataSecretCreated is false\n* InfrastructureReady: GenericInfrastructureMachine status.initialization.provisioned is false"},
+			},
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				// in V1beta1 ready condition summary consumes reason from the infra condition
+				v1beta1conditions.FalseCondition(clusterv1.ReadyV1Beta1Condition, clusterv1.WaitingForInfrastructureFallbackV1Beta1Reason, clusterv1.ConditionSeverityInfo, ""),
 			},
 		},
 		{
-			name:           "ready condition summary consumes reason from the machine owner remediated condition",
-			infraReady:     true,
-			bootstrapReady: true,
+			name:                       "ready condition summary consumes reason from the machine owner remediated condition",
+			infraProvisioned:           true,
+			bootstrapDataSecretCreated: true,
 			beforeFunc: func(_, _ *unstructured.Unstructured, m *clusterv1.Machine) {
-				conditions.MarkFalse(m, clusterv1.MachineOwnerRemediatedCondition, clusterv1.WaitingForRemediationReason, clusterv1.ConditionSeverityWarning, "MHC failed")
+				v1beta1conditions.MarkFalse(m, clusterv1.MachineOwnerRemediatedV1Beta1Condition, clusterv1.WaitingForRemediationV1Beta1Reason, clusterv1.ConditionSeverityWarning, "MHC failed")
 			},
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.ReadyCondition, clusterv1.WaitingForRemediationReason, clusterv1.ConditionSeverityWarning, "MHC failed"),
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.FalseCondition(clusterv1.ReadyV1Beta1Condition, clusterv1.WaitingForRemediationV1Beta1Reason, clusterv1.ConditionSeverityWarning, "MHC failed"),
 			},
 		},
 		{
-			name:           "ready condition summary consumes reason from the MHC succeeded condition",
-			infraReady:     true,
-			bootstrapReady: true,
+			name:                       "ready condition summary consumes reason from the MHC succeeded condition",
+			infraProvisioned:           true,
+			bootstrapDataSecretCreated: true,
 			beforeFunc: func(_, _ *unstructured.Unstructured, m *clusterv1.Machine) {
-				conditions.MarkFalse(m, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.NodeNotFoundReason, clusterv1.ConditionSeverityWarning, "")
+				v1beta1conditions.MarkFalse(m, clusterv1.MachineHealthCheckSucceededV1Beta1Condition, clusterv1.NodeNotFoundV1Beta1Reason, clusterv1.ConditionSeverityWarning, "")
 			},
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.ReadyCondition, clusterv1.NodeNotFoundReason, clusterv1.ConditionSeverityWarning, ""),
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.FalseCondition(clusterv1.ReadyV1Beta1Condition, clusterv1.NodeNotFoundV1Beta1Reason, clusterv1.ConditionSeverityWarning, ""),
 			},
 		},
 		{
-			name:           "machine ready and MachineNodeHealthy unknown",
-			infraReady:     true,
-			bootstrapReady: true,
+			name:                       "machine ready and MachineNodeHealthy unknown",
+			infraProvisioned:           true,
+			bootstrapDataSecretCreated: true,
 			additionalObjects: []client.Object{&corev1.Node{
 				// This is a duplicate node with the same providerID
 				// This should lead to an error when trying to get the Node for a Machine.
@@ -1202,22 +1257,29 @@ func TestMachineConditions(t *testing.T) {
 				Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
 			}},
 			wantErr: true,
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.TrueCondition(clusterv1.InfrastructureReadyCondition),
-				conditions.TrueCondition(clusterv1.BootstrapReadyCondition),
-				conditions.TrueCondition(clusterv1.ReadyCondition),
-				conditions.UnknownCondition(clusterv1.MachineNodeHealthyCondition, clusterv1.NodeInspectionFailedReason, "Failed to get the Node for this Machine by ProviderID"),
+			conditionsToAssert: []metav1.Condition{
+				{Type: clusterv1.MachineReadyCondition, Status: metav1.ConditionUnknown, Reason: clusterv1.MachineReadyUnknownReason, Message: "* NodeHealthy: Please check controller logs for errors"},
+				{Type: clusterv1.MachineBootstrapConfigReadyCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineBootstrapConfigReadyReason, Message: ""},
+				{Type: clusterv1.MachineInfrastructureReadyCondition, Status: metav1.ConditionTrue, Reason: clusterv1.MachineInfrastructureReadyReason, Message: ""},
+				{Type: clusterv1.MachineNodeHealthyCondition, Status: metav1.ConditionUnknown, Reason: clusterv1.MachineNodeInternalErrorReason, Message: "Please check controller logs for errors"},
+			},
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.TrueCondition(clusterv1.InfrastructureReadyV1Beta1Condition),
+				v1beta1conditions.TrueCondition(clusterv1.BootstrapReadyV1Beta1Condition),
+				v1beta1conditions.TrueCondition(clusterv1.ReadyV1Beta1Condition),
+				v1beta1conditions.UnknownCondition(clusterv1.MachineNodeHealthyV1Beta1Condition, clusterv1.NodeInspectionFailedV1Beta1Reason, "Failed to get the Node for this Machine by ProviderID"),
 			},
 		},
 		{
-			name:           "ready condition summary consumes reason from the draining succeeded condition",
-			infraReady:     true,
-			bootstrapReady: true,
+			name:                       "ready condition summary consumes reason from the draining succeeded condition",
+			infraProvisioned:           true,
+			bootstrapDataSecretCreated: true,
 			beforeFunc: func(_, _ *unstructured.Unstructured, m *clusterv1.Machine) {
-				conditions.MarkFalse(m, clusterv1.DrainingSucceededCondition, clusterv1.DrainingFailedReason, clusterv1.ConditionSeverityWarning, "")
+				v1beta1conditions.MarkFalse(m, clusterv1.DrainingSucceededV1Beta1Condition, clusterv1.DrainingFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "")
 			},
-			conditionsToAssert: []*clusterv1.Condition{
-				conditions.FalseCondition(clusterv1.ReadyCondition, clusterv1.DrainingFailedReason, clusterv1.ConditionSeverityWarning, ""),
+			// conditionsToAssert: in v1beta1  clusterv1.DrainingSucceededV1Beta1Condition has been merged into Deleting.
+			v1beta1ConditionsToAssert: []*clusterv1.Condition{
+				v1beta1conditions.FalseCondition(clusterv1.ReadyV1Beta1Condition, clusterv1.DrainingFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, ""),
 			},
 		},
 	}
@@ -1227,8 +1289,8 @@ func TestMachineConditions(t *testing.T) {
 			g := NewWithT(t)
 
 			// setup objects
-			bootstrap := boostrapConfig(tt.bootstrapReady)
-			infra := infraConfig(tt.infraReady)
+			bootstrap := boostrapConfig(tt.bootstrapDataSecretCreated)
+			infra := infraConfig(tt.infraProvisioned)
 			m := machine.DeepCopy()
 			if tt.beforeFunc != nil {
 				tt.beforeFunc(bootstrap, infra, m)
@@ -1256,6 +1318,9 @@ func TestMachineConditions(t *testing.T) {
 					Scheme:          clientFake.Scheme(),
 					PredicateLogger: ptr.To(logr.New(log.NullLogSink{})),
 				},
+				controller:                  &fakeController{},
+				predicateLog:                ptr.To(logr.New(log.NullLogSink{})),
+				RemoteConditionsGracePeriod: 50 * time.Second,
 			}
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: util.ObjectKey(&machine)})
@@ -1269,8 +1334,27 @@ func TestMachineConditions(t *testing.T) {
 			g.Expect(r.Client.Get(ctx, client.ObjectKeyFromObject(&machine), m)).ToNot(HaveOccurred())
 
 			assertConditions(t, m, tt.conditionsToAssert...)
+			assertV1Beta1Conditions(t, m, tt.v1beta1ConditionsToAssert...)
 		})
 	}
+}
+
+type fakeController struct{}
+
+func (f fakeController) Reconcile(_ context.Context, _ reconcile.Request) (reconcile.Result, error) {
+	panic("implement me")
+}
+
+func (f fakeController) Watch(_ source.TypedSource[reconcile.Request]) error {
+	return nil
+}
+
+func (f fakeController) Start(_ context.Context) error {
+	panic("implement me")
+}
+
+func (f fakeController) GetLogger() logr.Logger {
+	panic("implement me")
 }
 
 func TestRemoveMachineFinalizerAfterDeleteReconcile(t *testing.T) {
@@ -1291,20 +1375,19 @@ func TestRemoveMachineFinalizerAfterDeleteReconcile(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: "test-cluster",
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  metav1.NamespaceDefault,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 		},
 		Status: clusterv1.MachineStatus{
-			V1Beta2: &clusterv1.MachineV1Beta2Status{Conditions: []metav1.Condition{{
-				Type:   clusterv1.PausedV1Beta2Condition,
+			Conditions: []metav1.Condition{{
+				Type:   clusterv1.PausedCondition,
 				Status: metav1.ConditionFalse,
-				Reason: clusterv1.NotPausedV1Beta2Reason,
-			}}},
+				Reason: clusterv1.NotPausedReason,
+			}},
 		},
 	}
 	key := client.ObjectKey{Namespace: m.Namespace, Name: m.Name}
@@ -1343,9 +1426,9 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					Annotations: map[string]string{clusterv1.ExcludeNodeDrainingAnnotation: "existed!!"},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -1361,16 +1444,16 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					Annotations: map[string]string{KubeadmControlPlanePreTerminateHookCleanupAnnotation: ""},
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							APIVersion: KubeadmControlPlaneAPIVersion,
+							APIVersion: clusterv1.GroupVersionControlPlane.String(),
 							Kind:       "KubeadmControlPlane",
 							Name:       "Foo",
 						},
 					},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -1385,16 +1468,16 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					Labels:    map[string]string{clusterv1.MachineControlPlaneLabel: ""},
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							APIVersion: KubeadmControlPlaneAPIVersion,
+							APIVersion: clusterv1.GroupVersionControlPlane.String(),
 							Kind:       "KubeadmControlPlane",
 							Name:       "Foo",
 						},
 					},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -1409,15 +1492,17 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
-					NodeDrainTimeout:  &metav1.Duration{Duration: time.Second * 60},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					Deletion: clusterv1.MachineDeletionSpec{
+						NodeDrainTimeoutSeconds: ptr.To(int32(60)),
+					},
 				},
 
 				Status: clusterv1.MachineStatus{
 					Deletion: &clusterv1.MachineDeletionStatus{
-						NodeDrainStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 70)).UTC()},
+						NodeDrainStartTime: metav1.Time{Time: time.Now().Add(-(time.Second * 70)).UTC()},
 					},
 				},
 			},
@@ -1432,21 +1517,23 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
-					NodeDrainTimeout:  &metav1.Duration{Duration: time.Second * 60},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					Deletion: clusterv1.MachineDeletionSpec{
+						NodeDrainTimeoutSeconds: ptr.To(int32(60)),
+					},
 				},
 				Status: clusterv1.MachineStatus{
 					Deletion: &clusterv1.MachineDeletionStatus{
-						NodeDrainStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
+						NodeDrainStartTime: metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
 					},
 				},
 			},
 			expected: true,
 		},
 		{
-			name: "NodeDrainTimeout option is set to its default value 0",
+			name: "NodeDrainTimeoutSeconds option is set to its default value 0",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-machine",
@@ -1454,13 +1541,13 @@ func TestIsNodeDrainedAllowed(t *testing.T) {
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
 					Deletion: &clusterv1.MachineDeletionStatus{
-						NodeDrainStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
+						NodeDrainStartTime: metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
 					},
 				},
 			},
@@ -1504,16 +1591,16 @@ func TestDrainNode(t *testing.T) {
 	g.Expect(err).ToNot(HaveOccurred())
 
 	tests := []struct {
-		name                string
-		nodeName            string
-		node                *corev1.Node
-		pods                []*corev1.Pod
-		nodeDrainStartTime  *metav1.Time
-		wantCondition       *clusterv1.Condition
-		wantResult          ctrl.Result
-		wantErr             string
-		wantDeletingReason  string
-		wantDeletingMessage string
+		name                 string
+		nodeName             string
+		node                 *corev1.Node
+		pods                 []*corev1.Pod
+		nodeDrainStartTime   metav1.Time
+		wantV1Beta1Condition *clusterv1.Condition
+		wantResult           ctrl.Result
+		wantErr              string
+		wantDeletingReason   string
+		wantDeletingMessage  string
 	}{
 		{
 			name:     "Node does not exist, no-op",
@@ -1616,17 +1703,17 @@ func TestDrainNode(t *testing.T) {
 					},
 				},
 			},
-			nodeDrainStartTime: &metav1.Time{Time: nodeDrainStartTime},
+			nodeDrainStartTime: metav1.Time{Time: nodeDrainStartTime},
 			wantResult:         ctrl.Result{RequeueAfter: 20 * time.Second},
-			wantCondition: &clusterv1.Condition{
-				Type:     clusterv1.DrainingSucceededCondition,
+			wantV1Beta1Condition: &clusterv1.Condition{
+				Type:     clusterv1.DrainingSucceededV1Beta1Condition,
 				Status:   corev1.ConditionFalse,
 				Severity: clusterv1.ConditionSeverityInfo,
-				Reason:   clusterv1.DrainingReason,
+				Reason:   clusterv1.DrainingV1Beta1Reason,
 				Message: `Drain not completed yet (started at 2024-10-09T16:13:59Z):
 * Pod test-namespace/pod-2-delete-running-deployment-pod: deletionTimestamp set, but still not removed from the Node`,
 			},
-			wantDeletingReason: clusterv1.MachineDeletingDrainingNodeV1Beta2Reason,
+			wantDeletingReason: clusterv1.MachineDeletingDrainingNodeReason,
 			wantDeletingMessage: `Drain not completed yet (started at 2024-10-09T16:13:59Z):
 * Pod test-namespace/pod-2-delete-running-deployment-pod: deletionTimestamp set, but still not removed from the Node`,
 		},
@@ -1710,10 +1797,10 @@ func TestDrainNode(t *testing.T) {
 				reconcileDeleteCache: cache.New[cache.ReconcileEntry](cache.DefaultTTL),
 			}
 
-			testMachine.Status.NodeRef = &corev1.ObjectReference{
+			testMachine.Status.NodeRef = clusterv1.MachineNodeReference{
 				Name: tt.nodeName,
 			}
-			if tt.nodeDrainStartTime != nil {
+			if !tt.nodeDrainStartTime.IsZero() {
 				testMachine.Status.Deletion = &clusterv1.MachineDeletionStatus{
 					NodeDrainStartTime: tt.nodeDrainStartTime,
 				}
@@ -1733,14 +1820,14 @@ func TestDrainNode(t *testing.T) {
 				g.Expect(err.Error()).To(BeComparableTo(tt.wantErr))
 			}
 
-			gotCondition := conditions.Get(testMachine, clusterv1.DrainingSucceededCondition)
-			if tt.wantCondition == nil {
+			gotCondition := v1beta1conditions.Get(testMachine, clusterv1.DrainingSucceededV1Beta1Condition)
+			if tt.wantV1Beta1Condition == nil {
 				g.Expect(gotCondition).To(BeNil())
 			} else {
 				g.Expect(gotCondition).ToNot(BeNil())
 				// Cleanup for easier comparison
 				gotCondition.LastTransitionTime = metav1.Time{}
-				g.Expect(gotCondition).To(BeComparableTo(tt.wantCondition))
+				g.Expect(gotCondition).To(BeComparableTo(tt.wantV1Beta1Condition))
 			}
 
 			g.Expect(s.deletingReason).To(Equal(tt.wantDeletingReason))
@@ -1773,11 +1860,11 @@ func TestDrainNode_withCaching(t *testing.T) {
 			Name:      "test-machine",
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "node-1",
 			},
 			Deletion: &clusterv1.MachineDeletionStatus{
-				NodeDrainStartTime: &metav1.Time{Time: nodeDrainStartTime},
+				NodeDrainStartTime: metav1.Time{Time: nodeDrainStartTime},
 			},
 		},
 	}
@@ -1855,19 +1942,19 @@ func TestDrainNode_withCaching(t *testing.T) {
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(res).To(BeComparableTo(ctrl.Result{RequeueAfter: drainRetryInterval}))
 	// Condition should report the one Pod that has been evicted.
-	gotCondition := conditions.Get(testMachine, clusterv1.DrainingSucceededCondition)
+	gotCondition := v1beta1conditions.Get(testMachine, clusterv1.DrainingSucceededV1Beta1Condition)
 	g.Expect(gotCondition).ToNot(BeNil())
 	// Cleanup for easier comparison
 	gotCondition.LastTransitionTime = metav1.Time{}
 	g.Expect(gotCondition).To(BeComparableTo(&clusterv1.Condition{
-		Type:     clusterv1.DrainingSucceededCondition,
+		Type:     clusterv1.DrainingSucceededV1Beta1Condition,
 		Status:   corev1.ConditionFalse,
 		Severity: clusterv1.ConditionSeverityInfo,
-		Reason:   clusterv1.DrainingReason,
+		Reason:   clusterv1.DrainingV1Beta1Reason,
 		Message: `Drain not completed yet (started at 2024-10-09T16:13:59Z):
 * Pod test-namespace/pod-delete-running-deployment-pod: deletionTimestamp set, but still not removed from the Node`,
 	}))
-	g.Expect(s.deletingReason).To(Equal(clusterv1.MachineDeletingDrainingNodeV1Beta2Reason))
+	g.Expect(s.deletingReason).To(Equal(clusterv1.MachineDeletingDrainingNodeReason))
 	g.Expect(s.deletingMessage).To(Equal(`Drain not completed yet (started at 2024-10-09T16:13:59Z):
 * Pod test-namespace/pod-delete-running-deployment-pod: deletionTimestamp set, but still not removed from the Node`))
 
@@ -1904,9 +1991,9 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					Annotations: map[string]string{clusterv1.ExcludeWaitForNodeVolumeDetachAnnotation: "existed!!"},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -1922,16 +2009,16 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					Annotations: map[string]string{KubeadmControlPlanePreTerminateHookCleanupAnnotation: ""},
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							APIVersion: KubeadmControlPlaneAPIVersion,
+							APIVersion: clusterv1.GroupVersionControlPlane.String(),
 							Kind:       "KubeadmControlPlane",
 							Name:       "Foo",
 						},
 					},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -1946,16 +2033,16 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					Labels:    map[string]string{clusterv1.MachineControlPlaneLabel: ""},
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							APIVersion: KubeadmControlPlaneAPIVersion,
+							APIVersion: clusterv1.GroupVersionControlPlane.String(),
 							Kind:       "KubeadmControlPlane",
 							Name:       "Foo",
 						},
 					},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -1970,15 +2057,17 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:             "test-cluster",
-					InfrastructureRef:       corev1.ObjectReference{},
-					Bootstrap:               clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
-					NodeVolumeDetachTimeout: &metav1.Duration{Duration: time.Second * 30},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					Deletion: clusterv1.MachineDeletionSpec{
+						NodeVolumeDetachTimeoutSeconds: ptr.To(int32(30)),
+					},
 				},
 
 				Status: clusterv1.MachineStatus{
 					Deletion: &clusterv1.MachineDeletionStatus{
-						WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 60)).UTC()},
+						WaitForNodeVolumeDetachStartTime: metav1.Time{Time: time.Now().Add(-(time.Second * 60)).UTC()},
 					},
 				},
 			},
@@ -1993,14 +2082,16 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:             "test-cluster",
-					InfrastructureRef:       corev1.ObjectReference{},
-					Bootstrap:               clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
-					NodeVolumeDetachTimeout: &metav1.Duration{Duration: time.Second * 60},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					Deletion: clusterv1.MachineDeletionSpec{
+						NodeVolumeDetachTimeoutSeconds: ptr.To(int32(60)),
+					},
 				},
 				Status: clusterv1.MachineStatus{
 					Deletion: &clusterv1.MachineDeletionStatus{
-						WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
+						WaitForNodeVolumeDetachStartTime: metav1.Time{Time: time.Now().Add(-(time.Second * 30)).UTC()},
 					},
 				},
 			},
@@ -2015,13 +2106,13 @@ func TestIsNodeVolumeDetachingAllowed(t *testing.T) {
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
 					Deletion: &clusterv1.MachineDeletionStatus{
-						WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
+						WaitForNodeVolumeDetachStartTime: metav1.Time{Time: time.Now().Add(-(time.Second * 1000)).UTC()},
 					},
 				},
 			},
@@ -2102,14 +2193,14 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 		},
 		Status: clusterv1.MachineStatus{
 			Deletion: &clusterv1.MachineDeletionStatus{
-				WaitForNodeVolumeDetachStartTime: &metav1.Time{Time: waitForNodeVolumeDetachStartTime},
+				WaitForNodeVolumeDetachStartTime: metav1.Time{Time: waitForNodeVolumeDetachStartTime},
 			},
 		},
 	}
 
 	attachedVolumes := []corev1.AttachedVolume{
 		{
-			Name:       corev1.UniqueVolumeName(fmt.Sprintf("kubernetes.io/csi/%s^%s", persistentVolume.Spec.PersistentVolumeSource.CSI.Driver, persistentVolume.Spec.PersistentVolumeSource.CSI.VolumeHandle)),
+			Name:       corev1.UniqueVolumeName(fmt.Sprintf("kubernetes.io/csi/%s^%s", persistentVolume.Spec.CSI.Driver, persistentVolume.Spec.CSI.VolumeHandle)),
 			DevicePath: "test-path",
 		},
 	}
@@ -2143,7 +2234,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 				persistentVolume,
 			},
 			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
-			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachReason,
 			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
 * PersistentVolumeClaims: default/test-pvc`,
 		},
@@ -2167,7 +2258,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 				persistentVolumeWithoutClaim,
 			},
 			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
-			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachReason,
 			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
 * PersistentVolumes without a .spec.claimRef to a PersistentVolumeClaim: test-pv`,
 		},
@@ -2189,7 +2280,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 			},
 			remoteObjects:          []client.Object{},
 			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
-			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachReason,
 			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
 * Node with .status.volumesAttached entries not matching a PersistentVolume: kubernetes.io/csi/dummy^foo`,
 		},
@@ -2266,7 +2357,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 				persistentVolume,
 			},
 			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
-			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachReason,
 			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
 * PersistentVolumeClaims: default/test-pvc`,
 		},
@@ -2311,7 +2402,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 				volumeAttachment,
 			},
 			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
-			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachReason,
 			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
 * VolumeAttachment with .spec.source.persistentVolumeName not matching a PersistentVolume: test-pv`,
 		},
@@ -2412,7 +2503,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 				persistentVolume,
 			},
 			expected:               ctrl.Result{RequeueAfter: waitForVolumeDetachRetryInterval},
-			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachV1Beta2Reason,
+			expectedDeletingReason: clusterv1.MachineDeletingWaitingForVolumeDetachReason,
 			expectedDeletingMessage: `Waiting for Node volumes to be detached (started at 2024-10-09T16:13:59Z)
 * PersistentVolumeClaims: default/test-pvc`,
 		},
@@ -2499,7 +2590,7 @@ func TestShouldWaitForNodeVolumes(t *testing.T) {
 				reconcileDeleteCache: cache.New[cache.ReconcileEntry](cache.DefaultTTL),
 			}
 
-			testMachine.Status.NodeRef = &corev1.ObjectReference{
+			testMachine.Status.NodeRef = clusterv1.MachineNodeReference{
 				Name: tt.node.GetName(),
 			}
 
@@ -2536,22 +2627,22 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -2563,25 +2654,25 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 				},
@@ -2594,13 +2685,13 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel:         "test-cluster",
 						clusterv1.MachineControlPlaneLabel: "",
@@ -2609,12 +2700,12 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 					DeletionTimestamp: &metav1.Time{Time: time.Now().UTC()},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 				},
@@ -2627,25 +2718,25 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 				},
@@ -2658,7 +2749,7 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "test-cluster",
-					Namespace:         metav1.NamespaceDefault,
+					Namespace:         "test-cluster",
 					DeletionTimestamp: &deletionts,
 					Finalizers:        []string{clusterv1.ClusterFinalizer},
 				},
@@ -2672,33 +2763,32 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 				Spec: clusterv1.ClusterSpec{
-					ControlPlaneRef: &corev1.ObjectReference{
-						APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
-						Kind:       "AWSManagedControlPlane",
-						Name:       "test-cluster",
-						Namespace:  "test-cluster",
+					ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: clusterv1.GroupVersionControlPlane.Group,
+						Kind:     builder.GenericControlPlaneKind,
+						Name:     "test-cluster",
 					},
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 				},
@@ -2711,33 +2801,32 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 				Spec: clusterv1.ClusterSpec{
-					ControlPlaneRef: &corev1.ObjectReference{
-						APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
-						Kind:       "AWSManagedControlPlane",
-						Name:       "test-cluster-2",
-						Namespace:  "test-cluster",
+					ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: builder.ControlPlaneGroupVersion.Group,
+						Kind:     builder.GenericControlPlaneKind,
+						Name:     "test-cluster-2",
 					},
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 				},
@@ -2750,33 +2839,32 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 				Spec: clusterv1.ClusterSpec{
-					ControlPlaneRef: &corev1.ObjectReference{
-						APIVersion: "controlplane.cluster.x-k8s.io/v1beta1",
-						Kind:       "AWSManagedControlPlane",
-						Name:       "test-cluster-3",
-						Namespace:  "test-cluster",
+					ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: clusterv1.GroupVersionControlPlane.Group,
+						Kind:     builder.GenericControlPlaneKind,
+						Name:     "test-cluster-3",
 					},
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test",
 					},
 				},
@@ -2789,22 +2877,22 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			cluster: &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 				},
 			},
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "created",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{},
 			},
@@ -2824,16 +2912,16 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			},
 		},
 	}
-	emp.SetAPIVersion("controlplane.cluster.x-k8s.io/v1beta1")
-	emp.SetKind("AWSManagedControlPlane")
+	emp.SetAPIVersion(clusterv1.GroupVersionControlPlane.String())
+	emp.SetKind(builder.GenericControlPlaneKind)
 	emp.SetName("test-cluster")
 	emp.SetNamespace("test-cluster")
 
 	mcpBeingDeleted := &unstructured.Unstructured{
 		Object: map[string]interface{}{},
 	}
-	mcpBeingDeleted.SetAPIVersion("controlplane.cluster.x-k8s.io/v1beta1")
-	mcpBeingDeleted.SetKind("AWSManagedControlPlane")
+	mcpBeingDeleted.SetAPIVersion(clusterv1.GroupVersionControlPlane.String())
+	mcpBeingDeleted.SetKind(builder.GenericControlPlaneKind)
 	mcpBeingDeleted.SetName("test-cluster-2")
 	mcpBeingDeleted.SetNamespace("test-cluster")
 	mcpBeingDeleted.SetDeletionTimestamp(&metav1.Time{Time: time.Now()})
@@ -2846,8 +2934,8 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			},
 		},
 	}
-	empBeingDeleted.SetAPIVersion("controlplane.cluster.x-k8s.io/v1beta1")
-	empBeingDeleted.SetKind("AWSManagedControlPlane")
+	empBeingDeleted.SetAPIVersion(clusterv1.GroupVersionControlPlane.String())
+	empBeingDeleted.SetKind(builder.GenericControlPlaneKind)
 	empBeingDeleted.SetName("test-cluster-3")
 	empBeingDeleted.SetNamespace("test-cluster")
 	empBeingDeleted.SetDeletionTimestamp(&metav1.Time{Time: time.Now()})
@@ -2870,19 +2958,19 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			m1 := &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "cp1",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test1",
 					},
 				},
@@ -2890,19 +2978,19 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			m2 := &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "cp2",
-					Namespace: metav1.NamespaceDefault,
+					Namespace: "test-cluster",
 					Labels: map[string]string{
 						clusterv1.ClusterNameLabel: "test-cluster",
 					},
 					Finalizers: []string{clusterv1.MachineFinalizer},
 				},
 				Spec: clusterv1.MachineSpec{
-					ClusterName:       "test-cluster",
-					InfrastructureRef: corev1.ObjectReference{},
-					Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+					ClusterName: "test-cluster",
+					// InfrastructureRef is not defined
+					Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
+					NodeRef: clusterv1.MachineNodeReference{
 						Name: "test2",
 					},
 				},
@@ -2921,6 +3009,8 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 				emp,
 				mcpBeingDeleted,
 				empBeingDeleted,
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
 			).Build()
 			mr := &Reconciler{
 				Client:       c,
@@ -2946,7 +3036,7 @@ func TestNodeToMachine(t *testing.T) {
 	infraMachine := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-config1",
 				"namespace": ns.Name,
@@ -2969,7 +3059,7 @@ func TestNodeToMachine(t *testing.T) {
 	infraMachine2 := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-config2",
 				"namespace": ns.Name,
@@ -2992,7 +3082,7 @@ func TestNodeToMachine(t *testing.T) {
 	defaultBootstrap := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericBootstrapConfig",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config-machinereconcile",
 				"namespace": ns.Name,
@@ -3006,6 +3096,13 @@ func TestNodeToMachine(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "machine-reconcile-",
 			Namespace:    ns.Name,
+		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
 		},
 	}
 
@@ -3031,7 +3128,7 @@ func TestNodeToMachine(t *testing.T) {
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
 	testClusterOriginal := client.MergeFrom(testCluster.DeepCopy())
-	testCluster.Status.InfrastructureReady = true
+	testCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, testCluster, testClusterOriginal)).To(Succeed())
 
 	g.Expect(env.Create(ctx, defaultBootstrap)).To(Succeed())
@@ -3047,19 +3144,19 @@ func TestNodeToMachine(t *testing.T) {
 	// Patch infra expectedMachine ready
 	patchHelper, err := patch.NewHelper(infraMachine, env)
 	g.Expect(err).ShouldNot(HaveOccurred())
-	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "initialization", "provisioned")).To(Succeed())
 	g.Expect(patchHelper.Patch(ctx, infraMachine, patch.WithStatusObservedGeneration{})).To(Succeed())
 
 	// Patch infra randomMachine ready
 	patchHelper, err = patch.NewHelper(infraMachine2, env)
 	g.Expect(err).ShouldNot(HaveOccurred())
-	g.Expect(unstructured.SetNestedField(infraMachine2.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(infraMachine2.Object, true, "status", "initialization", "provisioned")).To(Succeed())
 	g.Expect(patchHelper.Patch(ctx, infraMachine2, patch.WithStatusObservedGeneration{})).To(Succeed())
 
 	// Patch bootstrap ready
 	patchHelper, err = patch.NewHelper(defaultBootstrap, env)
 	g.Expect(err).ShouldNot(HaveOccurred())
-	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "ready")).To(Succeed())
+	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, true, "status", "initialization", "dataSecretCreated")).To(Succeed())
 	g.Expect(unstructured.SetNestedField(defaultBootstrap.Object, "secretData", "status", "dataSecretName")).To(Succeed())
 	g.Expect(patchHelper.Patch(ctx, defaultBootstrap, patch.WithStatusObservedGeneration{})).To(Succeed())
 
@@ -3073,18 +3170,16 @@ func TestNodeToMachine(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: testCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  ns.Name,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "GenericBootstrapConfig",
-					Name:       "bootstrap-config-machinereconcile",
-					Namespace:  ns.Name,
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+					Kind:     "GenericBootstrapConfig",
+					Name:     "bootstrap-config-machinereconcile",
 				},
 			},
 		},
@@ -3102,7 +3197,7 @@ func TestNodeToMachine(t *testing.T) {
 		if err := env.Get(ctx, key, expectedMachine); err != nil {
 			return false
 		}
-		return expectedMachine.Status.NodeRef != nil
+		return expectedMachine.Status.NodeRef.IsDefined()
 	}, timeout).Should(BeTrue())
 
 	randomMachine := &clusterv1.Machine{
@@ -3115,16 +3210,16 @@ func TestNodeToMachine(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: testCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config2",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config2",
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "GenericBootstrapConfig",
-					Name:       "bootstrap-config-machinereconcile",
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+					Kind:     "GenericBootstrapConfig",
+					Name:     "bootstrap-config-machinereconcile",
 				},
 			},
 		},
@@ -3142,7 +3237,7 @@ func TestNodeToMachine(t *testing.T) {
 		if err := env.Get(ctx, key, randomMachine); err != nil {
 			return false
 		}
-		return randomMachine.Status.NodeRef != nil
+		return randomMachine.Status.NodeRef.IsDefined()
 	}, timeout).Should(BeTrue())
 
 	// Fake nodes for actual test of nodeToMachine.
@@ -3252,16 +3347,15 @@ func TestNodeDeletion(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: "test-cluster",
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  metav1.NamespaceDefault,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "test",
 			},
 		},
@@ -3278,32 +3372,32 @@ func TestNodeDeletion(t *testing.T) {
 			Finalizers: []string{clusterv1.MachineFinalizer},
 		},
 		Spec: clusterv1.MachineSpec{
-			ClusterName:       "test-cluster",
-			InfrastructureRef: corev1.ObjectReference{},
-			Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+			ClusterName: "test-cluster",
+			// InfrastructureRef is not defined
+			Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "cp1",
 			},
 		},
 	}
 
 	testCases := []struct {
-		name                 string
-		deletionTimeout      *metav1.Duration
-		resultErr            bool
-		clusterDeleted       bool
-		expectNodeDeletion   bool
-		expectDeletingReason string
-		createFakeClient     func(...client.Object) client.Client
+		name                   string
+		deletionTimeoutSeconds *int32
+		resultErr              bool
+		clusterDeleted         bool
+		expectNodeDeletion     bool
+		expectDeletingReason   string
+		createFakeClient       func(...client.Object) client.Client
 	}{
 		{
-			name:                 "should return no error when deletion is successful",
-			deletionTimeout:      &metav1.Duration{Duration: time.Second},
-			resultErr:            false,
-			expectNodeDeletion:   true,
-			expectDeletingReason: clusterv1.MachineDeletingDeletionCompletedV1Beta2Reason,
+			name:                   "should return no error when deletion is successful",
+			deletionTimeoutSeconds: ptr.To(int32(1)),
+			resultErr:              false,
+			expectNodeDeletion:     true,
+			expectDeletingReason:   clusterv1.MachineDeletingDeletionCompletedReason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				return fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -3312,11 +3406,11 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:                 "should return an error when timeout is not expired and node deletion fails",
-			deletionTimeout:      &metav1.Duration{Duration: time.Hour},
-			resultErr:            true,
-			expectNodeDeletion:   false,
-			expectDeletingReason: clusterv1.MachineDeletingDeletingNodeV1Beta2Reason,
+			name:                   "should return an error when timeout is not expired and node deletion fails",
+			deletionTimeoutSeconds: ptr.To(int32(60 * 60)),
+			resultErr:              true,
+			expectNodeDeletion:     false,
+			expectDeletingReason:   clusterv1.MachineDeletingDeletingNodeReason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -3326,11 +3420,11 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:                 "should return an error when timeout is infinite and node deletion fails",
-			deletionTimeout:      &metav1.Duration{Duration: 0}, // should lead to infinite timeout
-			resultErr:            true,
-			expectNodeDeletion:   false,
-			expectDeletingReason: clusterv1.MachineDeletingDeletingNodeV1Beta2Reason,
+			name:                   "should return an error when timeout is infinite and node deletion fails",
+			deletionTimeoutSeconds: ptr.To(int32(0)), // should lead to infinite timeout
+			resultErr:              true,
+			expectNodeDeletion:     false,
+			expectDeletingReason:   clusterv1.MachineDeletingDeletingNodeReason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -3340,11 +3434,11 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:                 "should not return an error when timeout is expired and node deletion fails",
-			deletionTimeout:      &metav1.Duration{Duration: time.Millisecond},
-			resultErr:            false,
-			expectNodeDeletion:   false,
-			expectDeletingReason: clusterv1.DeletionCompletedV1Beta2Reason,
+			name:                   "should not return an error when timeout is expired and node deletion fails",
+			deletionTimeoutSeconds: ptr.To(int32(1)),
+			resultErr:              false,
+			expectNodeDeletion:     false,
+			expectDeletingReason:   clusterv1.DeletionCompletedReason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -3354,12 +3448,12 @@ func TestNodeDeletion(t *testing.T) {
 			},
 		},
 		{
-			name:                 "should not delete the node or return an error when the cluster is marked for deletion",
-			deletionTimeout:      nil, // should lead to infinite timeout
-			resultErr:            false,
-			clusterDeleted:       true,
-			expectNodeDeletion:   false,
-			expectDeletingReason: clusterv1.DeletionCompletedV1Beta2Reason,
+			name:                   "should not delete the node or return an error when the cluster is marked for deletion",
+			deletionTimeoutSeconds: nil, // should lead to infinite timeout
+			resultErr:              false,
+			clusterDeleted:         true,
+			expectNodeDeletion:     false,
+			expectDeletingReason:   clusterv1.DeletionCompletedReason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				fc := fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -3375,7 +3469,7 @@ func TestNodeDeletion(t *testing.T) {
 			g := NewWithT(t)
 
 			m := testMachine.DeepCopy()
-			m.Spec.NodeDeletionTimeout = tc.deletionTimeout
+			m.Spec.Deletion.NodeDeletionTimeoutSeconds = tc.deletionTimeoutSeconds
 
 			fakeClient := tc.createFakeClient(node, m, cpmachine1)
 
@@ -3449,14 +3543,13 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: "test-cluster",
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  metav1.NamespaceDefault,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 			Bootstrap:  clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
-			ProviderID: ptr.To("test://id-1"),
+			ProviderID: "test://id-1",
 		},
 	}
 
@@ -3471,31 +3564,31 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 			Finalizers: []string{clusterv1.MachineFinalizer},
 		},
 		Spec: clusterv1.MachineSpec{
-			ClusterName:       "test-cluster",
-			InfrastructureRef: corev1.ObjectReference{},
-			Bootstrap:         clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+			ClusterName: "test-cluster",
+			// InfrastructureRef is not defined
+			Bootstrap: clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
+			NodeRef: clusterv1.MachineNodeReference{
 				Name: "cp1",
 			},
 		},
 	}
 
 	testCases := []struct {
-		name                 string
-		deletionTimeout      *metav1.Duration
-		resultErr            bool
-		expectNodeDeletion   bool
-		expectDeletingReason string
-		createFakeClient     func(...client.Object) client.Client
+		name                   string
+		deletionTimeoutSeconds *int32
+		resultErr              bool
+		expectNodeDeletion     bool
+		expectDeletingReason   string
+		createFakeClient       func(...client.Object) client.Client
 	}{
 		{
-			name:                 "should return no error when the node exists and matches the provider id",
-			deletionTimeout:      &metav1.Duration{Duration: time.Second},
-			resultErr:            false,
-			expectNodeDeletion:   true,
-			expectDeletingReason: clusterv1.MachineDeletingDeletionCompletedV1Beta2Reason,
+			name:                   "should return no error when the node exists and matches the provider id",
+			deletionTimeoutSeconds: ptr.To(int32(1)),
+			resultErr:              false,
+			expectNodeDeletion:     true,
+			expectDeletingReason:   clusterv1.MachineDeletingDeletionCompletedReason,
 			createFakeClient: func(initObjs ...client.Object) client.Client {
 				return fake.NewClientBuilder().
 					WithObjects(initObjs...).
@@ -3509,7 +3602,7 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(*testing.T) {
 			m := testMachine.DeepCopy()
-			m.Spec.NodeDeletionTimeout = tc.deletionTimeout
+			m.Spec.Deletion.NodeDeletionTimeoutSeconds = tc.deletionTimeoutSeconds
 
 			fakeClient := tc.createFakeClient(node, m, cpmachine1)
 
@@ -3544,38 +3637,54 @@ func TestNodeDeletionWithoutNodeRefFallback(t *testing.T) {
 }
 
 // adds a condition list to an external object.
-func addConditionsToExternal(u *unstructured.Unstructured, newConditions clusterv1.Conditions) {
-	existingConditions := clusterv1.Conditions{}
-	if cs := conditions.UnstructuredGetter(u).GetConditions(); len(cs) != 0 {
-		existingConditions = cs
+func addConditionToExternal(u *unstructured.Unstructured, c metav1.Condition) {
+	err := unstructured.SetNestedSlice(u.Object, []interface{}{
+		map[string]interface{}{
+			"type":    c.Type,
+			"status":  string(c.Status),
+			"reason":  c.Reason,
+			"message": c.Message,
+		},
+	}, "status", "conditions")
+	if err != nil {
+		panic(err)
 	}
-	existingConditions = append(existingConditions, newConditions...)
-	conditions.UnstructuredSetter(u).SetConditions(existingConditions)
 }
 
 // asserts the conditions set on the Getter object.
-// TODO: replace this with util.condition.MatchConditions (or a new matcher in controller runtime komega).
-func assertConditions(t *testing.T, from conditions.Getter, conditions ...*clusterv1.Condition) {
+func assertConditions(t *testing.T, from conditions.Getter, conditionsToAssert ...metav1.Condition) {
+	t.Helper()
+
+	g := NewWithT(t)
+	for _, condition := range conditionsToAssert {
+		actualCondition := conditions.Get(from, condition.Type)
+		g.Expect(actualCondition).ToNot(BeNil(), "condition %s is missing", condition.Type)
+		g.Expect(*actualCondition).To(conditions.MatchCondition(condition, conditions.IgnoreLastTransitionTime(true)))
+	}
+}
+
+// asserts the conditions set on the Getter object.
+func assertV1Beta1Conditions(t *testing.T, from v1beta1conditions.Getter, conditions ...*clusterv1.Condition) {
 	t.Helper()
 
 	for _, condition := range conditions {
-		assertCondition(t, from, condition)
+		assertV1Beta1Condition(t, from, condition)
 	}
 }
 
 // asserts whether a condition of type is set on the Getter object
 // when the condition is true, asserting the reason/severity/message
 // for the condition are avoided.
-func assertCondition(t *testing.T, from conditions.Getter, condition *clusterv1.Condition) {
+func assertV1Beta1Condition(t *testing.T, from v1beta1conditions.Getter, condition *clusterv1.Condition) {
 	t.Helper()
 
 	g := NewWithT(t)
-	g.Expect(conditions.Has(from, condition.Type)).To(BeTrue())
+	g.Expect(v1beta1conditions.Has(from, condition.Type)).To(BeTrue())
 
 	if condition.Status == corev1.ConditionTrue {
-		g.Expect(conditions.IsTrue(from, condition.Type)).To(BeTrue())
+		g.Expect(v1beta1conditions.IsTrue(from, condition.Type)).To(BeTrue())
 	} else {
-		conditionToBeAsserted := conditions.Get(from, condition.Type)
+		conditionToBeAsserted := v1beta1conditions.Get(from, condition.Type)
 		g.Expect(conditionToBeAsserted.Status).To(Equal(condition.Status))
 		g.Expect(conditionToBeAsserted.Severity).To(Equal(condition.Severity))
 		g.Expect(conditionToBeAsserted.Reason).To(Equal(condition.Reason))

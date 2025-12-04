@@ -35,8 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/api/v1beta1/index"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/internal/topology/ownerrefs"
@@ -55,7 +55,7 @@ func TestReconcileNode(t *testing.T) {
 			},
 		},
 		Spec: clusterv1.MachineSpec{
-			ProviderID: ptr.To("aws://us-east-1/test-node-1"),
+			ProviderID: "aws://us-east-1/test-node-1",
 		},
 	}
 
@@ -131,7 +131,6 @@ func TestReconcileNode(t *testing.T) {
 			expectResult: ctrl.Result{},
 			expectError:  false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
-				g.Expect(m.Status.NodeRef).ToNot(BeNil())
 				g.Expect(m.Status.NodeRef.Name).To(Equal("test-node-1"))
 				g.Expect(m.Status.NodeInfo).ToNot(BeNil())
 				g.Expect(m.Status.NodeInfo.MachineID).To(Equal("foo"))
@@ -148,13 +147,11 @@ func TestReconcileNode(t *testing.T) {
 					},
 				},
 				Spec: clusterv1.MachineSpec{
-					ProviderID: ptr.To("aws://us-east-1/test-node-1"),
+					ProviderID: "aws://us-east-1/test-node-1",
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
-						Kind:       "Node",
-						Name:       "test-node-1",
-						APIVersion: "v1",
+					NodeRef: clusterv1.MachineNodeReference{
+						Name: "test-node-1",
 					},
 				},
 			},
@@ -176,13 +173,11 @@ func TestReconcileNode(t *testing.T) {
 					Finalizers:        []string{"foo"},
 				},
 				Spec: clusterv1.MachineSpec{
-					ProviderID: ptr.To("aws://us-east-1/test-node-1"),
+					ProviderID: "aws://us-east-1/test-node-1",
 				},
 				Status: clusterv1.MachineStatus{
-					NodeRef: &corev1.ObjectReference{
-						Kind:       "Node",
-						Name:       "test-node-1",
-						APIVersion: "v1",
+					NodeRef: clusterv1.MachineNodeReference{
+						Name: "test-node-1",
 					},
 				},
 			},
@@ -242,12 +237,19 @@ func TestGetNode(t *testing.T) {
 			GenerateName: "test-get-node-",
 			Namespace:    ns.Name,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 
 	g.Expect(env.Create(ctx, testCluster)).To(Succeed())
 	// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
 	patch := client.MergeFrom(testCluster.DeepCopy())
-	testCluster.Status.InfrastructureReady = true
+	testCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, testCluster, patch)).To(Succeed())
 
 	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
@@ -322,7 +324,7 @@ func TestGetNode(t *testing.T) {
 	}(nodesToCleanup...)
 
 	clusterCache, err := clustercache.SetupWithManager(ctx, env.Manager, clustercache.Options{
-		SecretClient: env.Manager.GetClient(),
+		SecretClient: env.GetClient(),
 		Cache: clustercache.CacheOptions{
 			Indexes: []clustercache.CacheOptionsIndex{clustercache.NodeProviderIDIndex},
 		},
@@ -385,12 +387,19 @@ func TestNodeLabelSync(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
 		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
 	}
 
 	defaultInfraMachine := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"name":      "infra-config1",
 				"namespace": metav1.NamespaceDefault,
@@ -409,18 +418,16 @@ func TestNodeLabelSync(t *testing.T) {
 		Spec: clusterv1.MachineSpec{
 			ClusterName: defaultCluster.Name,
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
-					Kind:       "GenericBootstrapConfig",
-					Name:       "bootstrap-config1",
-					Namespace:  metav1.NamespaceDefault,
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+					Kind:     "GenericBootstrapConfig",
+					Name:     "bootstrap-config1",
 				},
 			},
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "GenericInfrastructureMachine",
-				Name:       "infra-config1",
-				Namespace:  metav1.NamespaceDefault,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "infra-config1",
 			},
 		},
 	}
@@ -453,9 +460,7 @@ func TestNodeLabelSync(t *testing.T) {
 
 		machine := defaultMachine.DeepCopy()
 		machine.Namespace = ns.Name
-		machine.Spec.Bootstrap.ConfigRef.Namespace = ns.Name
-		machine.Spec.InfrastructureRef.Namespace = ns.Name
-		machine.Spec.ProviderID = ptr.To(nodeProviderID)
+		machine.Spec.ProviderID = nodeProviderID
 
 		// Set Machine labels.
 		machine.Labels = map[string]string{}
@@ -548,7 +553,7 @@ func TestNodeLabelSync(t *testing.T) {
 		g.Expect(env.CreateAndWait(ctx, defaultKubeconfigSecret)).To(Succeed())
 		// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
 		patch := client.MergeFrom(cluster.DeepCopy())
-		cluster.Status.InfrastructureReady = true
+		cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 		g.Expect(env.Status().Patch(ctx, cluster, patch)).To(Succeed())
 
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
@@ -694,7 +699,7 @@ func TestSummarizeNodeConditions(t *testing.T) {
 					Conditions: test.conditions,
 				},
 			}
-			status, _ := summarizeNodeConditions(node)
+			status, _ := summarizeNodeV1beta1Conditions(node)
 			g.Expect(status).To(Equal(test.status))
 		})
 	}
@@ -1034,7 +1039,7 @@ func TestPatchNode(t *testing.T) {
 						UID:        "uid",
 					}},
 				},
-				Spec: newFakeMachineSpec(metav1.NamespaceDefault, clusterName),
+				Spec: newFakeMachineSpec(clusterName),
 			},
 			ms: nil,
 			md: nil,
@@ -1069,7 +1074,7 @@ func TestPatchNode(t *testing.T) {
 						UID:        "uid",
 					}},
 				},
-				Spec: newFakeMachineSpec(metav1.NamespaceDefault, clusterName),
+				Spec: newFakeMachineSpec(clusterName),
 			},
 			ms: &clusterv1.MachineSet{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1082,7 +1087,7 @@ func TestPatchNode(t *testing.T) {
 				Spec: clusterv1.MachineSetSpec{
 					ClusterName: clusterName,
 					Template: clusterv1.MachineTemplateSpec{
-						Spec: newFakeMachineSpec(metav1.NamespaceDefault, clusterName),
+						Spec: newFakeMachineSpec(clusterName),
 					},
 				},
 			},
@@ -1097,7 +1102,7 @@ func TestPatchNode(t *testing.T) {
 				Spec: clusterv1.MachineDeploymentSpec{
 					ClusterName: clusterName,
 					Template: clusterv1.MachineTemplateSpec{
-						Spec: newFakeMachineSpec(metav1.NamespaceDefault, clusterName),
+						Spec: newFakeMachineSpec(clusterName),
 					},
 				},
 			},
@@ -1136,7 +1141,7 @@ func TestPatchNode(t *testing.T) {
 						UID:        "uid",
 					}},
 				},
-				Spec: newFakeMachineSpec(metav1.NamespaceDefault, clusterName),
+				Spec: newFakeMachineSpec(clusterName),
 			},
 			ms: &clusterv1.MachineSet{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1149,7 +1154,7 @@ func TestPatchNode(t *testing.T) {
 				Spec: clusterv1.MachineSetSpec{
 					ClusterName: clusterName,
 					Template: clusterv1.MachineTemplateSpec{
-						Spec: newFakeMachineSpec(metav1.NamespaceDefault, clusterName),
+						Spec: newFakeMachineSpec(clusterName),
 					},
 				},
 			},
@@ -1164,7 +1169,7 @@ func TestPatchNode(t *testing.T) {
 				Spec: clusterv1.MachineDeploymentSpec{
 					ClusterName: clusterName,
 					Template: clusterv1.MachineTemplateSpec{
-						Spec: newFakeMachineSpec(metav1.NamespaceDefault, clusterName),
+						Spec: newFakeMachineSpec(clusterName),
 					},
 				},
 			},
@@ -1326,22 +1331,20 @@ func TestMultiplePatchNode(t *testing.T) {
 		})
 	}
 }
-func newFakeMachineSpec(namespace, clusterName string) clusterv1.MachineSpec {
+func newFakeMachineSpec(clusterName string) clusterv1.MachineSpec {
 	return clusterv1.MachineSpec{
 		ClusterName: clusterName,
 		Bootstrap: clusterv1.Bootstrap{
-			ConfigRef: &corev1.ObjectReference{
-				APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
-				Kind:       "KubeadmConfigTemplate",
-				Name:       fmt.Sprintf("%s-md-0", clusterName),
-				Namespace:  namespace,
+			ConfigRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: "bootstrap.cluster.x-k8s.io",
+				Kind:     "KubeadmConfigTemplate",
+				Name:     fmt.Sprintf("%s-md-0", clusterName),
 			},
 		},
-		InfrastructureRef: corev1.ObjectReference{
-			APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
-			Kind:       "FakeMachineTemplate",
-			Name:       fmt.Sprintf("%s-md-0", clusterName),
-			Namespace:  namespace,
+		InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: "infrastructure.cluster.x-k8s.io",
+			Kind:     "FakeMachineTemplate",
+			Name:     fmt.Sprintf("%s-md-0", clusterName),
 		},
 	}
 }
@@ -1352,7 +1355,7 @@ func newFakeMachine(namespace, clusterName string) *clusterv1.Machine {
 			Name:      fmt.Sprintf("ma-%s", util.RandomString(6)),
 			Namespace: namespace,
 		},
-		Spec: newFakeMachineSpec(namespace, clusterName),
+		Spec: newFakeMachineSpec(clusterName),
 	}
 }
 
@@ -1365,7 +1368,7 @@ func newFakeMachineSet(namespace, clusterName string) *clusterv1.MachineSet {
 		Spec: clusterv1.MachineSetSpec{
 			ClusterName: clusterName,
 			Template: clusterv1.MachineTemplateSpec{
-				Spec: newFakeMachineSpec(namespace, clusterName),
+				Spec: newFakeMachineSpec(clusterName),
 			},
 		},
 	}
@@ -1380,7 +1383,7 @@ func newFakeMachineDeployment(namespace, clusterName string) *clusterv1.MachineD
 		Spec: clusterv1.MachineDeploymentSpec{
 			ClusterName: clusterName,
 			Template: clusterv1.MachineTemplateSpec{
-				Spec: newFakeMachineSpec(namespace, clusterName),
+				Spec: newFakeMachineSpec(clusterName),
 			},
 		},
 	}

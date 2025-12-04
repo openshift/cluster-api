@@ -31,8 +31,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
@@ -74,9 +74,8 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	cluster.UID = types.UID(util.RandomString(10))
 	cluster.Spec.ControlPlaneEndpoint.Host = Host
 	cluster.Spec.ControlPlaneEndpoint.Port = 6443
-	cluster.Status.InfrastructureReady = true
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	kcp.UID = types.UID(util.RandomString(10))
-	kcp.Spec.KubeadmConfigSpec.ClusterConfiguration = nil
 	kcp.Spec.Replicas = ptr.To[int32](1)
 	setKCPHealthy(kcp)
 
@@ -163,7 +162,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 
 	machinesRequireUpgrade := collections.Machines{}
 	for i := range bothMachines.Items {
-		if bothMachines.Items[i].Spec.Version != nil && *bothMachines.Items[i].Spec.Version != UpdatedVersion {
+		if bothMachines.Items[i].Spec.Version != "" && bothMachines.Items[i].Spec.Version != UpdatedVersion {
 			machinesRequireUpgrade[bothMachines.Items[i].Name] = &bothMachines.Items[i]
 		}
 	}
@@ -189,7 +188,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 	cluster.Spec.ControlPlaneEndpoint.Host = "nodomain.example.com1"
 	cluster.Spec.ControlPlaneEndpoint.Port = 6443
 	kcp.Spec.Replicas = ptr.To[int32](3)
-	kcp.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntVal = 0
+	kcp.Spec.Rollout.Strategy.RollingUpdate.MaxSurge.IntVal = 0
 	setKCPHealthy(kcp)
 
 	fmc := &fakeManagementCluster{
@@ -209,13 +208,13 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 			},
 			Spec: clusterv1.MachineSpec{
 				Bootstrap: clusterv1.Bootstrap{
-					ConfigRef: &corev1.ObjectReference{
-						APIVersion: bootstrapv1.GroupVersion.String(),
-						Kind:       "KubeadmConfig",
-						Name:       name,
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: bootstrapv1.GroupVersion.Group,
+						Kind:     "KubeadmConfig",
+						Name:     name,
 					},
 				},
-				Version: &version,
+				Version: version,
 			},
 		}
 		cfg := &bootstrapv1.KubeadmConfig{

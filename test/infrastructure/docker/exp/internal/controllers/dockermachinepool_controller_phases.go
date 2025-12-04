@@ -22,24 +22,23 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
-	"strings"
 
 	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/kind/pkg/cluster/constants"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
-	infraexpv1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
+	infraexpv1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/exp/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/docker"
 	"sigs.k8s.io/cluster-api/test/infrastructure/kind"
 	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/labels/format"
 )
 
@@ -48,7 +47,7 @@ import (
 // - Does not delete any containers as that must be triggered in reconcileDockerMachines to ensure node cordon/drain.
 //
 // Providers should similarly create their infrastructure instances and reconcile any additional logic.
-func (r *DockerMachinePoolReconciler) reconcileDockerContainers(ctx context.Context, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
+func (r *DockerMachinePoolReconciler) reconcileDockerContainers(ctx context.Context, cluster *clusterv1.Cluster, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
 	log := ctrl.LoggerFrom(ctx)
 
 	log.V(2).Info("Reconciling Docker containers", "DockerMachinePool", klog.KObj(dockerMachinePool))
@@ -74,7 +73,7 @@ func (r *DockerMachinePoolReconciler) reconcileDockerContainers(ctx context.Cont
 }
 
 // createDockerContainer creates a Docker container to serve as a replica for the MachinePool.
-func createDockerContainer(ctx context.Context, name string, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
+func createDockerContainer(ctx context.Context, name string, cluster *clusterv1.Cluster, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
 	log := ctrl.LoggerFrom(ctx)
 	labelFilters := map[string]string{dockerMachinePoolLabel: dockerMachinePool.Name}
 	externalMachine, err := docker.NewMachine(ctx, cluster, name, labelFilters)
@@ -93,8 +92,16 @@ func createDockerContainer(ctx context.Context, name string, cluster *clusterv1.
 		// For MachinePools placement is expected to be managed by the underlying infrastructure primitive, but
 		// given that there is no such an thing in CAPD, we are picking a random failure domain.
 		randomIndex := rand.Intn(len(machinePool.Spec.FailureDomains)) //nolint:gosec
-		for k, v := range docker.FailureDomainLabel(&machinePool.Spec.FailureDomains[randomIndex]) {
+		for k, v := range docker.FailureDomainLabel(machinePool.Spec.FailureDomains[randomIndex]) {
 			labels[k] = v
+		}
+	}
+
+	// If re-entering the reconcile loop and reaching this point, the container is expected to be running. If it is not, delete it so we can try to create it again.
+	if externalMachine.Exists() && !externalMachine.IsRunning() {
+		// This deletes the machine and results in re-creating it below.
+		if err := externalMachine.Delete(ctx); err != nil {
+			return errors.Wrap(err, "Failed to delete not running DockerMachine")
 		}
 	}
 
@@ -112,7 +119,7 @@ func createDockerContainer(ctx context.Context, name string, cluster *clusterv1.
 // - Deleting DockerMachines referencing a container whose Kubernetes version or custom image no longer matches the spec.
 // - Deleting DockerMachines that correspond to a deleted/non-existent Docker container.
 // - Deleting DockerMachines when scaling down such that DockerMachines whose owner Machine has the clusterv1.DeleteMachineAnnotation is given priority.
-func (r *DockerMachinePoolReconciler) reconcileDockerMachines(ctx context.Context, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
+func (r *DockerMachinePoolReconciler) reconcileDockerMachines(ctx context.Context, cluster *clusterv1.Cluster, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) error {
 	log := ctrl.LoggerFrom(ctx)
 
 	log.V(2).Info("Reconciling DockerMachines", "DockerMachinePool", klog.KObj(dockerMachinePool))
@@ -201,7 +208,8 @@ func (r *DockerMachinePoolReconciler) reconcileDockerMachines(ctx context.Contex
 	totalReadyMachines := 0
 	for i := range orderedDockerMachines {
 		dockerMachine := orderedDockerMachines[i]
-		if dockerMachine.Status.Ready || conditions.IsTrue(&dockerMachine, clusterv1.ReadyCondition) {
+		// TODO (v1beta2): test for v1beta2 conditions
+		if ptr.Deref(dockerMachine.Status.Initialization.Provisioned, false) || v1beta1conditions.IsTrue(&dockerMachine, clusterv1.ReadyV1Beta1Condition) {
 			totalReadyMachines++
 		}
 	}
@@ -245,7 +253,7 @@ func (r *DockerMachinePoolReconciler) reconcileDockerMachines(ctx context.Contex
 
 // computeDesiredDockerMachine creates a DockerMachine to represent a Docker container in a DockerMachinePool.
 // These DockerMachines have the clusterv1.ClusterNameLabel and clusterv1.MachinePoolNameLabel to support MachinePool Machines.
-func computeDesiredDockerMachine(name string, cluster *clusterv1.Cluster, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool, existingDockerMachine *infrav1.DockerMachine) *infrav1.DockerMachine {
+func computeDesiredDockerMachine(name string, cluster *clusterv1.Cluster, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool, existingDockerMachine *infrav1.DockerMachine) *infrav1.DockerMachine {
 	dockerMachine := &infrav1.DockerMachine{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:   dockerMachinePool.Namespace,
@@ -349,11 +357,11 @@ func orderByDeleteMachineAnnotation(machines []infrav1.DockerMachine) []infrav1.
 }
 
 // isMachineMatchingInfrastructureSpec returns true if the Docker container image matches the custom image in the DockerMachinePool spec.
-func isMachineMatchingInfrastructureSpec(_ context.Context, machine *docker.Machine, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) bool {
+func isMachineMatchingInfrastructureSpec(_ context.Context, machine *docker.Machine, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) bool {
 	// NOTE: With the current implementation we are checking if the machine is using a kindest/node image for the expected version,
 	// but not checking if the machine has the expected extra.mounts or pre.loaded images.
 
-	semVer, err := semver.Parse(strings.TrimPrefix(*machinePool.Spec.Template.Spec.Version, "v"))
+	semVer, err := semver.ParseTolerant(machinePool.Spec.Template.Spec.Version)
 	if err != nil {
 		// TODO: consider if to return an error
 		panic(errors.Wrap(err, "failed to parse DockerMachine version").Error())
@@ -365,7 +373,7 @@ func isMachineMatchingInfrastructureSpec(_ context.Context, machine *docker.Mach
 }
 
 // machinesMatchingInfrastructureSpec returns the  Docker containers matching the custom image in the DockerMachinePool spec.
-func machinesMatchingInfrastructureSpec(ctx context.Context, machines []*docker.Machine, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) []*docker.Machine {
+func machinesMatchingInfrastructureSpec(ctx context.Context, machines []*docker.Machine, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) []*docker.Machine {
 	var matchingMachines []*docker.Machine
 	for _, machine := range machines {
 		if isMachineMatchingInfrastructureSpec(ctx, machine, machinePool, dockerMachinePool) {
@@ -377,7 +385,7 @@ func machinesMatchingInfrastructureSpec(ctx context.Context, machines []*docker.
 }
 
 // getDeletionCandidates returns the DockerMachines for a MachinePool that do not match the infrastructure spec followed by any DockerMachines that are ready and up to date, i.e. matching the infrastructure spec.
-func (r *DockerMachinePoolReconciler) getDeletionCandidates(ctx context.Context, dockerMachines []infrav1.DockerMachine, externalMachineSet map[string]*docker.Machine, machinePool *expv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) (outdatedMachines []infrav1.DockerMachine, readyMatchingMachines []infrav1.DockerMachine, err error) {
+func (r *DockerMachinePoolReconciler) getDeletionCandidates(ctx context.Context, dockerMachines []infrav1.DockerMachine, externalMachineSet map[string]*docker.Machine, machinePool *clusterv1.MachinePool, dockerMachinePool *infraexpv1.DockerMachinePool) (outdatedMachines []infrav1.DockerMachine, readyMatchingMachines []infrav1.DockerMachine, err error) {
 	for i := range dockerMachines {
 		dockerMachine := dockerMachines[i]
 		externalMachine, ok := externalMachineSet[dockerMachine.Name]
@@ -386,9 +394,10 @@ func (r *DockerMachinePoolReconciler) getDeletionCandidates(ctx context.Context,
 			return nil, nil, errors.Errorf("failed to find externalMachine for DockerMachine %s/%s", dockerMachine.Namespace, dockerMachine.Name)
 		}
 
+		// TODO (v1beta2): test for v1beta2 conditions
 		if !isMachineMatchingInfrastructureSpec(ctx, externalMachine, machinePool, dockerMachinePool) {
 			outdatedMachines = append(outdatedMachines, dockerMachine)
-		} else if dockerMachine.Status.Ready || conditions.IsTrue(&dockerMachine, clusterv1.ReadyCondition) {
+		} else if ptr.Deref(dockerMachine.Status.Initialization.Provisioned, false) || v1beta1conditions.IsTrue(&dockerMachine, clusterv1.ReadyV1Beta1Condition) {
 			readyMatchingMachines = append(readyMatchingMachines, dockerMachine)
 		}
 	}

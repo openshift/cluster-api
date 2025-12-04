@@ -25,16 +25,17 @@ import (
 
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/docker"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/patch"
 )
 
@@ -59,13 +60,13 @@ func (r *ClusterBackEndReconciler) ReconcileNormal(ctx context.Context, cluster 
 	externalLoadBalancer, err := docker.NewLoadBalancer(ctx, cluster,
 		dockerCluster.Spec.Backend.Docker.LoadBalancer.ImageRepository,
 		dockerCluster.Spec.Backend.Docker.LoadBalancer.ImageTag,
-		strconv.Itoa(dockerCluster.Spec.ControlPlaneEndpoint.Port))
+		strconv.Itoa(int(dockerCluster.Spec.ControlPlaneEndpoint.Port)))
 	if err != nil {
-		conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableCondition, infrav1.LoadBalancerProvisioningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
-		v1beta2conditions.Set(dockerCluster, metav1.Condition{
-			Type:    infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+		v1beta1conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableV1Beta1Condition, infrav1.LoadBalancerProvisioningFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
+		conditions.Set(dockerCluster, metav1.Condition{
+			Type:    infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableV1Beta2Reason,
+			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableReason,
 			Message: fmt.Sprintf("Failed to create helper for managing the externalLoadBalancer: %v", err),
 		})
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create helper for managing the externalLoadBalancer")
@@ -73,11 +74,11 @@ func (r *ClusterBackEndReconciler) ReconcileNormal(ctx context.Context, cluster 
 
 	// Create the docker container hosting the load balancer.
 	if err := externalLoadBalancer.Create(ctx); err != nil {
-		conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableCondition, infrav1.LoadBalancerProvisioningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
-		v1beta2conditions.Set(dockerCluster, metav1.Condition{
-			Type:    infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+		v1beta1conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableV1Beta1Condition, infrav1.LoadBalancerProvisioningFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
+		conditions.Set(dockerCluster, metav1.Condition{
+			Type:    infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableV1Beta2Reason,
+			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableReason,
 			Message: fmt.Sprintf("Failed to create load balancer: %v", err),
 		})
 		return ctrl.Result{}, errors.Wrap(err, "failed to create load balancer")
@@ -86,11 +87,11 @@ func (r *ClusterBackEndReconciler) ReconcileNormal(ctx context.Context, cluster 
 	// Set APIEndpoints with the load balancer IP so the Cluster API Cluster Controller can pull it
 	lbIP, err := externalLoadBalancer.IP(ctx)
 	if err != nil {
-		conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableCondition, infrav1.LoadBalancerProvisioningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
-		v1beta2conditions.Set(dockerCluster, metav1.Condition{
-			Type:    infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+		v1beta1conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableV1Beta1Condition, infrav1.LoadBalancerProvisioningFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
+		conditions.Set(dockerCluster, metav1.Condition{
+			Type:    infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableV1Beta2Reason,
+			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableReason,
 			Message: fmt.Sprintf("Failed to get ip for the load balancer: %v", err),
 		})
 		return ctrl.Result{}, errors.Wrap(err, "failed to get ip for the load balancer")
@@ -103,12 +104,12 @@ func (r *ClusterBackEndReconciler) ReconcileNormal(ctx context.Context, cluster 
 	}
 
 	// Mark the dockerCluster ready
-	dockerCluster.Status.Ready = true
-	conditions.MarkTrue(dockerCluster, infrav1.LoadBalancerAvailableCondition)
-	v1beta2conditions.Set(dockerCluster, metav1.Condition{
-		Type:   infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+	dockerCluster.Status.Initialization.Provisioned = ptr.To(true)
+	v1beta1conditions.MarkTrue(dockerCluster, infrav1.LoadBalancerAvailableV1Beta1Condition)
+	conditions.Set(dockerCluster, metav1.Condition{
+		Type:   infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 		Status: metav1.ConditionTrue,
-		Reason: infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Reason,
+		Reason: infrav1.DevClusterDockerLoadBalancerAvailableReason,
 	})
 
 	return ctrl.Result{}, nil
@@ -124,13 +125,13 @@ func (r *ClusterBackEndReconciler) ReconcileDelete(ctx context.Context, cluster 
 	externalLoadBalancer, err := docker.NewLoadBalancer(ctx, cluster,
 		dockerCluster.Spec.Backend.Docker.LoadBalancer.ImageRepository,
 		dockerCluster.Spec.Backend.Docker.LoadBalancer.ImageTag,
-		strconv.Itoa(dockerCluster.Spec.ControlPlaneEndpoint.Port))
+		strconv.Itoa(int(dockerCluster.Spec.ControlPlaneEndpoint.Port)))
 	if err != nil {
-		conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableCondition, infrav1.LoadBalancerProvisioningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
-		v1beta2conditions.Set(dockerCluster, metav1.Condition{
-			Type:    infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+		v1beta1conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableV1Beta1Condition, infrav1.LoadBalancerProvisioningFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
+		conditions.Set(dockerCluster, metav1.Condition{
+			Type:    infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableV1Beta2Reason,
+			Reason:  infrav1.DevClusterDockerLoadBalancerNotAvailableReason,
 			Message: fmt.Sprintf("Failed to create helper for managing the externalLoadBalancer: %v", err),
 		})
 
@@ -139,12 +140,12 @@ func (r *ClusterBackEndReconciler) ReconcileDelete(ctx context.Context, cluster 
 
 	// Set the LoadBalancerAvailableCondition reporting delete is started, and requeue in order to make
 	// this visible to the users.
-	if conditions.GetReason(dockerCluster, infrav1.LoadBalancerAvailableCondition) != clusterv1.DeletingReason {
-		conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableCondition, clusterv1.DeletingReason, clusterv1.ConditionSeverityInfo, "")
-		v1beta2conditions.Set(dockerCluster, metav1.Condition{
-			Type:   infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+	if conditions.GetReason(dockerCluster, infrav1.DevClusterDockerLoadBalancerAvailableCondition) != infrav1.DevClusterDockerLoadBalancerDeletingReason {
+		v1beta1conditions.MarkFalse(dockerCluster, infrav1.LoadBalancerAvailableV1Beta1Condition, clusterv1.DeletingV1Beta1Reason, clusterv1.ConditionSeverityInfo, "")
+		conditions.Set(dockerCluster, metav1.Condition{
+			Type:   infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 			Status: metav1.ConditionFalse,
-			Reason: infrav1.DevClusterDockerLoadBalancerDeletingV1Beta2Reason,
+			Reason: infrav1.DevClusterDockerLoadBalancerDeletingReason,
 		})
 		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	}
@@ -168,43 +169,43 @@ func (r *ClusterBackEndReconciler) PatchDevCluster(ctx context.Context, patchHel
 
 	// Always update the readyCondition by summarizing the state of other conditions.
 	// A step counter is added to represent progress during the provisioning process (instead we are hiding it during the deletion process).
-	conditions.SetSummary(dockerCluster,
-		conditions.WithConditions(
-			infrav1.LoadBalancerAvailableCondition,
+	v1beta1conditions.SetSummary(dockerCluster,
+		v1beta1conditions.WithConditions(
+			infrav1.LoadBalancerAvailableV1Beta1Condition,
 		),
-		conditions.WithStepCounterIf(dockerCluster.ObjectMeta.DeletionTimestamp.IsZero()),
+		v1beta1conditions.WithStepCounterIf(dockerCluster.DeletionTimestamp.IsZero()),
 	)
-	if err := v1beta2conditions.SetSummaryCondition(dockerCluster, dockerCluster, infrav1.DevClusterReadyV1Beta2Condition,
-		v1beta2conditions.ForConditionTypes{
-			infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+	if err := conditions.SetSummaryCondition(dockerCluster, dockerCluster, infrav1.DevClusterReadyCondition,
+		conditions.ForConditionTypes{
+			infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 		},
 		// Using a custom merge strategy to override reasons applied during merge.
-		v1beta2conditions.CustomMergeStrategy{
-			MergeStrategy: v1beta2conditions.DefaultMergeStrategy(
+		conditions.CustomMergeStrategy{
+			MergeStrategy: conditions.DefaultMergeStrategy(
 				// Use custom reasons.
-				v1beta2conditions.ComputeReasonFunc(v1beta2conditions.GetDefaultComputeMergeReasonFunc(
-					infrav1.DevClusterNotReadyV1Beta2Reason,
-					infrav1.DevClusterReadyUnknownV1Beta2Reason,
-					infrav1.DevClusterReadyV1Beta2Reason,
+				conditions.ComputeReasonFunc(conditions.GetDefaultComputeMergeReasonFunc(
+					infrav1.DevClusterNotReadyReason,
+					infrav1.DevClusterReadyUnknownReason,
+					infrav1.DevClusterReadyReason,
 				)),
 			),
 		},
 	); err != nil {
-		return errors.Wrapf(err, "failed to set %s condition", infrav1.DevClusterReadyV1Beta2Condition)
+		return errors.Wrapf(err, "failed to set %s condition", infrav1.DevClusterReadyCondition)
 	}
 
 	// Patch the object, ignoring conflicts on the conditions owned by this controller.
 	return patchHelper.Patch(
 		ctx,
 		dockerCluster,
-		patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
-			clusterv1.ReadyCondition,
-			infrav1.LoadBalancerAvailableCondition,
+		patch.WithOwnedV1Beta1Conditions{Conditions: []clusterv1.ConditionType{
+			clusterv1.ReadyV1Beta1Condition,
+			infrav1.LoadBalancerAvailableV1Beta1Condition,
 		}},
-		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			clusterv1.PausedV1Beta2Condition,
-			infrav1.DevClusterReadyV1Beta2Condition,
-			infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+		patch.WithOwnedConditions{Conditions: []string{
+			clusterv1.PausedCondition,
+			infrav1.DevClusterReadyCondition,
+			infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 		}},
 	)
 }

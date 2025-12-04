@@ -288,7 +288,7 @@ type MachineStatus struct {
     // The value of those fields is never updated after provisioning is completed.
     // Use conditions to monitor the operational state of the Machine.
     // +optional
-    Initialization *MachineInitializationStatus `json:"initialization,omitempty"`
+    Initialization MachineInitializationStatus `json:"initialization,omitempty,omitzero"`
     
     // Conditions represent the observations of a Machine's current state.
     // +optional
@@ -302,6 +302,7 @@ type MachineStatus struct {
 }
 
 // MachineInitializationStatus provides observations of the Machine initialization process.
+// +kubebuilder:validation:MinProperties=1
 type MachineInitializationStatus struct {
 
     // BootstrapDataSecretCreated is true when the bootstrap provider reports that the Machine's boostrap secret is created.
@@ -436,30 +437,27 @@ Notes:
 
 #### Machine Print columns
 
-| Current       | To be                         |
-|---------------|-------------------------------|
-| `NAME`        | `NAME`                        |
-| `CLUSTER`     | `CLUSTER`                     |
-| `NODE NAME`   | `PAUSED` (new) (*)            |
-| `PROVIDER ID` | `NODE NAME`                   |
-| `PHASE`       | `PROVIDER ID`                 |
-| `AGE`         | `READY` (new)                 |
-| `VERSION`     | `AVAILABLE` (new)             |
-|               | `UP-TO-DATE` (new)            |
-|               | `PHASE`                       |
-|               | `AGE`                         |
-|               | `VERSION`                     |
-|               | `OS-IMAGE` (new) (*)          |
-|               | `KERNEL-VERSION` (new) (*)    |
-|               | `CONTAINER-RUNTIME` (new) (*) |
+| Current       | To be                   |
+|---------------|-------------------------|
+| `NAME`        | `NAME`                  |
+| `CLUSTER`     | `CLUSTER`               |
+| `NODE NAME`   | `NODE NAME`             |
+| `PROVIDER ID` | `PROVIDER ID` (*)       |
+| `PHASE`       | `READY` (new)           |
+| `AGE`         | `AVAILABLE` (new)       |
+| `VERSION`     | `UP-TO-DATE` (new)      |
+|               | `INTERNAL-IP` (new) (*) |
+|               | `EXTERNAL-IP` (new) (*) |
+|               | `OS-IMAGE` (new) (*)    |
+|               | `PAUSED` (new) (*)      |
+|               | `PHASE`                 |
+|               | `AGE`                   |
+|               | `VERSION`               |
 
 (*) visible only when using `kubectl get -o wide`
 
 Notes:
 - Print columns are not subject to any deprecation rule, so it is possible to iteratively improve print columns without waiting for the next API version.
-- During the implementation we are going to verify the resulting layout and eventually make final adjustments to the column list.
-- During the implementation we are going to explore if it is possible to add `INTERNAL-IP` (new) (*), `EXTERNAL-IP` after `VERSION` / before `OS-IMAGE`.
-  Might be something like `$.status.addresses[?(@.type == 'InternalIP')].address` works
 
 ### Changes to MachineSet resource
 
@@ -569,25 +567,23 @@ Below you can find a summary table that also shows how changes will be rolled ou
 
 #### MachineSet Print columns
 
-| Current       | To be                   |
-|---------------|-------------------------|
-| `NAME`        | `NAME`                  |
-| `CLUSTER`     | `CLUSTER`               |
-| `DESIRED` (*) | `PAUSED` (new) (*)      |
-| `REPLICAS`    | `DESIRED`               |
-| `READY`       | `CURRENT` (renamed) (*) |
-| `AVAILABLE`   | `READY` (updated)       |
-| `AGE`         | `AVAILABLE` (updated)   |
-| `VERSION`     | `UP-TO-DATE` (new)      |
-|               | `AGE`                   |
-|               | `VERSION`               |
+| Current       | To be                 |
+|---------------|-----------------------|
+| `NAME`        | `NAME`                |
+| `CLUSTER`     | `CLUSTER`             |
+| `DESIRED` (*) | `DESIRED`             |
+| `REPLICAS`    | `CURRENT` (renamed)   |
+| `READY`       | `READY` (updated)     |
+| `AVAILABLE`   | `AVAILABLE` (updated) |
+| `AGE`         | `UP-TO-DATE` (new)    |
+| `VERSION`     | `PAUSED` (new) (*)    |
+|               | `AGE`                 |
+|               | `VERSION`             |
 
 (*) visible only when using `kubectl get -o wide`
 
 Notes:
 - Print columns are not subject to any deprecation rule, so it is possible to iteratively improve print columns without waiting for the next API version.
-- During the implementation we are going to verify the resulting layout and eventually make final adjustments to the column list.
-- During the implementation we should consider if to add columns for bootstrapRef and infraRef resource (same could apply to other resources)
 - In k8s Deployment and ReplicaSet have different print columns for replica counters; this proposal enforces replicas
   counter columns consistent across all resources.
 
@@ -692,21 +688,21 @@ Below you can find a summary table that also shows how changes will be rolled ou
 |-------------------------|------------------------|
 | `NAME`                  | `NAME`                 |
 | `CLUSTER`               | `CLUSTER`              |
-| `DESIRED` (*)           | `PAUSED` (new) (*)     |
+| `DESIRED` (*)           | `AVAILABLE` (new)      |
 | `REPLICAS`              | `DESIRED`              |
-| `READY`                 | `CURRENT` (*)          |
+| `READY`                 | `CURRENT` (renamed)    |
 | `UPDATED` (renamed)     | `READY`                |
 | `UNAVAILABLE` (deleted) | `AVAILABLE` (new)      |
 | `PHASE`                 | `UP-TO-DATE` (renamed) |
-| `AGE`                   | `PHASE`                |
-| `VERSION`               | `AGE`                  |
+| `AGE`                   | `PAUSED` (new) (*)     |
+| `VERSION`               | `PHASE`                |
+|                         | `AGE`                  |
 |                         | `VERSION`              |
 
 (*) visible only when using `kubectl get -o wide`
 
 Notes:
 - Print columns are not subject to any deprecation rule, so it is possible to iteratively improve print columns without waiting for the next API version.
-- During the implementation we are going to verify the resulting layout and eventually make final adjustments to the column list.
 
 ### Changes to Cluster resource
 
@@ -731,7 +727,7 @@ type ClusterStatus struct {
     // The value of those fields is never updated after provisioning is completed.
     // Use conditions to monitor the operational state of the Cluster's BootstrapSecret.
     // +optional
-    Initialization *ClusterInitializationStatus `json:"initialization,omitempty"`
+    Initialization ClusterInitializationStatus `json:"initialization,omitempty,omitzero"`
     
     // Represents the observations of a Cluster's current state.
     // +optional
@@ -752,6 +748,7 @@ type ClusterStatus struct {
 }
 
 // ClusterInitializationStatus provides observations of the Cluster initialization process.
+// +kubebuilder:validation:MinProperties=1
 type ClusterInitializationStatus struct {
 
     // InfrastructureProvisioned is true when the infrastructure provider reports that Cluster's infrastructure is fully provisioned.
@@ -929,10 +926,9 @@ type ClusterAvailabilityGate struct {
 |-----------------|-----------------------|
 | `NAME`          | `NAME`                |
 | `CLUSTER CLASS` | `CLUSTER CLASS`       |
-| `PHASE`         | `PAUSED` (new) (*)    |
-| `AGE`           | `AVAILABLE` (new)     |
-| `VERSION`       | `CP_DESIRED` (new)    |
-|                 | `CP_CURRENT`(new) (*) |
+| `PHASE`         | `AVAILABLE` (new)     |
+| `AGE`           | `CP_DESIRED` (new)    |
+| `VERSION`       | `CP_CURRENT`(new) (*) |
 |                 | `CP_READY` (new) (*)  |
 |                 | `CP_AVAILABLE` (new)  |
 |                 | `CP_UP-TO-DATE` (new) |
@@ -941,6 +937,7 @@ type ClusterAvailabilityGate struct {
 |                 | `W_READY` (new) (*)   |
 |                 | `W_AVAILABLE` (new)   |
 |                 | `W_UP-TO-DATE` (new)  |
+|                 | `PAUSED` (new) (*)    |
 |                 | `PHASE`               |
 |                 | `AGE`                 |
 |                 | `VERSION`             |
@@ -949,7 +946,6 @@ type ClusterAvailabilityGate struct {
 
 Notes:
 - Print columns are not subject to any deprecation rule, so it is possible to iteratively improve print columns without waiting for the next API version.
-- During the implementation we are going to verify the resulting layout and eventually make final adjustments to the column list.
 
 ### Changes to KubeadmControlPlane (KCP) resource
 
@@ -1058,13 +1054,14 @@ Notes:
 |-------------------------|------------------------|
 | `NAME`                  | `NAME`                 |
 | `CLUSTER`               | `CLUSTER`              |
-| `DESIRED` (*)           | `PAUSED` (new) (*)     |
-| `REPLICAS`              | `INITIALIZED` (new)    |
-| `READY`                 | `DESIRED`              |
-| `UPDATED` (renamed)     | `CURRENT` (*)          |
-| `UNAVAILABLE` (deleted) | `READY`                |
-| `AGE`                   | `AVAILABLE` (new)      |
-| `VERSION`               | `UP-TO-DATE` (renamed) |
+| `DESIRED` (*)           | `AVAILABLE` (new)      |
+| `REPLICAS`              | `DESIRED`              |
+| `READY`                 | `CURRENT` (renamed)    |
+| `UPDATED` (renamed)     | `READY`                |
+| `UNAVAILABLE` (deleted) | `AVAILABLE` (new)      |
+| `AGE`                   | `UP-TO-DATE` (renamed) |
+| `VERSION`               | `PAUSED` (new) (*)     |
+|                         | `INITIALIZED` (new)    |
 |                         | `AGE`                  |
 |                         | `VERSION`              |
 
@@ -1072,7 +1069,6 @@ Notes:
 
 Notes:
 - Print columns are not subject to any deprecation rule, so it is possible to iteratively improve print columns without waiting for the next API version.
-- During the implementation we are going to verify the resulting layout and eventually make final adjustments to the column list.
 
 ### Changes to MachinePool resource
 
@@ -1109,7 +1105,7 @@ type MachinePoolStatus struct {
     // The value of those fields is never updated after provisioning is completed.
     // Use conditions to monitor the operational state of the MachinePool.
     // +optional
-    Initialization *MachinePoolInitializationStatus `json:"initialization,omitempty"`
+    Initialization MachinePoolInitializationStatus `json:"initialization,omitempty,omitzero"`
     
     // Conditions represent the observations of a MachinePool's current state.
     // +optional
@@ -1123,6 +1119,7 @@ type MachinePoolStatus struct {
 }
 
 // MachinePoolInitializationStatus provides observations of the MachinePool initialization process.
+// +kubebuilder:validation:MinProperties=1
 type MachinePoolInitializationStatus struct {
 
     // BootstrapDataSecretCreated is true when the bootstrap provider reports that the MachinePool's boostrap data secret is created.
@@ -1210,21 +1207,20 @@ Below you can find a summary table that also shows how changes will be rolled ou
 |---------------|------------------------|
 | `NAME`        | `NAME`                 |
 | `CLUSTER`     | `CLUSTER`              |
-| `DESIRED` (*) | `PAUSED` (new) (*)     |
-| `REPLICAS`    | `DESIRED`              |
-| `PHASE`       | `CURRENT` (*)          |
-| `AGE`         | `READY`                |
-| `VERSION`     | `AVAILABLE` (new)      |
-|               | `UP-TO-DATE` (renamed) |
+| `DESIRED` (*) | `DESIRED`              |
+| `REPLICAS`    | `CURRENT` (renamed)    |
+| `PHASE`       | `READY`                |
+| `AGE`         | `AVAILABLE` (new)      |
+| `VERSION`     | `UP-TO-DATE` (renamed) |
+|               | `PAUSED` (new) (*)     |
 |               | `PHASE`                |
 |               | `AGE`                  |
 |               | `VERSION`              |
-
+ 
 (*) visible only when using `kubectl get -o wide`
 
 Notes:
 - Print columns are not subject to any deprecation rule, so it is possible to iteratively improve print columns without waiting for the next API version.
-- During the implementation we are going to verify the resulting layout and eventually make final adjustments to the column list.
 
 ### Changes to Cluster API contract
 
@@ -1279,6 +1275,7 @@ Following changes are planned for the contract for the InfrastructureCluster res
 - Disambiguate the usage of the ready term by renaming fields used for the initial provisioning workflow
   - Rename `status.ready` into `status.initialization.provisioned`.
 - Remove `failureReason` and `failureMessage`.
+- Change `.status.failureDomains` from a map to an array. Also each failure domain has an additional `name` property which replaces the previous map key.
 
 | v1beta1 (CAPI 1.9)                                                    | v1beta2 (tentative Aug 2025)                                                                                     | v1beta2 after v1beta1 removal (tentative Aug 2026)                                         |
 |-----------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
@@ -1287,6 +1284,7 @@ Following changes are planned for the contract for the InfrastructureCluster res
 | `status.conditions[Ready]`, optional with fall back on `status.ready` | `status.conditions[Ready]`, optional with fall back on `status.ready` or `status.initialization.provisioned`     | `status.conditions[Ready]`, optional with fall back on `status.initialization.provisioned` |
 | `status.failureReason`, optional                                      | `status.failureReason` (deprecated), optional                                                                    | (removed)                                                                                  |
 | `status.failureMessage`, optional                                     | `status.failureMessage` (deprecated), optional                                                                   | (removed)                                                                                  |
+| `status.failureDomains` (map), optional                               | `status.failureDomains` (array), optional                                                                        | `status.failureDomains` (array), optional                                                  |
 | other fields/rules...                                                 | other fields/rules...                                                                                            |                                                                                            |
 
 Notes:
@@ -1296,6 +1294,8 @@ Notes:
 - InfrastructureCluster's `status.conditions[Ready]` will surface into Cluster's `status.conditions[InfrastructureReady]` condition.
 - InfrastructureCluster's `status.conditions[Ready]` must surface issues during the entire lifecycle of the InfrastructureCluster
   (both during initial InfrastructureCluster provisioning and after the initial provisioning is completed).
+- In v1beta1 `.status.failureDomains` was a map of `FailureDomainSpec` objects. In v1beta2 it is an array of `FailureDomain` objects.
+  The name of the failure domain was previously used as map key, it has been now added as an additional field to `FailureDomain`.
 
 ##### InfrastructureMachine
 
@@ -1357,10 +1357,60 @@ Following changes are planned for the contract for the ControlPlane resource:
 - Remove `failureReason` and `failureMessage`.
 - Align replica counters with CAPI core objects
 
+Below you can find the relevant fields in ControlPlane v1beta2, after v1beta1 removal (end state);
+Below the Go types, you can find a summary table that also shows how changes will be rolled out according to K8s deprecation rules.
+
+```golang
+type KubeadmControlPlaneStatus struct {
+
+    // Initialization provides observations of the ControlPlane initialization process.
+    // NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial Cluster provisioning.
+    // The value of those fields is never updated after provisioning is completed.
+    // Use conditions to monitor the operational state of the Cluster.
+    // +optional
+    Initialization KubeadmControlPlaneInitializationStatus `json:"initialization,omitempty,omitzero"`
+    
+    // Conditions represent the observations of a ControlPlane's current state.
+    // +optional
+    // +listType=map
+    // +listMapKey=type
+    // +kubebuilder:validation:MaxItems=32
+    Conditions []metav1.Condition `json:"conditions,omitempty"`
+	
+    // The number of ready replicas for this ControlPlane. A machine is considered ready when Machine's Ready condition is true.
+    // +optional
+    ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
+
+    // The number of available replicas for this ControlPlane. A machine is considered available when Machine's Available condition is true.
+    // +optional
+    AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
+
+    // The number of up-to-date replicas for this ControlPlane. A machine is considered up-to-date when Machine's UpToDate condition is true.
+    // +optional
+    UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
+	
+    // Other fields...
+    // NOTE: `FailureReason`, `FailureMessage`, `Ready`, `Initialized`, `updatedReplicas` fields won't be there anymore
+}
+
+// KubeadmControlPlaneInitializationStatus provides observations of the ControlPlane initialization process.
+// +kubebuilder:validation:MinProperties=1
+type KubeadmControlPlaneInitializationStatus struct {
+	
+    // controlPlaneInitialized is true when the control plane provider reports that the Kubernetes control plane is initialized; 
+    // usually a control plane is considered initialized when it can accept requests, no matter if this happens before 
+    // the control plane is fully provisioned or not.
+    // NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Cluster provisioning.
+    // +optional 
+    ControlPlaneInitialized bool `json:"controlPlaneInitialized"`
+}
+```
+
 | v1beta1 (CAPI 1.9)                                                    | v1beta2 (tentative Aug 2025)                                                                                                                                          | v1beta2 after v1beta1 removal (tentative Aug 2026)                                                          |
 |-----------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
 | `status.ready`, required                                              | `status.ready` (deprecated), one of `status.ready` or `status.initialization.controlPlaneInitialized` required                                                        | (removed)                                                                                                   |
-| `status.initialized`, required                                        | `status.initialization.controlPlaneInitialized` (renamed), one of `status.ready` or `status.initialization.controlPlaneInitialized` required                          | `status.initialization.controlPlaneInitialized`, required                                                   |
+|                                                                       | `status.initialization.controlPlaneInitialized` (renamed), one of `status.ready` or `status.initialization.controlPlaneInitialized` required                          | `status.initialization.controlPlaneInitialized`, required                                                   |
+| `status.initialized`, required                                        | `status.initialized` (deprecated)                                                                                                                                     | (removed)                                                                                                   |
 | `status.conditions[Ready]`, optional with fall back on `status.ready` | `status.deprecated.v1beta1.conditions[Ready]` (renamed, deprecated), optional with fall back on `status.ready` or `status.initialization.controlPlaneInitialized` set | (removed)                                                                                                   |
 |                                                                       | `status.conditions[Available]` (new), optional with fall back optional with fall back on `status.ready` or `status.initialization.controlPlaneInitialized` set        | `status.conditions[Available]`, optional with fall back on `status.initializiation.controlPlaneInitialized` |
 | `status.failureReason`, optional                                      | `status.failureReason` (deprecated), optional                                                                                                                         | (removed)                                                                                                   |
@@ -1481,3 +1531,4 @@ Transition from v1beta1 API/contract to v1beta2 contract is detailed in previous
   - [10000 feet overview](https://docs.google.com/presentation/d/1hhgCufOIuqHz6YR_RUPGo0uTjfm5YafjCb6JHY1_clY/edit?usp=sharing)
 - [x] 2024-09-16: Proposal approved
 - [x] 2025-01-30: v1beta2 tentative date moved from Apr 2025 to Aug 2025
+- [x] 2025-07-28: align print columns to v1beta2 API

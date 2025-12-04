@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util/conversion"
@@ -68,8 +68,9 @@ func dryRunSSAPatch(ctx context.Context, dryRunCtx *dryRunSSAPatchInput) (bool, 
 	// For dry run we use the same options as for the intent but with adding metadata.managedFields
 	// to ensure that changes to ownership are detected.
 	filterObjectInput := &ssa.FilterObjectInput{
-		AllowedPaths: append(dryRunCtx.helperOptions.AllowedPaths, []string{"metadata", "managedFields"}),
-		IgnorePaths:  dryRunCtx.helperOptions.IgnorePaths,
+		AllowedPaths:          append(dryRunCtx.helperOptions.AllowedPaths, []string{"metadata", "managedFields"}),
+		IgnorePaths:           dryRunCtx.helperOptions.IgnorePaths,
+		DropEmptyStructAndNil: dryRunCtx.helperOptions.DropEmptyStructAndNil,
 	}
 
 	// Add TopologyDryRunAnnotation to notify validation webhooks to skip immutability checks.

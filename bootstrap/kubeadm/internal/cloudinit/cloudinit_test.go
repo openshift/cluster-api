@@ -19,11 +19,10 @@ package cloudinit
 import (
 	"testing"
 
-	"github.com/blang/semver/v4"
 	. "github.com/onsi/gomega"
 	"k8s.io/utils/ptr"
 
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/secret"
 )
@@ -49,7 +48,7 @@ func TestNewInitControlPlaneAdditionalFileEncodings(t *testing.T) {
 				},
 				{
 					Path:    "/tmp/existing-path",
-					Append:  true,
+					Append:  ptr.To(true),
 					Content: "hi",
 				},
 			},
@@ -149,9 +148,9 @@ func TestNewInitControlPlaneDiskMounts(t *testing.T) {
 				Partitions: []bootstrapv1.Partition{
 					{
 						Device:    "test-device",
-						Layout:    true,
+						Layout:    ptr.To(true),
 						Overwrite: ptr.To(false),
-						TableType: ptr.To("gpt"),
+						TableType: "gpt",
 					},
 				},
 				Filesystems: []bootstrapv1.Filesystem{
@@ -250,82 +249,6 @@ func TestNewJoinControlPlaneAdditionalFileEncodings(t *testing.T) {
 	}
 }
 
-func TestNewJoinControlPlaneExperimentalRetry(t *testing.T) {
-	g := NewWithT(t)
-
-	cpinput := &ControlPlaneJoinInput{
-		BaseUserData: BaseUserData{
-			Header:               "test",
-			BootCommands:         nil,
-			PreKubeadmCommands:   nil,
-			PostKubeadmCommands:  nil,
-			UseExperimentalRetry: true,
-			WriteFiles:           nil,
-			Users:                nil,
-			NTP:                  nil,
-		},
-		Certificates:      secret.Certificates{},
-		BootstrapToken:    "my-bootstrap-token",
-		JoinConfiguration: "my-join-config",
-	}
-
-	for _, certificate := range cpinput.Certificates {
-		certificate.KeyPair = &certs.KeyPair{
-			Cert: []byte("some certificate"),
-			Key:  []byte("some key"),
-		}
-	}
-
-	out, err := NewJoinControlPlane(cpinput)
-	g.Expect(err).ToNot(HaveOccurred())
-
-	expectedFiles := []string{
-		`-   path: ` + retriableJoinScriptName + `
-    owner: ` + retriableJoinScriptOwner + `
-    permissions: '` + retriableJoinScriptPermissions + `'
-    `,
-	}
-	for _, f := range expectedFiles {
-		g.Expect(out).To(ContainSubstring(f))
-	}
-}
-
-func Test_useKubeadmBootstrapScriptPre1_31(t *testing.T) {
-	tests := []struct {
-		name          string
-		parsedversion semver.Version
-		want          bool
-	}{
-		{
-			name:          "true for version for v1.30",
-			parsedversion: semver.MustParse("1.30.99"),
-			want:          true,
-		},
-		{
-			name:          "true for version for v1.28",
-			parsedversion: semver.MustParse("1.28.0"),
-			want:          true,
-		},
-		{
-			name:          "false for v1.31.0",
-			parsedversion: semver.MustParse("1.31.0"),
-			want:          false,
-		},
-		{
-			name:          "false for v1.31.0-beta.0",
-			parsedversion: semver.MustParse("1.31.0-beta.0"),
-			want:          false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := useKubeadmBootstrapScriptPre1_31(tt.parsedversion); got != tt.want {
-				t.Errorf("useKubeadmBootstrapScriptPre1_31() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestNewJoinControlPlaneCommands(t *testing.T) {
 	g := NewWithT(t)
 
@@ -400,4 +323,165 @@ func TestNewJoinNodeCommands(t *testing.T) {
   - "echo $(date) ': hello PostKubeadmCommands!'"`
 
 	g.Expect(out).To(ContainSubstring(expectedRunCmd))
+}
+
+func TestOmittableFields(t *testing.T) {
+	tests := []struct {
+		name string
+		A    BaseUserData
+		B    BaseUserData
+	}{
+		{
+			name: "No diff between empty or nil additionalFiles", // NOTE: it maps to .Files in the KubeadmConfigSpec
+			A: BaseUserData{
+				AdditionalFiles: []bootstrapv1.File{},
+			},
+			B: BaseUserData{
+				AdditionalFiles: nil,
+			},
+		},
+		{
+			name: "No diff between empty or nil diskSetup.partitions",
+			A: BaseUserData{
+				DiskSetup: &bootstrapv1.DiskSetup{
+					Partitions: []bootstrapv1.Partition{},
+				},
+			},
+			B: BaseUserData{
+				DiskSetup: &bootstrapv1.DiskSetup{
+					Partitions: nil,
+				},
+			},
+		},
+		{
+			name: "No diff between empty or nil diskSetup.filesystems.extraOpts",
+			A: BaseUserData{
+				DiskSetup: &bootstrapv1.DiskSetup{
+					Filesystems: []bootstrapv1.Filesystem{
+						{
+							ExtraOpts: []string{},
+						},
+					},
+				},
+			},
+			B: BaseUserData{
+				DiskSetup: &bootstrapv1.DiskSetup{
+					Filesystems: []bootstrapv1.Filesystem{
+						{
+							ExtraOpts: nil,
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "No diff between empty or nil diskSetup.filesystems",
+			A: BaseUserData{
+				DiskSetup: &bootstrapv1.DiskSetup{
+					Filesystems: []bootstrapv1.Filesystem{},
+				},
+			},
+			B: BaseUserData{
+				DiskSetup: &bootstrapv1.DiskSetup{
+					Filesystems: nil,
+				},
+			},
+		},
+		{
+			name: "No diff between empty or nil mounts",
+			A: BaseUserData{
+				Mounts: []bootstrapv1.MountPoints{},
+			},
+			B: BaseUserData{
+				Mounts: nil,
+			},
+		},
+		{
+			name: "No diff between empty or nil bootCommands",
+			A: BaseUserData{
+				BootCommands: []string{},
+			},
+			B: BaseUserData{
+				BootCommands: nil,
+			},
+		},
+		{
+			name: "No diff between empty or nil preKubeadmCommands",
+			A: BaseUserData{
+				PreKubeadmCommands: []string{},
+			},
+			B: BaseUserData{
+				PreKubeadmCommands: nil,
+			},
+		},
+		{
+			name: "No diff between empty or nil postKubeadmCommands",
+			A: BaseUserData{
+				PostKubeadmCommands: []string{},
+			},
+			B: BaseUserData{
+				PostKubeadmCommands: nil,
+			},
+		},
+		{
+			name: "No diff between empty or nil users",
+			A: BaseUserData{
+				Users: []bootstrapv1.User{},
+			},
+			B: BaseUserData{
+				Users: nil,
+			},
+		},
+		{
+			name: "No diff between empty or nil users.sshAuthorizedKeys",
+			A: BaseUserData{
+				Users: []bootstrapv1.User{
+					{
+						SSHAuthorizedKeys: nil,
+					},
+				},
+			},
+			B: BaseUserData{
+				Users: []bootstrapv1.User{
+					{
+						SSHAuthorizedKeys: []string{},
+					},
+				},
+			},
+		},
+		{
+			name: "No diff between empty or nil ntp.servers",
+			A: BaseUserData{
+				NTP: &bootstrapv1.NTP{
+					Servers: []string{},
+				},
+			},
+			B: BaseUserData{
+				NTP: &bootstrapv1.NTP{
+					Servers: nil,
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			outA, err := NewInitControlPlane(&ControlPlaneInput{BaseUserData: tt.A})
+			g.Expect(err).ToNot(HaveOccurred())
+
+			outB, err := NewInitControlPlane(&ControlPlaneInput{BaseUserData: tt.B})
+			g.Expect(err).ToNot(HaveOccurred())
+
+			g.Expect(string(outA)).To(Equal(string(outB)))
+
+			outA, err = NewJoinControlPlane(&ControlPlaneJoinInput{BaseUserData: tt.A})
+			g.Expect(err).ToNot(HaveOccurred())
+
+			outB, err = NewJoinControlPlane(&ControlPlaneJoinInput{BaseUserData: tt.B})
+			g.Expect(err).ToNot(HaveOccurred())
+
+			g.Expect(string(outA)).To(Equal(string(outB)))
+		})
+	}
 }

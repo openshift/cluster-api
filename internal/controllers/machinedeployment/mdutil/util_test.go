@@ -33,7 +33,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 var (
@@ -89,7 +89,9 @@ func generateDeployment(image string) clusterv1.MachineDeployment {
 					Labels: machineLabels,
 				},
 				Spec: clusterv1.MachineSpec{
-					NodeDrainTimeout: &metav1.Duration{Duration: 10 * time.Second},
+					Deletion: clusterv1.MachineDeletionSpec{
+						NodeDrainTimeoutSeconds: ptr.To(int32(10)),
+					},
 				},
 			},
 		},
@@ -178,24 +180,25 @@ func TestMachineTemplateUpToDate(t *testing.T) {
 			Annotations: map[string]string{"a1": "v1"},
 		},
 		Spec: clusterv1.MachineSpec{
-			NodeDrainTimeout:        &metav1.Duration{Duration: 10 * time.Second},
-			NodeDeletionTimeout:     &metav1.Duration{Duration: 10 * time.Second},
-			NodeVolumeDetachTimeout: &metav1.Duration{Duration: 10 * time.Second},
-			ClusterName:             "cluster1",
-			Version:                 ptr.To("v1.25.0"),
-			FailureDomain:           ptr.To("failure-domain1"),
-			InfrastructureRef: corev1.ObjectReference{
-				Name:       "infra1",
-				Namespace:  "default",
-				Kind:       "InfrastructureMachineTemplate",
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+			Deletion: clusterv1.MachineDeletionSpec{
+				NodeDrainTimeoutSeconds:        ptr.To(int32(10)),
+				NodeDeletionTimeoutSeconds:     ptr.To(int32(10)),
+				NodeVolumeDetachTimeoutSeconds: ptr.To(int32(10)),
+			},
+			ClusterName:     "cluster1",
+			Version:         "v1.25.0",
+			FailureDomain:   "failure-domain1",
+			MinReadySeconds: ptr.To[int32](10),
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Name:     "infra1",
+				Kind:     "InfrastructureMachineTemplate",
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
 			},
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					Name:       "bootstrap1",
-					Namespace:  "default",
-					Kind:       "BootstrapConfigTemplate",
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					Name:     "bootstrap1",
+					Kind:     "BootstrapConfigTemplate",
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
 				},
 			},
 		},
@@ -217,27 +220,25 @@ func TestMachineTemplateUpToDate(t *testing.T) {
 
 	machineTemplateWithDifferentInPlaceMutableSpecFields := machineTemplate.DeepCopy()
 	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.ReadinessGates = []clusterv1.MachineReadinessGate{{ConditionType: "foo"}}
-	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.NodeDrainTimeout = &metav1.Duration{Duration: 20 * time.Second}
-	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.NodeDeletionTimeout = &metav1.Duration{Duration: 20 * time.Second}
-	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.NodeVolumeDetachTimeout = &metav1.Duration{Duration: 20 * time.Second}
+	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.Deletion.NodeDrainTimeoutSeconds = ptr.To(int32(20))
+	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.Deletion.NodeDeletionTimeoutSeconds = ptr.To(int32(20))
+	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = ptr.To(int32(20))
+	machineTemplateWithDifferentInPlaceMutableSpecFields.Spec.MinReadySeconds = ptr.To[int32](20)
 
 	machineTemplateWithDifferentClusterName := machineTemplate.DeepCopy()
 	machineTemplateWithDifferentClusterName.Spec.ClusterName = "cluster2"
 
 	machineTemplateWithDifferentVersion := machineTemplate.DeepCopy()
-	machineTemplateWithDifferentVersion.Spec.Version = ptr.To("v1.26.0")
+	machineTemplateWithDifferentVersion.Spec.Version = "v1.26.0"
 
 	machineTemplateWithDifferentFailureDomain := machineTemplate.DeepCopy()
-	machineTemplateWithDifferentFailureDomain.Spec.FailureDomain = ptr.To("failure-domain2")
+	machineTemplateWithDifferentFailureDomain.Spec.FailureDomain = "failure-domain2"
 
 	machineTemplateWithDifferentInfraRef := machineTemplate.DeepCopy()
 	machineTemplateWithDifferentInfraRef.Spec.InfrastructureRef.Name = "infra2"
 
-	machineTemplateWithDifferentInfraRefAPIVersion := machineTemplate.DeepCopy()
-	machineTemplateWithDifferentInfraRefAPIVersion.Spec.InfrastructureRef.APIVersion = "infrastructure.cluster.x-k8s.io/v1beta2"
-
 	machineTemplateWithBootstrapDataSecret := machineTemplate.DeepCopy()
-	machineTemplateWithBootstrapDataSecret.Spec.Bootstrap.ConfigRef = nil
+	machineTemplateWithBootstrapDataSecret.Spec.Bootstrap.ConfigRef = clusterv1.ContractVersionedObjectReference{} // Overwriting ConfigRef to empty.
 	machineTemplateWithBootstrapDataSecret.Spec.Bootstrap.DataSecretName = ptr.To("data-secret1")
 
 	machineTemplateWithDifferentBootstrapDataSecret := machineTemplateWithBootstrapDataSecret.DeepCopy()
@@ -245,9 +246,6 @@ func TestMachineTemplateUpToDate(t *testing.T) {
 
 	machineTemplateWithDifferentBootstrapConfigRef := machineTemplate.DeepCopy()
 	machineTemplateWithDifferentBootstrapConfigRef.Spec.Bootstrap.ConfigRef.Name = "bootstrap2"
-
-	machineTemplateWithDifferentBootstrapConfigRefAPIVersion := machineTemplate.DeepCopy()
-	machineTemplateWithDifferentBootstrapConfigRefAPIVersion.Spec.Bootstrap.ConfigRef.APIVersion = "bootstrap.cluster.x-k8s.io/v1beta2"
 
 	tests := []struct {
 		Name                       string
@@ -355,18 +353,6 @@ func TestMachineTemplateUpToDate(t *testing.T) {
 			expectedConditionMessages1: []string{"BootstrapConfig is not up-to-date"},
 			expectedConditionMessages2: []string{"spec.bootstrap.dataSecretName data-secret1, nil required"},
 		},
-		{
-			Name:             "Same spec, except desired has different InfrastructureRef APIVersion",
-			current:          machineTemplate,
-			desired:          machineTemplateWithDifferentInfraRefAPIVersion,
-			expectedUpToDate: true,
-		},
-		{
-			Name:             "Same spec, except desired has different Bootstrap.ConfigRef APIVersion",
-			current:          machineTemplate,
-			desired:          machineTemplateWithDifferentBootstrapConfigRefAPIVersion,
-			expectedUpToDate: true,
-		},
 	}
 
 	for _, test := range tests {
@@ -402,7 +388,7 @@ func TestFindNewMachineSet(t *testing.T) {
 	deployment.Spec.Template.Spec.InfrastructureRef.Name = "new-infra-ref"
 
 	deploymentWithRolloutAfter := deployment.DeepCopy()
-	deploymentWithRolloutAfter.Spec.RolloutAfter = &rolloutAfter
+	deploymentWithRolloutAfter.Spec.Rollout.After = rolloutAfter
 
 	matchingMS := generateMS(deployment)
 
@@ -410,7 +396,7 @@ func TestFindNewMachineSet(t *testing.T) {
 	matchingMSHigherReplicas.Spec.Replicas = ptr.To[int32](2)
 
 	matchingMSDiffersInPlaceMutableFields := generateMS(deployment)
-	matchingMSDiffersInPlaceMutableFields.Spec.Template.Spec.NodeDrainTimeout = &metav1.Duration{Duration: 20 * time.Second}
+	matchingMSDiffersInPlaceMutableFields.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds = ptr.To(int32(20))
 
 	oldMS := generateMS(deployment)
 	oldMS.Spec.Template.Spec.InfrastructureRef.Name = "old-infra-ref"
@@ -420,6 +406,9 @@ func TestFindNewMachineSet(t *testing.T) {
 
 	msCreatedAfterRolloutAfter := generateMS(deployment)
 	msCreatedAfterRolloutAfter.CreationTimestamp = oneAfterRolloutAfter
+
+	msCreatedExactlyInRolloutAfter := generateMS(deployment)
+	msCreatedExactlyInRolloutAfter.CreationTimestamp = rolloutAfter
 
 	tests := []struct {
 		Name               string
@@ -474,7 +463,7 @@ func TestFindNewMachineSet(t *testing.T) {
 			msList:             []*clusterv1.MachineSet{&msCreatedTwoBeforeRolloutAfter},
 			reconciliationTime: &oneAfterRolloutAfter,
 			expected:           nil,
-			createReason:       fmt.Sprintf("RolloutAfter on MachineDeployment set to %s, no MachineSet has been created afterwards", rolloutAfter.Format(time.RFC3339)),
+			createReason:       fmt.Sprintf("spec.rollout.after on MachineDeployment set to %s, no MachineSet has been created afterwards", rolloutAfter.Format(time.RFC3339)),
 		},
 		{
 			Name:               "Get MachineSet created after RolloutAfter if reconciliationTime is > rolloutAfter",
@@ -482,6 +471,14 @@ func TestFindNewMachineSet(t *testing.T) {
 			msList:             []*clusterv1.MachineSet{&msCreatedAfterRolloutAfter, &msCreatedTwoBeforeRolloutAfter},
 			reconciliationTime: &twoAfterRolloutAfter,
 			expected:           &msCreatedAfterRolloutAfter,
+		},
+		{
+			// https://github.com/kubernetes-sigs/cluster-api/issues/12260
+			Name:               "Get MachineSet created exactly in RolloutAfter if reconciliationTime > rolloutAfter",
+			deployment:         *deploymentWithRolloutAfter,
+			msList:             []*clusterv1.MachineSet{&msCreatedExactlyInRolloutAfter, &msCreatedTwoBeforeRolloutAfter},
+			reconciliationTime: &oneAfterRolloutAfter,
+			expected:           &msCreatedExactlyInRolloutAfter,
 		},
 		{
 			Name:               "Get MachineSet created after RolloutAfter if reconciliationTime is > rolloutAfter (inverse order in ms list)",
@@ -515,7 +512,7 @@ func TestFindOldMachineSets(t *testing.T) {
 	deployment := generateDeployment("nginx")
 
 	deploymentWithRolloutAfter := deployment.DeepCopy()
-	deploymentWithRolloutAfter.Spec.RolloutAfter = &rolloutAfter
+	deploymentWithRolloutAfter.Spec.Rollout.After = rolloutAfter
 
 	newMS := generateMS(deployment)
 	newMS.Name = "aa"
@@ -612,10 +609,10 @@ func TestFindOldMachineSets(t *testing.T) {
 func TestGetReplicaCountForMachineSets(t *testing.T) {
 	ms1 := generateMS(generateDeployment("foo"))
 	*(ms1.Spec.Replicas) = 1
-	ms1.Status.Replicas = 2
+	ms1.Status.Replicas = ptr.To[int32](2)
 	ms2 := generateMS(generateDeployment("bar"))
 	*(ms2.Spec.Replicas) = 5
-	ms2.Status.Replicas = 3
+	ms2.Status.Replicas = ptr.To[int32](3)
 
 	tests := []struct {
 		Name           string
@@ -645,7 +642,7 @@ func TestGetReplicaCountForMachineSets(t *testing.T) {
 			g := NewWithT(t)
 
 			g.Expect(GetReplicaCountForMachineSets(test.Sets)).To(Equal(test.ExpectedCount))
-			g.Expect(GetActualReplicaCountForMachineSets(test.Sets)).To(Equal(test.ExpectedActual))
+			g.Expect(ptr.Deref(GetActualReplicaCountForMachineSets(test.Sets), 0)).To(Equal(test.ExpectedActual))
 			g.Expect(TotalMachineSetsReplicaSum(test.Sets)).To(Equal(test.ExpectedTotal))
 		})
 	}
@@ -723,10 +720,10 @@ func TestResolveFenceposts(t *testing.T) {
 func TestNewMSNewReplicas(t *testing.T) {
 	tests := []struct {
 		Name          string
-		strategyType  clusterv1.MachineDeploymentStrategyType
+		strategyType  clusterv1.MachineDeploymentRolloutStrategyType
 		depReplicas   int32
 		newMSReplicas int32
-		maxSurge      int
+		maxSurge      int32
 		expected      int32
 	}{
 		{
@@ -750,16 +747,10 @@ func TestNewMSNewReplicas(t *testing.T) {
 			g := NewWithT(t)
 
 			*(newDeployment.Spec.Replicas) = test.depReplicas
-			newDeployment.Spec.Strategy = &clusterv1.MachineDeploymentStrategy{Type: test.strategyType}
-			newDeployment.Spec.Strategy.RollingUpdate = &clusterv1.MachineRollingUpdateDeployment{
-				MaxUnavailable: func(i int) *intstr.IntOrString {
-					x := intstr.FromInt(i)
-					return &x
-				}(1),
-				MaxSurge: func(i int) *intstr.IntOrString {
-					x := intstr.FromInt(i)
-					return &x
-				}(test.maxSurge),
+			newDeployment.Spec.Rollout.Strategy.Type = test.strategyType
+			newDeployment.Spec.Rollout.Strategy.RollingUpdate = clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+				MaxUnavailable: ptr.To(intstr.FromInt32(1)),
+				MaxSurge:       ptr.To(intstr.FromInt32(test.maxSurge)),
 			}
 			*(newRC.Spec.Replicas) = test.newMSReplicas
 			ms, err := NewMSNewReplicas(&newDeployment, []*clusterv1.MachineSet{&rs5}, *newRC.Spec.Replicas)
@@ -770,22 +761,24 @@ func TestNewMSNewReplicas(t *testing.T) {
 }
 
 func TestDeploymentComplete(t *testing.T) {
-	deployment := func(desired, current, updated, available, maxUnavailable, maxSurge int32) *clusterv1.MachineDeployment {
+	deployment := func(desired, current, upToDate, available, maxUnavailable, maxSurge int32) *clusterv1.MachineDeployment {
 		return &clusterv1.MachineDeployment{
 			Spec: clusterv1.MachineDeploymentSpec{
 				Replicas: &desired,
-				Strategy: &clusterv1.MachineDeploymentStrategy{
-					RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-						MaxUnavailable: func(i int) *intstr.IntOrString { x := intstr.FromInt(i); return &x }(int(maxUnavailable)),
-						MaxSurge:       func(i int) *intstr.IntOrString { x := intstr.FromInt(i); return &x }(int(maxSurge)),
+				Rollout: clusterv1.MachineDeploymentRolloutSpec{
+					Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+						RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+							MaxUnavailable: ptr.To(intstr.FromInt32(maxUnavailable)),
+							MaxSurge:       ptr.To(intstr.FromInt32(maxSurge)),
+						},
+						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
 					},
-					Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
 				},
 			},
 			Status: clusterv1.MachineDeploymentStatus{
-				Replicas:          current,
-				UpdatedReplicas:   updated,
-				AvailableReplicas: available,
+				Replicas:          ptr.To[int32](current),
+				UpToDateReplicas:  ptr.To[int32](upToDate),
+				AvailableReplicas: ptr.To[int32](available),
 			},
 		}
 	}
@@ -852,12 +845,14 @@ func TestMaxUnavailable(t *testing.T) {
 		return clusterv1.MachineDeployment{
 			Spec: clusterv1.MachineDeploymentSpec{
 				Replicas: func(i int32) *int32 { return &i }(replicas),
-				Strategy: &clusterv1.MachineDeploymentStrategy{
-					RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
-						MaxSurge:       func(i int) *intstr.IntOrString { x := intstr.FromInt(i); return &x }(int(1)),
-						MaxUnavailable: &maxUnavailable,
+				Rollout: clusterv1.MachineDeploymentRolloutSpec{
+					Strategy: clusterv1.MachineDeploymentRolloutStrategy{
+						RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
+							MaxSurge:       ptr.To(intstr.FromInt32(1)),
+							MaxUnavailable: &maxUnavailable,
+						},
+						Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
 					},
-					Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
 				},
 			},
 		}
@@ -869,22 +864,22 @@ func TestMaxUnavailable(t *testing.T) {
 	}{
 		{
 			name:       "maxUnavailable less than replicas",
-			deployment: deployment(10, intstr.FromInt(5)),
+			deployment: deployment(10, intstr.FromInt32(5)),
 			expected:   int32(5),
 		},
 		{
 			name:       "maxUnavailable equal replicas",
-			deployment: deployment(10, intstr.FromInt(10)),
+			deployment: deployment(10, intstr.FromInt32(10)),
 			expected:   int32(10),
 		},
 		{
 			name:       "maxUnavailable greater than replicas",
-			deployment: deployment(5, intstr.FromInt(10)),
+			deployment: deployment(5, intstr.FromInt32(10)),
 			expected:   int32(5),
 		},
 		{
 			name:       "maxUnavailable with replicas is 0",
-			deployment: deployment(0, intstr.FromInt(10)),
+			deployment: deployment(0, intstr.FromInt32(10)),
 			expected:   int32(0),
 		},
 		{
@@ -931,7 +926,7 @@ func TestAnnotationUtils(t *testing.T) {
 
 	// Test Case 2:  Check if annotations reflect deployments state
 	tMS.Annotations[clusterv1.DesiredReplicasAnnotation] = "1"
-	tMS.Status.AvailableReplicas = 1
+	tMS.Status.AvailableReplicas = ptr.To[int32](1)
 	tMS.Spec.Replicas = new(int32)
 	*tMS.Spec.Replicas = 1
 
@@ -945,11 +940,11 @@ func TestAnnotationUtils(t *testing.T) {
 func TestComputeMachineSetAnnotations(t *testing.T) {
 	deployment := generateDeployment("nginx")
 	deployment.Spec.Replicas = ptr.To[int32](3)
-	maxSurge := intstr.FromInt(1)
-	maxUnavailable := intstr.FromInt(0)
-	deployment.Spec.Strategy = &clusterv1.MachineDeploymentStrategy{
+	maxSurge := intstr.FromInt32(1)
+	maxUnavailable := intstr.FromInt32(0)
+	deployment.Spec.Rollout.Strategy = clusterv1.MachineDeploymentRolloutStrategy{
 		Type: clusterv1.RollingUpdateMachineDeploymentStrategyType,
-		RollingUpdate: &clusterv1.MachineRollingUpdateDeployment{
+		RollingUpdate: clusterv1.MachineDeploymentRolloutStrategyRollingUpdate{
 			MaxSurge:       &maxSurge,
 			MaxUnavailable: &maxUnavailable,
 		},
@@ -1017,7 +1012,7 @@ func TestComputeMachineSetAnnotations(t *testing.T) {
 			want: map[string]string{
 				"key1":                              "value1",
 				clusterv1.RevisionAnnotation:        "3",
-				clusterv1.RevisionHistoryAnnotation: "1",
+				revisionHistoryAnnotation:           "1",
 				clusterv1.DesiredReplicasAnnotation: "3",
 				clusterv1.MaxReplicasAnnotation:     "4",
 			},
@@ -1050,7 +1045,7 @@ func TestComputeMachineSetAnnotations(t *testing.T) {
 			want: map[string]string{
 				"key1":                              "value1",
 				clusterv1.RevisionAnnotation:        "5",
-				clusterv1.RevisionHistoryAnnotation: "1,2",
+				revisionHistoryAnnotation:           "1,2",
 				clusterv1.DesiredReplicasAnnotation: "3",
 				clusterv1.MaxReplicasAnnotation:     "4",
 			},
@@ -1081,7 +1076,7 @@ func machineSetWithRevisionAndHistory(revision string, revisionHistory string) *
 		},
 	}
 	if revisionHistory != "" {
-		ms.Annotations[clusterv1.RevisionHistoryAnnotation] = revisionHistory
+		ms.Annotations[revisionHistoryAnnotation] = revisionHistory
 	}
 	return ms
 }

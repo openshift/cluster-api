@@ -29,13 +29,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	dockerbackend "sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/controllers/backends/docker"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/paused"
@@ -63,7 +63,7 @@ func (r *DockerClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Fetch the DockerCluster instance
 	dockerCluster := &infrav1.DockerCluster{}
-	if err := r.Client.Get(ctx, req.NamespacedName, dockerCluster); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, dockerCluster); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -153,52 +153,55 @@ func (r *DockerClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl
 func patchDockerCluster(ctx context.Context, patchHelper *patch.Helper, dockerCluster *infrav1.DockerCluster) error {
 	// Always update the readyCondition by summarizing the state of other conditions.
 	// A step counter is added to represent progress during the provisioning process (instead we are hiding it during the deletion process).
-	conditions.SetSummary(dockerCluster,
-		conditions.WithConditions(
-			infrav1.LoadBalancerAvailableCondition,
+	v1beta1conditions.SetSummary(dockerCluster,
+		v1beta1conditions.WithConditions(
+			infrav1.LoadBalancerAvailableV1Beta1Condition,
 		),
-		conditions.WithStepCounterIf(dockerCluster.ObjectMeta.DeletionTimestamp.IsZero()),
+		v1beta1conditions.WithStepCounterIf(dockerCluster.DeletionTimestamp.IsZero()),
 	)
-	if err := v1beta2conditions.SetSummaryCondition(dockerCluster, dockerCluster, infrav1.DevClusterReadyV1Beta2Condition,
-		v1beta2conditions.ForConditionTypes{
-			infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+	if err := conditions.SetSummaryCondition(dockerCluster, dockerCluster, infrav1.DevClusterReadyCondition,
+		conditions.ForConditionTypes{
+			infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 		},
 		// Using a custom merge strategy to override reasons applied during merge.
-		v1beta2conditions.CustomMergeStrategy{
-			MergeStrategy: v1beta2conditions.DefaultMergeStrategy(
+		conditions.CustomMergeStrategy{
+			MergeStrategy: conditions.DefaultMergeStrategy(
 				// Use custom reasons.
-				v1beta2conditions.ComputeReasonFunc(v1beta2conditions.GetDefaultComputeMergeReasonFunc(
-					infrav1.DevClusterNotReadyV1Beta2Reason,
-					infrav1.DevClusterReadyUnknownV1Beta2Reason,
-					infrav1.DevClusterReadyV1Beta2Reason,
+				conditions.ComputeReasonFunc(conditions.GetDefaultComputeMergeReasonFunc(
+					infrav1.DevClusterNotReadyReason,
+					infrav1.DevClusterReadyUnknownReason,
+					infrav1.DevClusterReadyReason,
 				)),
 			),
 		},
 	); err != nil {
-		return errors.Wrapf(err, "failed to set %s condition", infrav1.DevClusterReadyV1Beta2Condition)
+		return errors.Wrapf(err, "failed to set %s condition", infrav1.DevClusterReadyCondition)
 	}
 
 	// Patch the object, ignoring conflicts on the conditions owned by this controller.
 	return patchHelper.Patch(
 		ctx,
 		dockerCluster,
-		patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
-			clusterv1.ReadyCondition,
-			infrav1.LoadBalancerAvailableCondition,
+		patch.WithOwnedV1Beta1Conditions{Conditions: []clusterv1.ConditionType{
+			clusterv1.ReadyV1Beta1Condition,
+			infrav1.LoadBalancerAvailableV1Beta1Condition,
 		}},
-		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			clusterv1.PausedV1Beta2Condition,
-			infrav1.DevClusterReadyV1Beta2Condition,
-			infrav1.DevClusterDockerLoadBalancerAvailableV1Beta2Condition,
+		patch.WithOwnedConditions{Conditions: []string{
+			clusterv1.PausedCondition,
+			infrav1.DevClusterReadyCondition,
+			infrav1.DevClusterDockerLoadBalancerAvailableCondition,
 		}},
 	)
 }
 
 func dockerClusterToDevCluster(dockerCluster *infrav1.DockerCluster) *infrav1.DevCluster {
-	var v1Beta2Status *infrav1.DevClusterV1Beta2Status
-	if dockerCluster.Status.V1Beta2 != nil {
-		v1Beta2Status = &infrav1.DevClusterV1Beta2Status{
-			Conditions: dockerCluster.Status.V1Beta2.Conditions,
+	// Carry over deprecated v1beta1 status if defined.
+	var v1Beta1Status *infrav1.DevClusterDeprecatedStatus
+	if dockerCluster.Status.Deprecated != nil && dockerCluster.Status.Deprecated.V1Beta1 != nil {
+		v1Beta1Status = &infrav1.DevClusterDeprecatedStatus{
+			V1Beta1: &infrav1.DevClusterV1Beta1DeprecatedStatus{
+				Conditions: dockerCluster.Status.Deprecated.V1Beta1.Conditions,
+			},
 		}
 	}
 
@@ -214,19 +217,24 @@ func dockerClusterToDevCluster(dockerCluster *infrav1.DockerCluster) *infrav1.De
 			},
 		},
 		Status: infrav1.DevClusterStatus{
-			Ready:          dockerCluster.Status.Ready,
+			Initialization: infrav1.DevClusterInitializationStatus{
+				Provisioned: dockerCluster.Status.Initialization.Provisioned,
+			},
 			FailureDomains: dockerCluster.Status.FailureDomains,
 			Conditions:     dockerCluster.Status.Conditions,
-			V1Beta2:        v1Beta2Status,
+			Deprecated:     v1Beta1Status,
 		},
 	}
 }
 
 func devClusterToDockerCluster(devCluster *infrav1.DevCluster, dockerCluster *infrav1.DockerCluster) {
-	var v1Beta2Status *infrav1.DockerClusterV1Beta2Status
-	if devCluster.Status.V1Beta2 != nil {
-		v1Beta2Status = &infrav1.DockerClusterV1Beta2Status{
-			Conditions: devCluster.Status.V1Beta2.Conditions,
+	// Carry over deprecated v1beta1 status if defined.
+	var v1Beta1Status *infrav1.DockerClusterDeprecatedStatus
+	if devCluster.Status.Deprecated != nil && devCluster.Status.Deprecated.V1Beta1 != nil {
+		v1Beta1Status = &infrav1.DockerClusterDeprecatedStatus{
+			V1Beta1: &infrav1.DockerClusterV1Beta1DeprecatedStatus{
+				Conditions: devCluster.Status.Deprecated.V1Beta1.Conditions,
+			},
 		}
 	}
 
@@ -234,8 +242,10 @@ func devClusterToDockerCluster(devCluster *infrav1.DevCluster, dockerCluster *in
 	dockerCluster.Spec.ControlPlaneEndpoint = devCluster.Spec.ControlPlaneEndpoint
 	dockerCluster.Spec.FailureDomains = devCluster.Spec.Backend.Docker.FailureDomains
 	dockerCluster.Spec.LoadBalancer = devCluster.Spec.Backend.Docker.LoadBalancer
-	dockerCluster.Status.Ready = devCluster.Status.Ready
+	dockerCluster.Status.Initialization = infrav1.DockerClusterInitializationStatus{
+		Provisioned: devCluster.Status.Initialization.Provisioned,
+	}
 	dockerCluster.Status.FailureDomains = devCluster.Status.FailureDomains
 	dockerCluster.Status.Conditions = devCluster.Status.Conditions
-	dockerCluster.Status.V1Beta2 = v1Beta2Status
+	dockerCluster.Status.Deprecated = v1Beta1Status
 }

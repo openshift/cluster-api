@@ -37,11 +37,11 @@ import (
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 	"sigs.k8s.io/kind/pkg/cluster/constants"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/internal/util/taints"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/docker/types"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/provisioning"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/provisioning/cloudinit"
@@ -55,15 +55,15 @@ var (
 )
 
 type nodeCreator interface {
-	CreateControlPlaneNode(ctx context.Context, name, clusterName, listenAddress string, port int32, mounts []v1alpha4.Mount, portMappings []v1alpha4.PortMapping, labels map[string]string, ipFamily clusterv1.ClusterIPFamily, kindMapping kind.Mapping) (node *types.Node, err error)
-	CreateWorkerNode(ctx context.Context, name, clusterName string, mounts []v1alpha4.Mount, portMappings []v1alpha4.PortMapping, labels map[string]string, ipFamily clusterv1.ClusterIPFamily, kindMapping kind.Mapping) (node *types.Node, err error)
+	CreateControlPlaneNode(ctx context.Context, name, clusterName, listenAddress string, port int32, mounts []v1alpha4.Mount, portMappings []v1alpha4.PortMapping, labels map[string]string, ipFamily container.ClusterIPFamily, kindMapping kind.Mapping) (node *types.Node, err error)
+	CreateWorkerNode(ctx context.Context, name, clusterName string, mounts []v1alpha4.Mount, portMappings []v1alpha4.PortMapping, labels map[string]string, ipFamily container.ClusterIPFamily, kindMapping kind.Mapping) (node *types.Node, err error)
 }
 
 // Machine implement a service for managing the docker containers hosting a kubernetes nodes.
 type Machine struct {
 	cluster     string
 	machine     string
-	ipFamily    clusterv1.ClusterIPFamily
+	ipFamily    container.ClusterIPFamily
 	container   *types.Node
 	nodeCreator nodeCreator
 }
@@ -92,10 +92,7 @@ func NewMachine(ctx context.Context, cluster *clusterv1.Cluster, machine string,
 		return nil, err
 	}
 
-	// We tolerate this until removal;
-	// after removal IPFamily will become an internal CAPD concept.
-	// See https://github.com/kubernetes-sigs/cluster-api/issues/7521.
-	ipFamily, err := cluster.GetIPFamily()
+	ipFamily, err := container.GetClusterIPFamily(cluster)
 	if err != nil {
 		return nil, fmt.Errorf("create docker machine: %s", err)
 	}
@@ -129,10 +126,7 @@ func ListMachinesByCluster(ctx context.Context, cluster *clusterv1.Cluster, labe
 		return nil, err
 	}
 
-	// We tolerate this until removal;
-	// after removal IPFamily will become an internal CAPD concept.
-	// See https://github.com/kubernetes-sigs/cluster-api/issues/7521 .
-	ipFamily, err := cluster.GetIPFamily()
+	ipFamily, err := container.GetClusterIPFamily(cluster)
 	if err != nil {
 		return nil, fmt.Errorf("list docker machines by cluster: %s", err)
 	}
@@ -164,6 +158,15 @@ func (m *Machine) Exists() bool {
 	return m.container != nil
 }
 
+// IsRunning returns true if the container for this machine is running.
+func (m *Machine) IsRunning() bool {
+	if !m.Exists() {
+		return false
+	}
+
+	return m.container.IsRunning()
+}
+
 // Name returns the name of the machine.
 func (m *Machine) Name() string {
 	return m.machine
@@ -187,11 +190,11 @@ func (m *Machine) Address(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	switch m.ipFamily {
-	case clusterv1.IPv6IPFamily:
+	case container.IPv6IPFamily:
 		return []string{ipv6}, nil
-	case clusterv1.IPv4IPFamily:
+	case container.IPv4IPFamily:
 		return []string{ipv4}, nil
-	case clusterv1.DualStackIPFamily:
+	case container.DualStackIPFamily:
 		return []string{ipv4, ipv6}, nil
 	}
 	return nil, errors.New("unknown ipFamily")
@@ -207,7 +210,7 @@ func (m *Machine) ContainerImage() string {
 }
 
 // Create creates a docker container hosting a Kubernetes node.
-func (m *Machine) Create(ctx context.Context, image string, role string, version *string, labels map[string]string, mounts []infrav1.Mount) error {
+func (m *Machine) Create(ctx context.Context, image string, role string, version string, labels map[string]string, mounts []infrav1.Mount) error {
 	log := ctrl.LoggerFrom(ctx)
 
 	// Create if not exists.
@@ -217,11 +220,11 @@ func (m *Machine) Create(ctx context.Context, image string, role string, version
 		// Get the KindMapping for the target K8s version.
 		// NOTE: The KindMapping allows to select the most recent kindest/node image available, if any, as well as
 		// provide info about the mode to be used when starting the kindest/node image itself.
-		if version == nil {
+		if version == "" {
 			return errors.New("cannot create a DockerMachine for a nil version")
 		}
 
-		semVer, err := semver.Parse(strings.TrimPrefix(*version, "v"))
+		semVer, err := semver.ParseTolerant(version)
 		if err != nil {
 			return errors.Wrap(err, "failed to parse DockerMachine version")
 		}
@@ -335,7 +338,7 @@ func (m *Machine) PreloadLoadImages(ctx context.Context, images []string) error 
 }
 
 // ExecBootstrap runs bootstrap on a node, this is generally `kubeadm <init|join>`.
-func (m *Machine) ExecBootstrap(ctx context.Context, data string, format bootstrapv1.Format, version *string, image string) error {
+func (m *Machine) ExecBootstrap(ctx context.Context, data string, format bootstrapv1.Format, version string, image string) error {
 	log := ctrl.LoggerFrom(ctx)
 
 	if m.container == nil {
@@ -345,11 +348,11 @@ func (m *Machine) ExecBootstrap(ctx context.Context, data string, format bootstr
 	// Get the kindMapping for the target K8s version.
 	// NOTE: The kindMapping allows to select the most recent kindest/node image available, if any, as well as
 	// provide info about the mode to be used when starting the kindest/node image itself.
-	if version == nil {
+	if version == "" {
 		return errors.New("cannot create a DockerMachine for a nil version")
 	}
 
-	semVer, err := semver.Parse(strings.TrimPrefix(*version, "v"))
+	semVer, err := semver.ParseTolerant(version)
 	if err != nil {
 		return errors.Wrap(err, "failed to parse DockerMachine version")
 	}
@@ -546,6 +549,8 @@ func (m *Machine) Delete(ctx context.Context) error {
 		if err := m.container.Delete(ctx); err != nil {
 			return err
 		}
+
+		m.container = nil
 	}
 	return nil
 }

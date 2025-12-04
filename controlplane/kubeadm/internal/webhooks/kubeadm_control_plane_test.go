@@ -22,22 +22,21 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/webhooks/util"
 )
 
 var (
-	invalidNamespaceName = "bar"
-	ctx                  = ctrl.SetupSignalHandler()
+	ctx = ctrl.SetupSignalHandler()
 )
 
 func TestKubeadmControlPlaneDefault(t *testing.T) {
@@ -50,32 +49,30 @@ func TestKubeadmControlPlaneDefault(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: "v1.18.3",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: "test/v1alpha1",
-					Kind:       "UnknownInfraMachine",
-					Name:       "foo",
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "test",
+						Kind:     "UnknownInfraMachine",
+						Name:     "foo",
+					},
 				},
 			},
-			RolloutStrategy: &controlplanev1.RolloutStrategy{},
 		},
 	}
 	updateDefaultingValidationKCP := kcp.DeepCopy()
 	updateDefaultingValidationKCP.Spec.Version = "v1.18.3"
-	updateDefaultingValidationKCP.Spec.MachineTemplate.InfrastructureRef = corev1.ObjectReference{
-		APIVersion: "test/v1alpha1",
-		Kind:       "UnknownInfraMachine",
-		Name:       "foo",
-		Namespace:  "foo",
+	updateDefaultingValidationKCP.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+		APIGroup: "test",
+		Kind:     "UnknownInfraMachine",
+		Name:     "foo",
 	}
 	webhook := &KubeadmControlPlane{}
 	t.Run("for KubeadmControlPlane", util.CustomDefaultValidateTest(ctx, updateDefaultingValidationKCP, webhook))
 	g.Expect(webhook.Default(ctx, kcp)).To(Succeed())
 
-	g.Expect(kcp.Spec.KubeadmConfigSpec.Format).To(Equal(bootstrapv1.CloudConfig))
-	g.Expect(kcp.Spec.MachineTemplate.InfrastructureRef.Namespace).To(Equal(kcp.Namespace))
 	g.Expect(kcp.Spec.Version).To(Equal("v1.18.3"))
-	g.Expect(kcp.Spec.RolloutStrategy.Type).To(Equal(controlplanev1.RollingUpdateStrategyType))
-	g.Expect(kcp.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
+	g.Expect(kcp.Spec.Rollout.Strategy.Type).To(Equal(controlplanev1.RollingUpdateStrategyType))
+	g.Expect(kcp.Spec.Rollout.Strategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
 }
 
 func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
@@ -86,23 +83,26 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 		},
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: "test/v1alpha1",
-					Kind:       "UnknownInfraMachine",
-					Namespace:  "foo",
-					Name:       "infraTemplate",
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "test",
+						Kind:     "UnknownInfraMachine",
+						Name:     "infraTemplate",
+					},
 				},
 			},
 			KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-				ClusterConfiguration: &bootstrapv1.ClusterConfiguration{},
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
 			},
 			Replicas: ptr.To[int32](1),
 			Version:  "v1.19.0",
-			RolloutStrategy: &controlplanev1.RolloutStrategy{
-				Type: controlplanev1.RollingUpdateStrategyType,
-				RollingUpdate: &controlplanev1.RollingUpdate{
-					MaxSurge: &intstr.IntOrString{
-						IntVal: 1,
+			Rollout: controlplanev1.KubeadmControlPlaneRolloutSpec{
+				Strategy: controlplanev1.KubeadmControlPlaneRolloutStrategy{
+					Type: controlplanev1.RollingUpdateStrategyType,
+					RollingUpdate: controlplanev1.KubeadmControlPlaneRolloutStrategyRollingUpdate{
+						MaxSurge: &intstr.IntOrString{
+							IntVal: 1,
+						},
 					},
 				},
 			},
@@ -110,14 +110,11 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 	}
 
 	invalidMaxSurge := valid.DeepCopy()
-	invalidMaxSurge.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntVal = int32(3)
+	invalidMaxSurge.Spec.Rollout.Strategy.RollingUpdate.MaxSurge.IntVal = int32(3)
 
 	stringMaxSurge := valid.DeepCopy()
 	val := intstr.FromString("1")
-	stringMaxSurge.Spec.RolloutStrategy.RollingUpdate.MaxSurge = &val
-
-	invalidNamespace := valid.DeepCopy()
-	invalidNamespace.Spec.MachineTemplate.InfrastructureRef.Namespace = invalidNamespaceName
+	stringMaxSurge.Spec.Rollout.Strategy.RollingUpdate.MaxSurge = &val
 
 	missingReplicas := valid.DeepCopy()
 	missingReplicas.Spec.Replicas = nil
@@ -130,9 +127,11 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 
 	evenReplicasExternalEtcd := evenReplicas.DeepCopy()
 	evenReplicasExternalEtcd.Spec.KubeadmConfigSpec = bootstrapv1.KubeadmConfigSpec{
-		ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
+		ClusterConfiguration: bootstrapv1.ClusterConfiguration{
 			Etcd: bootstrapv1.Etcd{
-				External: &bootstrapv1.ExternalEtcd{},
+				External: bootstrapv1.ExternalEtcd{
+					Endpoints: []string{"1.2.3.4"},
+				},
 			},
 		},
 	}
@@ -147,19 +146,18 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 	invalidVersion2.Spec.Version = "1.16.6"
 
 	invalidCoreDNSVersion := valid.DeepCopy()
-	invalidCoreDNSVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS.ImageTag = "v1.7" // not a valid semantic version
+	invalidCoreDNSVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS.ImageTag = "1-7" // not a valid semantic version
 
-	invalidRolloutBeforeCertificateExpiryDays := valid.DeepCopy()
-	invalidRolloutBeforeCertificateExpiryDays.Spec.RolloutBefore = &controlplanev1.RolloutBefore{
-		CertificatesExpiryDays: ptr.To[int32](5), // less than minimum
+	invalidIgnitionConfiguration := valid.DeepCopy() // Format is not set to ignition.
+	invalidIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = bootstrapv1.IgnitionSpec{
+		ContainerLinuxConfig: bootstrapv1.ContainerLinuxConfig{
+			AdditionalConfig: "config",
+		},
 	}
-
-	invalidIgnitionConfiguration := valid.DeepCopy()
-	invalidIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{}
 
 	validIgnitionConfiguration := valid.DeepCopy()
 	validIgnitionConfiguration.Spec.KubeadmConfigSpec.Format = bootstrapv1.Ignition
-	validIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{}
+	validIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = bootstrapv1.IgnitionSpec{}
 
 	invalidMetadata := valid.DeepCopy()
 	invalidMetadata.Spec.MachineTemplate.ObjectMeta.Labels = map[string]string{
@@ -171,6 +169,25 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 		"/invalid-key": "foo",
 	}
 
+	invalidControlPlaneComponentHealthCheckSeconds := valid.DeepCopy()
+	invalidControlPlaneComponentHealthCheckSeconds.Spec.KubeadmConfigSpec.InitConfiguration = bootstrapv1.InitConfiguration{Timeouts: bootstrapv1.Timeouts{ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](10)}}
+
+	validControlPlaneComponentHealthCheckSeconds := valid.DeepCopy()
+	validControlPlaneComponentHealthCheckSeconds.Spec.KubeadmConfigSpec.InitConfiguration = bootstrapv1.InitConfiguration{Timeouts: bootstrapv1.Timeouts{ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](10)}}
+	validControlPlaneComponentHealthCheckSeconds.Spec.KubeadmConfigSpec.JoinConfiguration = bootstrapv1.JoinConfiguration{Timeouts: bootstrapv1.Timeouts{ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](10)}}
+
+	invalidCertificateValidityPeriodDaysGreaterCA := valid.DeepCopy()
+	invalidCertificateValidityPeriodDaysGreaterCA.Spec.KubeadmConfigSpec.ClusterConfiguration.CertificateValidityPeriodDays = 350
+	invalidCertificateValidityPeriodDaysGreaterCA.Spec.KubeadmConfigSpec.ClusterConfiguration.CACertificateValidityPeriodDays = 300
+
+	invalidCertificateValidityPeriodDaysGreaterDefault := valid.DeepCopy()
+	invalidCertificateValidityPeriodDaysGreaterDefault.Spec.KubeadmConfigSpec.ClusterConfiguration.CertificateValidityPeriodDays = 3651
+	invalidCertificateValidityPeriodDaysGreaterDefault.Spec.KubeadmConfigSpec.ClusterConfiguration.CACertificateValidityPeriodDays = 0 // default is 3650
+
+	invalidRolloutBeforeCertificatesExpiryDays := valid.DeepCopy()
+	invalidRolloutBeforeCertificatesExpiryDays.Spec.Rollout.Before.CertificatesExpiryDays = 8
+	invalidRolloutBeforeCertificatesExpiryDays.Spec.KubeadmConfigSpec.ClusterConfiguration.CertificateValidityPeriodDays = 7
+
 	tests := []struct {
 		name                  string
 		enableIgnitionFeature bool
@@ -181,11 +198,6 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 			name:      "should succeed when given a valid config",
 			expectErr: false,
 			kcp:       valid,
-		},
-		{
-			name:      "should return error when kubeadmControlPlane namespace and infrastructureTemplate  namespace mismatch",
-			expectErr: true,
-			kcp:       invalidNamespace,
 		},
 		{
 			name:      "should return error when replicas is nil",
@@ -238,12 +250,6 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 			kcp:       stringMaxSurge,
 		},
 		{
-			name:      "should return error when given an invalid rolloutBefore.certificatesExpiryDays value",
-			expectErr: true,
-			kcp:       invalidRolloutBeforeCertificateExpiryDays,
-		},
-
-		{
 			name:                  "should return error when Ignition configuration is invalid",
 			enableIgnitionFeature: true,
 			expectErr:             true,
@@ -260,6 +266,30 @@ func TestKubeadmControlPlaneValidateCreate(t *testing.T) {
 			enableIgnitionFeature: true,
 			expectErr:             true,
 			kcp:                   invalidMetadata,
+		},
+		{
+			name:      "should return error for invalid Timeouts.ControlPlaneComponentHealthCheckSeconds",
+			expectErr: true,
+			kcp:       invalidControlPlaneComponentHealthCheckSeconds,
+		},
+		{
+			name: "should pass for valid Timeouts.ControlPlaneComponentHealthCheckSeconds",
+			kcp:  validControlPlaneComponentHealthCheckSeconds,
+		},
+		{
+			name:      "should return error when CertificateValidityPeriodDays greater than CACertificateValidityPeriodDays",
+			expectErr: true,
+			kcp:       invalidCertificateValidityPeriodDaysGreaterCA,
+		},
+		{
+			name:      "should return error when CertificateValidityPeriodDays greater than CACertificateValidityPeriodDays default",
+			expectErr: true,
+			kcp:       invalidCertificateValidityPeriodDaysGreaterDefault,
+		},
+		{
+			name:      "should return error when rolloutBefore CertificatesExpiryDays greater than cluster CertificateValidityPeriodDays",
+			expectErr: true,
+			kcp:       invalidRolloutBeforeCertificatesExpiryDays,
 		},
 	}
 
@@ -294,27 +324,22 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 		},
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: "test/v1alpha1",
-					Kind:       "UnknownInfraMachine",
-					Namespace:  "foo",
-					Name:       "infraTemplate",
-				},
-				NodeDrainTimeout:        &metav1.Duration{Duration: time.Second},
-				NodeVolumeDetachTimeout: &metav1.Duration{Duration: time.Second},
-				NodeDeletionTimeout:     &metav1.Duration{Duration: time.Second},
-			},
-			Replicas: ptr.To[int32](1),
-			RolloutStrategy: &controlplanev1.RolloutStrategy{
-				Type: controlplanev1.RollingUpdateStrategyType,
-				RollingUpdate: &controlplanev1.RollingUpdate{
-					MaxSurge: &intstr.IntOrString{
-						IntVal: 1,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "test",
+						Kind:     "UnknownInfraMachine",
+						Name:     "infraTemplate",
+					},
+					Deletion: controlplanev1.KubeadmControlPlaneMachineTemplateDeletionSpec{
+						NodeDrainTimeoutSeconds:        ptr.To(int32(1)),
+						NodeVolumeDetachTimeoutSeconds: ptr.To(int32(1)),
+						NodeDeletionTimeoutSeconds:     ptr.To(int32(1)),
 					},
 				},
 			},
+			Replicas: ptr.To[int32](1),
 			KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-				InitConfiguration: &bootstrapv1.InitConfiguration{
+				InitConfiguration: bootstrapv1.InitConfiguration{
 					LocalAPIEndpoint: bootstrapv1.APIEndpoint{
 						AdvertiseAddress: "127.0.0.1",
 						BindPort:         int32(443),
@@ -322,24 +347,26 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 					NodeRegistration: bootstrapv1.NodeRegistrationOptions{
 						Name: "test",
 					},
+					Timeouts: bootstrapv1.Timeouts{
+						ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](10),
+						KubeletHealthCheckSeconds:               ptr.To[int32](40),
+					},
 				},
-				ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
-					ClusterName: "test",
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
 					DNS: bootstrapv1.DNS{
-						ImageMeta: bootstrapv1.ImageMeta{
-							ImageRepository: "registry.k8s.io/coredns",
-							ImageTag:        "1.6.5",
-						},
+						ImageRepository: "registry.k8s.io/coredns",
+						ImageTag:        "1.6.5",
 					},
+					CertificateValidityPeriodDays:   100,
+					CACertificateValidityPeriodDays: 365,
 				},
-				JoinConfiguration: &bootstrapv1.JoinConfiguration{
-					Discovery: bootstrapv1.Discovery{
-						Timeout: &metav1.Duration{
-							Duration: 10 * time.Minute,
-						},
-					},
+				JoinConfiguration: bootstrapv1.JoinConfiguration{
 					NodeRegistration: bootstrapv1.NodeRegistrationOptions{
 						Name: "test",
+					},
+					Timeouts: bootstrapv1.Timeouts{
+						ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](10),
+						KubeletHealthCheckSeconds:               ptr.To[int32](40),
 					},
 				},
 				PreKubeadmCommands: []string{
@@ -361,30 +388,42 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 						},
 					},
 				},
-				NTP: &bootstrapv1.NTP{
+				NTP: bootstrapv1.NTP{
 					Servers: []string{"test-server-1", "test-server-2"},
 					Enabled: ptr.To(true),
 				},
 			},
 			Version: "v1.16.6",
-			RolloutBefore: &controlplanev1.RolloutBefore{
-				CertificatesExpiryDays: ptr.To[int32](7),
+			Rollout: controlplanev1.KubeadmControlPlaneRolloutSpec{
+				Before: controlplanev1.KubeadmControlPlaneRolloutBeforeSpec{
+					CertificatesExpiryDays: 7,
+				},
+				Strategy: controlplanev1.KubeadmControlPlaneRolloutStrategy{
+					Type: controlplanev1.RollingUpdateStrategyType,
+					RollingUpdate: controlplanev1.KubeadmControlPlaneRolloutStrategyRollingUpdate{
+						MaxSurge: &intstr.IntOrString{
+							IntVal: 1,
+						},
+					},
+				},
 			},
 		},
 	}
 
 	updateMaxSurgeVal := before.DeepCopy()
-	updateMaxSurgeVal.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntVal = int32(0)
+	updateMaxSurgeVal.Spec.Rollout.Strategy.RollingUpdate.MaxSurge.IntVal = int32(0)
 	updateMaxSurgeVal.Spec.Replicas = ptr.To[int32](3)
 
 	wrongReplicaCountForScaleIn := before.DeepCopy()
-	wrongReplicaCountForScaleIn.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntVal = int32(0)
+	wrongReplicaCountForScaleIn.Spec.Rollout.Strategy.RollingUpdate.MaxSurge.IntVal = int32(0)
 
 	validUpdateKubeadmConfigInit := before.DeepCopy()
 	validUpdateKubeadmConfigInit.Spec.KubeadmConfigSpec.InitConfiguration.NodeRegistration = bootstrapv1.NodeRegistrationOptions{}
 
 	invalidUpdateKubeadmConfigCluster := before.DeepCopy()
-	invalidUpdateKubeadmConfigCluster.Spec.KubeadmConfigSpec.ClusterConfiguration = &bootstrapv1.ClusterConfiguration{}
+	invalidUpdateKubeadmConfigCluster.Spec.KubeadmConfigSpec.ClusterConfiguration = bootstrapv1.ClusterConfiguration{
+		CertificatesDir: "some-other-value",
+	}
 
 	validUpdateKubeadmConfigJoin := before.DeepCopy()
 	validUpdateKubeadmConfigJoin.Spec.KubeadmConfigSpec.JoinConfiguration.NodeRegistration = bootstrapv1.NodeRegistrationOptions{}
@@ -423,21 +462,19 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	validUpdate.Spec.MachineTemplate.ObjectMeta.Annotations = map[string]string{
 		"annotation": "labelAnnotation",
 	}
-	validUpdate.Spec.MachineTemplate.InfrastructureRef.APIVersion = "test/v1alpha2"
-	validUpdate.Spec.MachineTemplate.InfrastructureRef.Name = "orange"
-	validUpdate.Spec.MachineTemplate.NodeDrainTimeout = &metav1.Duration{Duration: 10 * time.Second}
-	validUpdate.Spec.MachineTemplate.NodeVolumeDetachTimeout = &metav1.Duration{Duration: 10 * time.Second}
-	validUpdate.Spec.MachineTemplate.NodeDeletionTimeout = &metav1.Duration{Duration: 10 * time.Second}
+	validUpdate.Spec.MachineTemplate.Spec.InfrastructureRef.APIGroup = "test-changed"
+	validUpdate.Spec.MachineTemplate.Spec.InfrastructureRef.Name = "orange"
+	validUpdate.Spec.MachineTemplate.Spec.Deletion.NodeDrainTimeoutSeconds = ptr.To(int32(10))
+	validUpdate.Spec.MachineTemplate.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = ptr.To(int32(10))
+	validUpdate.Spec.MachineTemplate.Spec.Deletion.NodeDeletionTimeoutSeconds = ptr.To(int32(10))
 	validUpdate.Spec.Replicas = ptr.To[int32](5)
 	now := metav1.NewTime(time.Now())
-	validUpdate.Spec.RolloutAfter = &now
-	validUpdate.Spec.RolloutBefore = &controlplanev1.RolloutBefore{
-		CertificatesExpiryDays: ptr.To[int32](14),
-	}
-	validUpdate.Spec.RemediationStrategy = &controlplanev1.RemediationStrategy{
-		MaxRetry:         ptr.To[int32](50),
-		MinHealthyPeriod: &metav1.Duration{Duration: 10 * time.Hour},
-		RetryPeriod:      metav1.Duration{Duration: 10 * time.Minute},
+	validUpdate.Spec.Rollout.After = now
+	validUpdate.Spec.Rollout.Before.CertificatesExpiryDays = 14
+	validUpdate.Spec.Remediation = controlplanev1.KubeadmControlPlaneRemediationSpec{
+		MaxRetry:                ptr.To[int32](50),
+		MinHealthyPeriodSeconds: ptr.To(int32(10 * 60 * 60)),
+		RetryPeriodSeconds:      ptr.To[int32](10 * 60),
 	}
 	validUpdate.Spec.KubeadmConfigSpec.Format = bootstrapv1.CloudConfig
 
@@ -447,120 +484,105 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	scaleToEven := before.DeepCopy()
 	scaleToEven.Spec.Replicas = ptr.To[int32](2)
 
-	invalidNamespace := before.DeepCopy()
-	invalidNamespace.Spec.MachineTemplate.InfrastructureRef.Namespace = invalidNamespaceName
-
 	missingReplicas := before.DeepCopy()
 	missingReplicas.Spec.Replicas = nil
 
 	etcdLocalImageTag := before.DeepCopy()
-	etcdLocalImageTag.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageTag: "v9.1.1",
-		},
+	etcdLocalImageTag.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{
+		ImageTag: "v9.1.1",
 	}
+	etcdLocalImageTagAndDataDir := etcdLocalImageTag.DeepCopy()
+	etcdLocalImageTagAndDataDir.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local.DataDir = "/foo"
 
 	etcdLocalImageBuildTag := before.DeepCopy()
-	etcdLocalImageBuildTag.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageTag: "v9.1.1_validBuild1",
-		},
+	etcdLocalImageBuildTag.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{
+		ImageTag: "v9.1.1_validBuild1",
 	}
 
 	etcdLocalImageInvalidTag := before.DeepCopy()
-	etcdLocalImageInvalidTag.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageTag: "v9.1.1+invalidBuild1",
-		},
+	etcdLocalImageInvalidTag.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{
+		ImageTag: "v9.1.1+invalidBuild1",
 	}
 
-	unsetEtcd := etcdLocalImageTag.DeepCopy()
-	unsetEtcd.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = nil
-
-	networking := before.DeepCopy()
-	networking.Spec.KubeadmConfigSpec.ClusterConfiguration.Networking.DNSDomain = "some dns domain"
-
-	kubernetesVersion := before.DeepCopy()
-	kubernetesVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.KubernetesVersion = "some kubernetes version"
+	unsetEtcdLocal := etcdLocalImageTag.DeepCopy()
+	unsetEtcdLocal.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{}
 
 	controlPlaneEndpoint := before.DeepCopy()
 	controlPlaneEndpoint.Spec.KubeadmConfigSpec.ClusterConfiguration.ControlPlaneEndpoint = "some control plane endpoint"
 
 	apiServer := before.DeepCopy()
 	apiServer.Spec.KubeadmConfigSpec.ClusterConfiguration.APIServer = bootstrapv1.APIServer{
-		ControlPlaneComponent: bootstrapv1.ControlPlaneComponent{
-			ExtraArgs:    map[string]string{"foo": "bar"},
-			ExtraVolumes: []bootstrapv1.HostPathMount{{Name: "mount1"}},
+		ExtraArgs: []bootstrapv1.Arg{
+			{
+				Name:  "foo",
+				Value: ptr.To("bar"),
+			},
 		},
-		TimeoutForControlPlane: &metav1.Duration{Duration: 5 * time.Minute},
-		CertSANs:               []string{"foo", "bar"},
+		ExtraVolumes: []bootstrapv1.HostPathMount{{Name: "mount1"}},
+		CertSANs:     []string{"foo", "bar"},
 	}
 
 	controllerManager := before.DeepCopy()
-	controllerManager.Spec.KubeadmConfigSpec.ClusterConfiguration.ControllerManager = bootstrapv1.ControlPlaneComponent{
-		ExtraArgs:    map[string]string{"controller manager field": "controller manager value"},
-		ExtraVolumes: []bootstrapv1.HostPathMount{{Name: "mount", HostPath: "/foo", MountPath: "bar", ReadOnly: true, PathType: "File"}},
+	controllerManager.Spec.KubeadmConfigSpec.ClusterConfiguration.ControllerManager = bootstrapv1.ControllerManager{
+		ExtraArgs: []bootstrapv1.Arg{
+			{
+				Name:  "controller manager field",
+				Value: ptr.To("controller manager value"),
+			},
+		},
+		ExtraVolumes: []bootstrapv1.HostPathMount{{Name: "mount", HostPath: "/foo", MountPath: "bar", ReadOnly: ptr.To(true), PathType: "File"}},
 	}
 
 	scheduler := before.DeepCopy()
-	scheduler.Spec.KubeadmConfigSpec.ClusterConfiguration.Scheduler = bootstrapv1.ControlPlaneComponent{
-		ExtraArgs:    map[string]string{"scheduler field": "scheduler value"},
-		ExtraVolumes: []bootstrapv1.HostPathMount{{Name: "mount", HostPath: "/foo", MountPath: "bar", ReadOnly: true, PathType: "File"}},
+	scheduler.Spec.KubeadmConfigSpec.ClusterConfiguration.Scheduler = bootstrapv1.Scheduler{
+		ExtraArgs: []bootstrapv1.Arg{
+			{
+				Name:  "scheduler field",
+				Value: ptr.To("scheduler value"),
+			},
+		},
+		ExtraVolumes: []bootstrapv1.HostPathMount{{Name: "mount", HostPath: "/foo", MountPath: "bar", ReadOnly: ptr.To(true), PathType: "File"}},
 	}
 
 	dns := before.DeepCopy()
 	dns.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "gcr.io/capi-test",
-			ImageTag:        "v1.6.6_foobar.1",
-		},
+		ImageRepository: "gcr.io/capi-test",
+		ImageTag:        "v1.6.6_foobar.1",
 	}
 
 	dnsBuildTag := before.DeepCopy()
 	dnsBuildTag.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "gcr.io/capi-test",
-			ImageTag:        "1.6.7",
-		},
+		ImageRepository: "gcr.io/capi-test",
+		ImageTag:        "1.6.7",
 	}
 
 	dnsInvalidTag := before.DeepCopy()
 	dnsInvalidTag.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "gcr.io/capi-test",
-			ImageTag:        "v0.20.0+invalidBuild1",
-		},
+		ImageRepository: "gcr.io/capi-test",
+		ImageTag:        "v0.20.0+invalidBuild1",
 	}
 
 	dnsInvalidCoreDNSToVersion := dns.DeepCopy()
 	dnsInvalidCoreDNSToVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "gcr.io/capi-test",
-			ImageTag:        "1.6.5",
-		},
+		ImageRepository: "gcr.io/capi-test",
+		ImageTag:        "1.6.5",
 	}
 
 	validCoreDNSCustomToVersion := dns.DeepCopy()
 	validCoreDNSCustomToVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "gcr.io/capi-test",
-			ImageTag:        "v1.6.6_foobar.2",
-		},
+		ImageRepository: "gcr.io/capi-test",
+		ImageTag:        "v1.6.6_foobar.2",
 	}
 	validUnsupportedCoreDNSVersion := dns.DeepCopy()
 	validUnsupportedCoreDNSVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "gcr.io/capi-test",
-			ImageTag:        "v99.99.99",
-		},
+		ImageRepository: "gcr.io/capi-test",
+		ImageTag:        "v99.99.99",
 	}
 
 	validUnsupportedCoreDNSVersionWithSkipAnnotation := dns.DeepCopy()
 	validUnsupportedCoreDNSVersionWithSkipAnnotation.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "gcr.io/capi-test",
-			ImageTag:        "v99.99.99",
-		},
+		ImageRepository: "gcr.io/capi-test",
+		ImageTag:        "v99.99.99",
 	}
 	validUnsupportedCoreDNSVersionWithSkipAnnotation.Annotations = map[string]string{
 		controlplanev1.SkipCoreDNSAnnotation: "",
@@ -568,10 +590,8 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 
 	unsetCoreDNSToVersion := dns.DeepCopy()
 	unsetCoreDNSToVersion.Spec.KubeadmConfigSpec.ClusterConfiguration.DNS = bootstrapv1.DNS{
-		ImageMeta: bootstrapv1.ImageMeta{
-			ImageRepository: "",
-			ImageTag:        "",
-		},
+		ImageRepository: "",
+		ImageTag:        "",
 	}
 
 	certificatesDir := before.DeepCopy()
@@ -584,34 +604,43 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	featureGates.Spec.KubeadmConfigSpec.ClusterConfiguration.FeatureGates = map[string]bool{"a feature gate": true}
 
 	externalEtcd := before.DeepCopy()
-	externalEtcd.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.External = &bootstrapv1.ExternalEtcd{
+	externalEtcd.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.External = bootstrapv1.ExternalEtcd{
 		KeyFile: "some key file",
+	}
+	externalEtcdChanged := before.DeepCopy()
+	externalEtcdChanged.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.External = bootstrapv1.ExternalEtcd{
+		KeyFile: "another key file",
 	}
 
 	localDataDir := before.DeepCopy()
-	localDataDir.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
+	localDataDir.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{
 		DataDir: "some local data dir",
 	}
 
 	localPeerCertSANs := before.DeepCopy()
-	localPeerCertSANs.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
+	localPeerCertSANs.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{
 		PeerCertSANs: []string{"a cert"},
 	}
 
 	localServerCertSANs := before.DeepCopy()
-	localServerCertSANs.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
+	localServerCertSANs.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{
 		ServerCertSANs: []string{"a cert"},
 	}
 
 	localExtraArgs := before.DeepCopy()
-	localExtraArgs.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
-		ExtraArgs: map[string]string{"an arg": "a value"},
+	localExtraArgs.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = bootstrapv1.LocalEtcd{
+		ExtraArgs: []bootstrapv1.Arg{
+			{
+				Name:  "an arg",
+				Value: ptr.To("a value"),
+			},
+		},
 	}
 
 	beforeExternalEtcdCluster := before.DeepCopy()
-	beforeExternalEtcdCluster.Spec.KubeadmConfigSpec.ClusterConfiguration = &bootstrapv1.ClusterConfiguration{
+	beforeExternalEtcdCluster.Spec.KubeadmConfigSpec.ClusterConfiguration = bootstrapv1.ClusterConfiguration{
 		Etcd: bootstrapv1.Etcd{
-			External: &bootstrapv1.ExternalEtcd{
+			External: bootstrapv1.ExternalEtcd{
 				Endpoints: []string{"127.0.0.1"},
 			},
 		},
@@ -621,28 +650,21 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 
 	beforeInvalidEtcdCluster := before.DeepCopy()
 	beforeInvalidEtcdCluster.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd = bootstrapv1.Etcd{
-		Local: &bootstrapv1.LocalEtcd{
-			ImageMeta: bootstrapv1.ImageMeta{
-				ImageRepository: "image-repository",
-				ImageTag:        "latest",
-			},
+		Local: bootstrapv1.LocalEtcd{
+			ImageRepository: "image-repository",
+			ImageTag:        "latest",
 		},
 	}
 
 	afterInvalidEtcdCluster := beforeInvalidEtcdCluster.DeepCopy()
 	afterInvalidEtcdCluster.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd = bootstrapv1.Etcd{
-		External: &bootstrapv1.ExternalEtcd{
+		External: bootstrapv1.ExternalEtcd{
 			Endpoints: []string{"127.0.0.1"},
 		},
 	}
 
 	withoutClusterConfiguration := before.DeepCopy()
-	withoutClusterConfiguration.Spec.KubeadmConfigSpec.ClusterConfiguration = nil
-
-	afterEtcdLocalDirAddition := before.DeepCopy()
-	afterEtcdLocalDirAddition.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local = &bootstrapv1.LocalEtcd{
-		DataDir: "/data",
-	}
+	withoutClusterConfiguration.Spec.KubeadmConfigSpec.ClusterConfiguration = bootstrapv1.ClusterConfiguration{}
 
 	updateNTPServers := before.DeepCopy()
 	updateNTPServers.Spec.KubeadmConfigSpec.NTP.Servers = []string{"new-server"}
@@ -650,33 +672,34 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	disableNTPServers := before.DeepCopy()
 	disableNTPServers.Spec.KubeadmConfigSpec.NTP.Enabled = ptr.To(false)
 
-	invalidRolloutBeforeCertificateExpiryDays := before.DeepCopy()
-	invalidRolloutBeforeCertificateExpiryDays.Spec.RolloutBefore = &controlplanev1.RolloutBefore{
-		CertificatesExpiryDays: ptr.To[int32](5), // less than minimum
-	}
-
 	unsetRolloutBefore := before.DeepCopy()
-	unsetRolloutBefore.Spec.RolloutBefore = nil
+	unsetRolloutBefore.Spec.Rollout.Before = controlplanev1.KubeadmControlPlaneRolloutBeforeSpec{}
 
 	invalidIgnitionConfiguration := before.DeepCopy()
-	invalidIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{}
+	invalidIgnitionConfiguration.Spec.KubeadmConfigSpec.Ignition = bootstrapv1.IgnitionSpec{ // Format is not set
+		ContainerLinuxConfig: bootstrapv1.ContainerLinuxConfig{
+			AdditionalConfig: "config",
+		},
+	}
 
 	validIgnitionConfigurationBefore := before.DeepCopy()
 	validIgnitionConfigurationBefore.Spec.KubeadmConfigSpec.Format = bootstrapv1.Ignition
-	validIgnitionConfigurationBefore.Spec.KubeadmConfigSpec.Ignition = &bootstrapv1.IgnitionSpec{
-		ContainerLinuxConfig: &bootstrapv1.ContainerLinuxConfig{},
+	validIgnitionConfigurationBefore.Spec.KubeadmConfigSpec.Ignition = bootstrapv1.IgnitionSpec{
+		ContainerLinuxConfig: bootstrapv1.ContainerLinuxConfig{
+			AdditionalConfig: "config-before",
+		},
 	}
 
 	validIgnitionConfigurationAfter := validIgnitionConfigurationBefore.DeepCopy()
 	validIgnitionConfigurationAfter.Spec.KubeadmConfigSpec.Ignition.ContainerLinuxConfig.AdditionalConfig = "foo: bar"
 
 	updateInitConfigurationPatches := before.DeepCopy()
-	updateInitConfigurationPatches.Spec.KubeadmConfigSpec.InitConfiguration.Patches = &bootstrapv1.Patches{
+	updateInitConfigurationPatches.Spec.KubeadmConfigSpec.InitConfiguration.Patches = bootstrapv1.Patches{
 		Directory: "/tmp/patches",
 	}
 
 	updateJoinConfigurationPatches := before.DeepCopy()
-	updateJoinConfigurationPatches.Spec.KubeadmConfigSpec.InitConfiguration.Patches = &bootstrapv1.Patches{
+	updateJoinConfigurationPatches.Spec.KubeadmConfigSpec.InitConfiguration.Patches = bootstrapv1.Patches{
 		Directory: "/tmp/patches",
 	}
 
@@ -687,7 +710,7 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 	updateJoinConfigurationSkipPhases.Spec.KubeadmConfigSpec.JoinConfiguration.SkipPhases = []string{"addon/kube-proxy"}
 
 	updateDiskSetup := before.DeepCopy()
-	updateDiskSetup.Spec.KubeadmConfigSpec.DiskSetup = &bootstrapv1.DiskSetup{
+	updateDiskSetup.Spec.KubeadmConfigSpec.DiskSetup = bootstrapv1.DiskSetup{
 		Filesystems: []bootstrapv1.Filesystem{
 			{
 				Device:     "/dev/sda",
@@ -712,10 +735,25 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 		"/invalid-key": "foo",
 	}
 
-	beforeUseExperimentalRetryJoin := before.DeepCopy()
-	beforeUseExperimentalRetryJoin.Spec.KubeadmConfigSpec.UseExperimentalRetryJoin = true //nolint:staticcheck
-	updateUseExperimentalRetryJoin := before.DeepCopy()
-	updateUseExperimentalRetryJoin.Spec.KubeadmConfigSpec.UseExperimentalRetryJoin = false //nolint:staticcheck
+	changeTimeouts := before.DeepCopy()
+	changeTimeouts.Spec.KubeadmConfigSpec.InitConfiguration.Timeouts.ControlPlaneComponentHealthCheckSeconds = ptr.To[int32](20) // before 10
+	changeTimeouts.Spec.KubeadmConfigSpec.InitConfiguration.Timeouts.KubeletHealthCheckSeconds = nil                             // before set
+	changeTimeouts.Spec.KubeadmConfigSpec.InitConfiguration.Timeouts.EtcdAPICallSeconds = ptr.To[int32](20)                      // before not set
+	changeTimeouts.Spec.KubeadmConfigSpec.JoinConfiguration.Timeouts.ControlPlaneComponentHealthCheckSeconds = ptr.To[int32](20) // before 10
+	changeTimeouts.Spec.KubeadmConfigSpec.JoinConfiguration.Timeouts.KubeletHealthCheckSeconds = nil                             // before set
+	changeTimeouts.Spec.KubeadmConfigSpec.JoinConfiguration.Timeouts.EtcdAPICallSeconds = ptr.To[int32](20)                      // before not set
+
+	unsetTimeouts := before.DeepCopy()
+	unsetTimeouts.Spec.KubeadmConfigSpec.InitConfiguration.Timeouts = bootstrapv1.Timeouts{}
+	unsetTimeouts.Spec.KubeadmConfigSpec.JoinConfiguration.Timeouts = bootstrapv1.Timeouts{}
+
+	validUpdateCertificateValidityPeriod := before.DeepCopy()
+	validUpdateCertificateValidityPeriod.Spec.KubeadmConfigSpec.ClusterConfiguration.CertificateValidityPeriodDays = 150
+
+	invalidUpdateCACertificateValidityPeriodDays := before.DeepCopy()
+	invalidUpdateCACertificateValidityPeriodDays.Spec.KubeadmConfigSpec.ClusterConfiguration = bootstrapv1.ClusterConfiguration{
+		CACertificateValidityPeriodDays: 730,
+	}
 
 	tests := []struct {
 		name                  string
@@ -767,12 +805,6 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			kcp:       scaleToEven,
 		},
 		{
-			name:      "should return error when trying to reference cross namespace",
-			expectErr: true,
-			before:    before,
-			kcp:       invalidNamespace,
-		},
-		{
 			name:      "should return error when trying to scale to nil",
 			expectErr: true,
 			before:    before,
@@ -801,18 +833,6 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			expectErr: true,
 			before:    before,
 			kcp:       etcdLocalImageInvalidTag,
-		},
-		{
-			name:      "should fail when making a change to the cluster config's networking struct",
-			expectErr: true,
-			before:    before,
-			kcp:       networking,
-		},
-		{
-			name:      "should fail when making a change to the cluster config's kubernetes version",
-			expectErr: true,
-			before:    before,
-			kcp:       kubernetesVersion,
 		},
 		{
 			name:      "should fail when making a change to the cluster config's controlPlaneEndpoint",
@@ -852,6 +872,12 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 		},
 		{
 			name:      "should succeed when CoreDNS ImageTag is unset",
+			expectErr: false,
+			before:    dns,
+			kcp:       unsetCoreDNSToVersion,
+		},
+		{
+			name:      "should succeed when DNS is set to nil",
 			expectErr: false,
 			before:    dns,
 			kcp:       unsetCoreDNSToVersion,
@@ -941,14 +967,26 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 		{
 			name:      "should succeed when making a change to the cluster config's external etcd's configuration",
 			expectErr: false,
-			before:    before,
-			kcp:       externalEtcd,
+			before:    externalEtcd,
+			kcp:       externalEtcdChanged,
 		},
 		{
-			name:      "should fail when attempting to unset the etcd local object",
-			expectErr: true,
+			name:      "should succeed when adding the cluster config's local etcd's configuration",
+			expectErr: false,
+			before:    unsetEtcdLocal,
+			kcp:       etcdLocalImageTag,
+		},
+		{
+			name:      "should succeed when making a change to the cluster config's local etcd's configuration",
+			expectErr: false,
 			before:    etcdLocalImageTag,
-			kcp:       unsetEtcd,
+			kcp:       etcdLocalImageTagAndDataDir,
+		},
+		{
+			name:      "should succeed when attempting to unset the etcd local object to fallback to the default",
+			expectErr: false,
+			before:    etcdLocalImageTag,
+			kcp:       unsetEtcdLocal,
 		},
 		{
 			name:      "should fail if both local and external etcd are set",
@@ -961,12 +999,6 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			expectErr: false,
 			before:    withoutClusterConfiguration,
 			kcp:       withoutClusterConfiguration,
-		},
-		{
-			name:      "should fail if etcd local dir is changed from missing ClusterConfiguration",
-			expectErr: true,
-			before:    withoutClusterConfiguration,
-			kcp:       afterEtcdLocalDirAddition,
 		},
 		{
 			name:      "should not return an error when maxSurge value is updated to 0",
@@ -1023,12 +1055,6 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			kcp:       updateDiskSetup,
 		},
 		{
-			name:      "should return error when rolloutBefore.certificatesExpiryDays is invalid",
-			expectErr: true,
-			before:    before,
-			kcp:       invalidRolloutBeforeCertificateExpiryDays,
-		},
-		{
 			name:      "should allow unsetting rolloutBefore",
 			expectErr: false,
 			before:    before,
@@ -1063,10 +1089,34 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 			kcp:                   invalidMetadata,
 		},
 		{
-			name:      "should allow changes to useExperimentalRetryJoin",
+			name:      "should succeed when changing timeouts",
 			expectErr: false,
-			before:    beforeUseExperimentalRetryJoin,
-			kcp:       updateUseExperimentalRetryJoin,
+			before:    before,
+			kcp:       changeTimeouts,
+		},
+		{
+			name:      "should succeed when unsetting timeouts",
+			expectErr: false,
+			before:    before,
+			kcp:       unsetTimeouts,
+		},
+		{
+			name:      "should succeed when setting timeouts",
+			expectErr: false,
+			before:    unsetTimeouts,
+			kcp:       changeTimeouts,
+		},
+		{
+			name:      "should succeed when making a change to the cluster config's certificateValidityPeriod",
+			expectErr: false,
+			before:    before,
+			kcp:       validUpdateCertificateValidityPeriod,
+		},
+		{
+			name:      "should return error when trying to mutate the cluster config's caCertificateValidityPeriodDays",
+			expectErr: true,
+			before:    before,
+			kcp:       invalidUpdateCACertificateValidityPeriodDays,
 		},
 	}
 
@@ -1096,7 +1146,7 @@ func TestKubeadmControlPlaneValidateUpdate(t *testing.T) {
 func TestValidateVersion(t *testing.T) {
 	tests := []struct {
 		name                 string
-		clusterConfiguration *bootstrapv1.ClusterConfiguration
+		clusterConfiguration bootstrapv1.ClusterConfiguration
 		oldVersion           string
 		newVersion           string
 		expectErr            bool
@@ -1126,15 +1176,6 @@ func TestValidateVersion(t *testing.T) {
 			newVersion: "invalid-version",
 			expectErr:  true,
 		},
-		// Validation that we block upgrade to v1.19.0.
-		// Note: Upgrading to v1.19.0 is not supported, because of issues in v1.19.0,
-		// see: https://github.com/kubernetes-sigs/cluster-api/issues/3564
-		{
-			name:       "error when upgrading to v1.19.0",
-			oldVersion: "v1.18.8",
-			newVersion: "v1.19.0",
-			expectErr:  true,
-		},
 		{
 			name:       "pass when both versions are v1.19.0",
 			oldVersion: "v1.19.0",
@@ -1152,77 +1193,6 @@ func TestValidateVersion(t *testing.T) {
 			name:       "pass when upgrading one minor version",
 			oldVersion: "v1.20.1",
 			newVersion: "v1.21.18",
-			expectErr:  false,
-		},
-		// Validation for usage of the old registry.
-		// Notes:
-		// * kubeadm versions < v1.22 are always using the old registry.
-		// * kubeadm versions >= v1.25.0 are always using the new registry.
-		// * kubeadm versions in between are using the new registry
-		//   starting with certain patch versions.
-		// This test validates that we don't block upgrades for < v1.22.0 and >= v1.25.0
-		// and block upgrades to kubeadm versions in between with the old registry.
-		{
-			name: "pass when imageRepository is set",
-			clusterConfiguration: &bootstrapv1.ClusterConfiguration{
-				ImageRepository: "k8s.gcr.io",
-			},
-			oldVersion: "v1.21.1",
-			newVersion: "v1.22.16",
-			expectErr:  false,
-		},
-		{
-			name:       "pass when version didn't change",
-			oldVersion: "v1.22.16",
-			newVersion: "v1.22.16",
-			expectErr:  false,
-		},
-		{
-			name:       "pass when new version is < v1.22.0",
-			oldVersion: "v1.20.10",
-			newVersion: "v1.21.5",
-			expectErr:  false,
-		},
-		{
-			name:       "error when new version is using old registry (v1.22.0 <= version <= v1.22.16)",
-			oldVersion: "v1.21.1",
-			newVersion: "v1.22.16", // last patch release using old registry
-			expectErr:  true,
-		},
-		{
-			name:       "pass when new version is using new registry (>= v1.22.17)",
-			oldVersion: "v1.21.1",
-			newVersion: "v1.22.17", // first patch release using new registry
-			expectErr:  false,
-		},
-		{
-			name:       "error when new version is using old registry (v1.23.0 <= version <= v1.23.14)",
-			oldVersion: "v1.22.17",
-			newVersion: "v1.23.14", // last patch release using old registry
-			expectErr:  true,
-		},
-		{
-			name:       "pass when new version is using new registry (>= v1.23.15)",
-			oldVersion: "v1.22.17",
-			newVersion: "v1.23.15", // first patch release using new registry
-			expectErr:  false,
-		},
-		{
-			name:       "error when new version is using old registry (v1.24.0 <= version <= v1.24.8)",
-			oldVersion: "v1.23.1",
-			newVersion: "v1.24.8", // last patch release using old registry
-			expectErr:  true,
-		},
-		{
-			name:       "pass when new version is using new registry (>= v1.24.9)",
-			oldVersion: "v1.23.1",
-			newVersion: "v1.24.9", // first patch release using new registry
-			expectErr:  false,
-		},
-		{
-			name:       "pass when new version is using new registry (>= v1.25.0)",
-			oldVersion: "v1.24.8",
-			newVersion: "v1.25.0", // uses new registry
 			expectErr:  false,
 		},
 	}
@@ -1271,11 +1241,12 @@ func TestKubeadmControlPlaneValidateUpdateAfterDefaulting(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: "v1.19.0",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: "test/v1alpha1",
-					Kind:       "UnknownInfraMachine",
-					Namespace:  "foo",
-					Name:       "infraTemplate",
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "test",
+						Kind:     "UnknownInfraMachine",
+						Name:     "infraTemplate",
+					},
 				},
 			},
 		},
@@ -1310,10 +1281,9 @@ func TestKubeadmControlPlaneValidateUpdateAfterDefaulting(t *testing.T) {
 				g.Expect(err).To(HaveOccurred())
 			} else {
 				g.Expect(err).To(Succeed())
-				g.Expect(tt.kcp.Spec.MachineTemplate.InfrastructureRef.Namespace).To(Equal(tt.before.Namespace))
 				g.Expect(tt.kcp.Spec.Version).To(Equal("v1.19.0"))
-				g.Expect(tt.kcp.Spec.RolloutStrategy.Type).To(Equal(controlplanev1.RollingUpdateStrategyType))
-				g.Expect(tt.kcp.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
+				g.Expect(tt.kcp.Spec.Rollout.Strategy.Type).To(Equal(controlplanev1.RollingUpdateStrategyType))
+				g.Expect(tt.kcp.Spec.Rollout.Strategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
 				g.Expect(tt.kcp.Spec.Replicas).To(Equal(ptr.To[int32](1)))
 			}
 			g.Expect(warnings).To(BeEmpty())

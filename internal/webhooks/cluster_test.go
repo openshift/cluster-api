@@ -39,34 +39,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/webhooks/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
-
-func TestClusterDefaultNamespaces(t *testing.T) {
-	g := NewWithT(t)
-
-	c := &clusterv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "fooboo",
-		},
-		Spec: clusterv1.ClusterSpec{
-			InfrastructureRef: &corev1.ObjectReference{},
-			ControlPlaneRef:   &corev1.ObjectReference{},
-		},
-	}
-	webhook := &Cluster{}
-	t.Run("for Cluster", util.CustomDefaultValidateTest(ctx, c, webhook))
-
-	g.Expect(webhook.Default(ctx, c)).To(Succeed())
-
-	g.Expect(c.Spec.InfrastructureRef.Namespace).To(Equal(c.Namespace))
-	g.Expect(c.Spec.ControlPlaneRef.Namespace).To(Equal(c.Namespace))
-}
 
 func TestClusterTopologyDefaultNamespaces(t *testing.T) {
 	// NOTE: ClusterTopology feature flag is disabled by default, thus preventing to set Cluster.Topologies.
@@ -79,19 +57,9 @@ func TestClusterTopologyDefaultNamespaces(t *testing.T) {
 		WithTopology(builder.ClusterTopology().
 			WithClass("foo").
 			WithVersion("v1.19.1").
-			WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-				MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
-					RemediationTemplate: &corev1.ObjectReference{},
-				},
-			}).
 			WithMachineDeployment(
 				builder.MachineDeploymentTopology("md1").
 					WithClass("aa").
-					WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-						MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
-							RemediationTemplate: &corev1.ObjectReference{},
-						},
-					}).
 					Build()).
 			Build()).
 		Build()
@@ -100,7 +68,11 @@ func TestClusterTopologyDefaultNamespaces(t *testing.T) {
 		WithControlPlaneInfrastructureMachineTemplate(&unstructured.Unstructured{}).
 		WithWorkerMachineDeploymentClasses(*builder.MachineDeploymentClass("aa").Build()).
 		Build()
-	conditions.MarkTrue(clusterClass, clusterv1.ClusterClassVariablesReconciledCondition)
+	conditions.Set(clusterClass, metav1.Condition{
+		Type:   clusterv1.ClusterClassVariablesReadyCondition,
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.ClusterClassVariablesReadyReason,
+	})
 	// Sets up the fakeClient for the test case. This is required because the test uses a Managed Topology.
 	fakeClient := fake.NewClientBuilder().
 		WithObjects(clusterClass).
@@ -112,11 +84,6 @@ func TestClusterTopologyDefaultNamespaces(t *testing.T) {
 	t.Run("for Cluster", util.CustomDefaultValidateTest(ctx, c, webhook))
 
 	g.Expect(webhook.Default(ctx, c)).To(Succeed())
-
-	g.Expect(c.Spec.Topology.ControlPlane.MachineHealthCheck.MachineHealthCheckClass.RemediationTemplate.Namespace).To(Equal(c.Namespace))
-	for i := range c.Spec.Topology.Workers.MachineDeployments {
-		g.Expect(c.Spec.Topology.Workers.MachineDeployments[i].MachineHealthCheck.MachineHealthCheckClass.RemediationTemplate.Namespace).To(Equal(c.Namespace))
-	}
 }
 
 // TestClusterDefaultAndValidateVariables cases where cluster.spec.topology.class is altered.
@@ -139,7 +106,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "location",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -171,7 +138,9 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 			topology:    &clusterv1.Topology{},
 			oldTopology: &clusterv1.Topology{},
 			expect: &clusterv1.Topology{
-				Class:     "class1",
+				ClassRef: clusterv1.ClusterClassRef{
+					Name: "class1",
+				},
 				Version:   "v1.22.2",
 				Variables: []clusterv1.ClusterVariable{},
 			},
@@ -183,7 +152,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "location",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -225,7 +194,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						Name: "location",
 						Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 							{
-								Required: true,
+								Required: ptr.To(true),
 								From:     clusterv1.VariableDefinitionFromInline,
 								Schema: clusterv1.VariableSchema{
 									OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -240,7 +209,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						Name: "count",
 						Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 							{
-								Required: true,
+								Required: ptr.To(true),
 								From:     clusterv1.VariableDefinitionFromInline,
 								Schema: clusterv1.VariableSchema{
 									OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -284,7 +253,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "location",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -298,7 +267,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 				Build(),
 			topology: &clusterv1.Topology{
 				ControlPlane: clusterv1.ControlPlaneTopology{},
-				Workers: &clusterv1.WorkersTopology{
+				Workers: clusterv1.WorkersTopology{
 					MachineDeployments: []clusterv1.MachineDeploymentTopology{
 						{
 							Class: "default-worker",
@@ -317,7 +286,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 				ControlPlane: clusterv1.ControlPlaneTopology{
 					// "location" has not been added to .variables.overrides.
 				},
-				Workers: &clusterv1.WorkersTopology{
+				Workers: clusterv1.WorkersTopology{
 					MachineDeployments: []clusterv1.MachineDeploymentTopology{
 						{
 							Class: "default-worker",
@@ -356,7 +325,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "httpProxy",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -378,7 +347,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 				Build(),
 			topology: &clusterv1.Topology{
 				ControlPlane: clusterv1.ControlPlaneTopology{
-					Variables: &clusterv1.ControlPlaneVariables{
+					Variables: clusterv1.ControlPlaneVariables{
 						Overrides: []clusterv1.ClusterVariable{
 							{
 								Name:  "httpProxy",
@@ -387,12 +356,12 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						},
 					},
 				},
-				Workers: &clusterv1.WorkersTopology{
+				Workers: clusterv1.WorkersTopology{
 					MachineDeployments: []clusterv1.MachineDeploymentTopology{
 						{
 							Class: "default-worker",
 							Name:  "md-1",
-							Variables: &clusterv1.MachineDeploymentVariables{
+							Variables: clusterv1.MachineDeploymentVariables{
 								Overrides: []clusterv1.ClusterVariable{
 									{
 										Name:  "httpProxy",
@@ -406,7 +375,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						{
 							Class: "default-worker",
 							Name:  "md-1",
-							Variables: &clusterv1.MachinePoolVariables{
+							Variables: clusterv1.MachinePoolVariables{
 								Overrides: []clusterv1.ClusterVariable{
 									{
 										Name:  "httpProxy",
@@ -426,7 +395,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 			},
 			expect: &clusterv1.Topology{
 				ControlPlane: clusterv1.ControlPlaneTopology{
-					Variables: &clusterv1.ControlPlaneVariables{
+					Variables: clusterv1.ControlPlaneVariables{
 						Overrides: []clusterv1.ClusterVariable{
 							{
 								Name: "httpProxy",
@@ -436,12 +405,12 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						},
 					},
 				},
-				Workers: &clusterv1.WorkersTopology{
+				Workers: clusterv1.WorkersTopology{
 					MachineDeployments: []clusterv1.MachineDeploymentTopology{
 						{
 							Class: "default-worker",
 							Name:  "md-1",
-							Variables: &clusterv1.MachineDeploymentVariables{
+							Variables: clusterv1.MachineDeploymentVariables{
 								Overrides: []clusterv1.ClusterVariable{
 									{
 										Name: "httpProxy",
@@ -456,7 +425,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						{
 							Class: "default-worker",
 							Name:  "md-1",
-							Variables: &clusterv1.MachinePoolVariables{
+							Variables: clusterv1.MachinePoolVariables{
 								Overrides: []clusterv1.ClusterVariable{
 									{
 										Name: "httpProxy",
@@ -486,7 +455,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "location",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -496,7 +465,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "somepatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -506,7 +475,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "anotherpatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -536,10 +505,10 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithStatusVariables(clusterv1.ClusterClassStatusVariable{
 					Name:                "location",
-					DefinitionsConflict: false,
+					DefinitionsConflict: ptr.To(false),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -549,7 +518,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "somepatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -559,7 +528,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "anotherpatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -598,10 +567,10 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithStatusVariables(clusterv1.ClusterClassStatusVariable{
 					Name:                "location",
-					DefinitionsConflict: true,
+					DefinitionsConflict: ptr.To(true),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -611,7 +580,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "somepatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -621,7 +590,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "anotherpatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -646,10 +615,10 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 			clusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
 				WithStatusVariables(clusterv1.ClusterClassStatusVariable{
 					Name:                "location",
-					DefinitionsConflict: true,
+					DefinitionsConflict: ptr.To(true),
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -659,7 +628,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "somepatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -669,7 +638,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 							},
 						},
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     "anotherpatch",
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -706,7 +675,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -727,7 +696,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -754,7 +723,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -791,7 +760,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -828,7 +797,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -865,7 +834,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -903,7 +872,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					Name: "cpu",
 					Definitions: []clusterv1.ClusterClassStatusVariableDefinition{
 						{
-							Required: true,
+							Required: ptr.To(true),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -977,7 +946,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 						{
 							// For optional variables, it is optional to set top-level variables
 							// but overrides can be set even if the top-level variables are not set.
-							Required: false,
+							Required: ptr.To(false),
 							From:     clusterv1.VariableDefinitionFromInline,
 							Schema: clusterv1.VariableSchema{
 								OpenAPIV3Schema: clusterv1.JSONSchemaProps{
@@ -1292,10 +1261,10 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setting Class and Version here to avoid obfuscating the test cases above.
-			tt.topology.Class = "class1"
+			tt.topology.ClassRef.Name = "class1"
 			tt.topology.Version = "v1.22.2"
 			if tt.expect != nil {
-				tt.expect.Class = "class1"
+				tt.expect.ClassRef.Name = "class1"
 				tt.expect.Version = "v1.22.2"
 			}
 
@@ -1304,7 +1273,11 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 				Build()
 
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
-			conditions.MarkTrue(tt.clusterClass, clusterv1.ClusterClassVariablesReconciledCondition)
+			conditions.Set(tt.clusterClass, metav1.Condition{
+				Type:   clusterv1.ClusterClassVariablesReadyCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.ClusterClassVariablesReadyReason,
+			})
 			fakeClient := fake.NewClientBuilder().
 				WithObjects(tt.clusterClass).
 				WithScheme(fakeScheme).
@@ -1345,7 +1318,7 @@ func TestClusterDefaultAndValidateVariables(t *testing.T) {
 					return
 				}
 				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(cluster.Spec.Topology).To(BeComparableTo(tt.expect))
+				g.Expect(cluster.Spec.Topology).To(BeComparableTo(*tt.expect))
 			})
 
 			// Test if defaulting works in combination with validation.
@@ -1373,7 +1346,11 @@ func TestClusterDefaultTopologyVersion(t *testing.T) {
 		Build()
 
 	clusterClass := builder.ClusterClass("fooboo", "foo").Build()
-	conditions.MarkTrue(clusterClass, clusterv1.ClusterClassVariablesReconciledCondition)
+	conditions.Set(clusterClass, metav1.Condition{
+		Type:   clusterv1.ClusterClassVariablesReadyCondition,
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.ClusterClassVariablesReadyReason,
+	})
 	// Sets up the fakeClient for the test case. This is required because the test uses a Managed Topology.
 	fakeClient := fake.NewClientBuilder().
 		WithObjects(clusterClass).
@@ -1410,31 +1387,12 @@ func TestClusterValidation(t *testing.T) {
 	// NOTE: ClusterTopology feature flag is disabled by default, thus preventing to set Cluster.Topologies.
 
 	tests := []struct {
-		name      string
-		in        *clusterv1.Cluster
-		old       *clusterv1.Cluster
-		expectErr bool
+		name         string
+		in           *clusterv1.Cluster
+		old          *clusterv1.Cluster
+		expectErr    bool
+		expectErrStr string
 	}{
-		{
-			name:      "should return error when cluster namespace and infrastructure ref namespace mismatch",
-			expectErr: true,
-			in: builder.Cluster("fooNamespace", "cluster1").
-				WithInfrastructureCluster(
-					builder.InfrastructureClusterTemplate("barNamespace", "infra1").Build()).
-				WithControlPlane(
-					builder.ControlPlane("fooNamespace", "cp1").Build()).
-				Build(),
-		},
-		{
-			name:      "should return error when cluster namespace and controlPlane ref namespace mismatch",
-			expectErr: true,
-			in: builder.Cluster("fooNamespace", "cluster1").
-				WithInfrastructureCluster(
-					builder.InfrastructureClusterTemplate("fooNamespace", "infra1").Build()).
-				WithControlPlane(
-					builder.ControlPlane("barNamespace", "cp1").Build()).
-				Build(),
-		},
 		{
 			name:      "should succeed when namespaces match",
 			expectErr: false,
@@ -1446,25 +1404,39 @@ func TestClusterValidation(t *testing.T) {
 				Build(),
 		},
 		{
-			name:      "fails if topology is set but feature flag is disabled",
-			expectErr: true,
+			name:         "fails if topology is set but feature flag is disabled",
+			expectErr:    true,
+			expectErrStr: "spec.topology: Forbidden: can be set only if the ClusterTopology feature flag is enabled",
 			in: builder.Cluster("fooNamespace", "cluster1").
 				WithInfrastructureCluster(
 					builder.InfrastructureClusterTemplate("fooNamespace", "infra1").Build()).
 				WithControlPlane(
 					builder.ControlPlane("fooNamespace", "cp1").Build()).
-				WithTopology(&clusterv1.Topology{}).
+				WithTopology(&clusterv1.Topology{
+					ClassRef: clusterv1.ClusterClassRef{
+						Name: "class",
+					},
+				}).
+				Build(),
+		},
+		{
+			name:         "fails if none of spec.controlPlaneRef, spec.infrastructureRef or spec.topology is set",
+			expectErr:    true,
+			expectErrStr: "spec: Forbidden: one of spec.controlPlaneRef, spec.infrastructureRef or spec.topology must be set",
+			in: builder.Cluster("fooNamespace", "cluster1").
 				Build(),
 		},
 		{
 			name:      "pass with undefined CIDR ranges",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{},
 					},
-					Pods: &clusterv1.NetworkRanges{
+					Pods: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{},
 					},
 				}).
@@ -1474,11 +1446,13 @@ func TestClusterValidation(t *testing.T) {
 			name:      "pass with nil CIDR ranges",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						CIDRBlocks: nil,
 					},
-					Pods: &clusterv1.NetworkRanges{
+					Pods: clusterv1.NetworkRanges{
 						CIDRBlocks: nil,
 					},
 				}).
@@ -1488,11 +1462,13 @@ func TestClusterValidation(t *testing.T) {
 			name:      "pass with valid IPv4 CIDR ranges",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"10.10.10.10/24"},
 					},
-					Pods: &clusterv1.NetworkRanges{
+					Pods: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"10.10.10.10/24"},
 					},
 				}).
@@ -1502,11 +1478,13 @@ func TestClusterValidation(t *testing.T) {
 			name:      "pass with valid IPv6 CIDR ranges",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64"},
 					},
-					Pods: &clusterv1.NetworkRanges{
+					Pods: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64"},
 					},
 				}).
@@ -1516,11 +1494,13 @@ func TestClusterValidation(t *testing.T) {
 			name:      "pass with valid dualstack CIDR ranges",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64", "10.10.10.10/24"},
 					},
-					Pods: &clusterv1.NetworkRanges{
+					Pods: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"2004::1234:abcd:ffff:c0a8:101/64", "10.10.10.10/24"},
 					},
 				}).
@@ -1530,8 +1510,10 @@ func TestClusterValidation(t *testing.T) {
 			name:      "pass if multiple CIDR ranges of IPv4 are passed",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"10.10.10.10/24", "11.11.11.11/24"},
 					},
 				}).
@@ -1541,8 +1523,10 @@ func TestClusterValidation(t *testing.T) {
 			name:      "pass if multiple CIDR ranges of IPv6 are passed",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"2002::1234:abcd:ffff:c0a8:101/64", "2004::1234:abcd:ffff:c0a8:101/64"},
 					},
 				}).
@@ -1552,19 +1536,24 @@ func TestClusterValidation(t *testing.T) {
 			name:      "pass if too many cidr ranges are specified in the clusterNetwork pods field",
 			expectErr: false,
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Pods: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Pods: clusterv1.NetworkRanges{
 						CIDRBlocks: []string{"10.10.10.10/24", "11.11.11.11/24", "12.12.12.12/24"},
 					},
 				}).
 				Build(),
 		},
 		{
-			name:      "fails if service cidr ranges are not valid",
-			expectErr: true,
+			name:         "fails if service cidr ranges are not valid",
+			expectErr:    true,
+			expectErrStr: "[spec.clusterNetwork.services.cidrBlocks[0]: Invalid value: \"10.10.10.10\": invalid CIDR address: 10.10.10.10, spec.clusterNetwork.services.cidrBlocks[1]: Invalid value: \"11.11.11.11\": invalid CIDR address: 11.11.11.11]",
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Services: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Services: clusterv1.NetworkRanges{
 						// Invalid ranges: missing network suffix
 						CIDRBlocks: []string{"10.10.10.10", "11.11.11.11"},
 					},
@@ -1572,11 +1561,14 @@ func TestClusterValidation(t *testing.T) {
 				Build(),
 		},
 		{
-			name:      "fails if pod cidr ranges are not valid",
-			expectErr: true,
+			name:         "fails if pod cidr ranges are not valid",
+			expectErr:    true,
+			expectErrStr: "[spec.clusterNetwork.pods.cidrBlocks[0]: Invalid value: \"10.10.10.10\": invalid CIDR address: 10.10.10.10, spec.clusterNetwork.pods.cidrBlocks[1]: Invalid value: \"11.11.11.11\": invalid CIDR address: 11.11.11.11]",
 			in: builder.Cluster("fooNamespace", "cluster1").
-				WithClusterNetwork(&clusterv1.ClusterNetwork{
-					Pods: &clusterv1.NetworkRanges{
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				WithClusterNetwork(clusterv1.ClusterNetwork{
+					Pods: clusterv1.NetworkRanges{
 						// Invalid ranges: missing network suffix
 						CIDRBlocks: []string{"10.10.10.10", "11.11.11.11"},
 					},
@@ -1586,32 +1578,53 @@ func TestClusterValidation(t *testing.T) {
 		{
 			name:      "pass with name of under 63 characters",
 			expectErr: false,
-			in:        builder.Cluster("fooNamespace", "short-name").Build(),
+			in: builder.Cluster("fooNamespace", "short-name").
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				Build(),
 		},
 		{
-			name:      "pass with _, -, . characters in name",
-			in:        builder.Cluster("fooNamespace", "thisNameContains.A_Non-Alphanumeric").Build(),
+			name: "pass with _, -, . characters in name",
+			in: builder.Cluster("fooNamespace", "thisNameContains.A_Non-Alphanumeric").
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				Build(),
 			expectErr: false,
 		},
 		{
-			name:      "fails if cluster name is longer than 63 characters",
-			in:        builder.Cluster("fooNamespace", "thisNameIsReallyMuchLongerThanTheMaximumLengthOfSixtyThreeCharacters").Build(),
-			expectErr: true,
+			name: "fails if cluster name is longer than 63 characters",
+			in: builder.Cluster("fooNamespace", "thisNameIsReallyMuchLongerThanTheMaximumLengthOfSixtyThreeCharacters").
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				Build(),
+			expectErr:    true,
+			expectErrStr: "must be a valid label value must be no more than 63 characters",
 		},
 		{
-			name:      "error when name starts with NonAlphanumeric character",
-			in:        builder.Cluster("fooNamespace", "-thisNameStartsWithANonAlphanumeric").Build(),
-			expectErr: true,
+			name: "error when name starts with NonAlphanumeric character",
+			in: builder.Cluster("fooNamespace", "-thisNameStartsWithANonAlphanumeric").WithControlPlane(
+				builder.ControlPlane("fooNamespace", "cp1").Build()).
+				Build(),
+			expectErr:    true,
+			expectErrStr: "must be a valid label value a valid label must be an empty string or consist of alphanumeric characters",
 		},
 		{
-			name:      "error when name ends with NonAlphanumeric character",
-			in:        builder.Cluster("fooNamespace", "thisNameEndsWithANonAlphanumeric.").Build(),
-			expectErr: true,
+			name: "error when name ends with NonAlphanumeric character",
+			in: builder.Cluster("fooNamespace", "thisNameEndsWithANonAlphanumeric.").
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				Build(),
+			expectErr:    true,
+			expectErrStr: "must be a valid label value a valid label must be an empty string or consist of alphanumeric characters",
 		},
 		{
-			name:      "error when name contains invalid NonAlphanumeric character",
-			in:        builder.Cluster("fooNamespace", "thisNameContainsInvalid!@NonAlphanumerics").Build(),
-			expectErr: true,
+			name: "error when name contains invalid NonAlphanumeric character",
+			in: builder.Cluster("fooNamespace", "thisNameContainsInvalid!@NonAlphanumerics").
+				WithControlPlane(
+					builder.ControlPlane("fooNamespace", "cp1").Build()).
+				Build(),
+			expectErr:    true,
+			expectErrStr: "must be a valid label value a valid label must be an empty string or consist of alphanumeric characters",
 		},
 		{
 			name: "error when controlPlaneRef gets unset",
@@ -1621,7 +1634,8 @@ func TestClusterValidation(t *testing.T) {
 				WithControlPlane(
 					builder.ControlPlane("fooNamespace", "cp1").Build()).
 				Build(),
-			expectErr: true,
+			expectErr:    true,
+			expectErrStr: "spec: Forbidden: one of spec.controlPlaneRef, spec.infrastructureRef or spec.topology must be set, spec.controlPlaneRef: Forbidden: cannot be removed",
 		},
 		{
 			name: "error when infrastructureRef gets unset",
@@ -1631,7 +1645,8 @@ func TestClusterValidation(t *testing.T) {
 				WithInfrastructureCluster(
 					builder.InfrastructureClusterTemplate("fooNamespace", "infra1").Build()).
 				Build(),
-			expectErr: true,
+			expectErr:    true,
+			expectErrStr: "spec.infrastructureRef: Forbidden: cannot be removed, spec: Forbidden: one of spec.controlPlaneRef, spec.infrastructureRef or spec.topology must be set",
 		},
 	}
 	for _, tt := range tests {
@@ -1645,6 +1660,8 @@ func TestClusterValidation(t *testing.T) {
 			g.Expect(warnings).To(BeEmpty())
 			if tt.expectErr {
 				g.Expect(err).To(HaveOccurred())
+				g.Expect(tt.expectErrStr).ToNot(BeEmpty())
+				g.Expect(err.Error()).To(ContainSubstring(tt.expectErrStr))
 				return
 			}
 			g.Expect(err).ToNot(HaveOccurred())
@@ -1902,6 +1919,8 @@ func TestClusterTopologyValidation(t *testing.T) {
 				builder.ControlPlane("fooboo", "cluster1-cp").WithVersion("v1.19.1").
 					WithStatusFields(map[string]interface{}{"status.version": "v1.19.1"}).
 					Build(),
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
 				builder.MachineDeployment("fooboo", "cluster1-workers1").WithLabels(map[string]string{
 					clusterv1.ClusterNameLabel:                          "cluster1",
 					clusterv1.ClusterTopologyOwnedLabel:                 "",
@@ -1982,6 +2001,8 @@ func TestClusterTopologyValidation(t *testing.T) {
 				builder.ControlPlane("fooboo", "cluster1-cp").WithVersion("v1.19.1").
 					WithStatusFields(map[string]interface{}{"status.version": "v1.19.1"}).
 					Build(),
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
 				builder.MachineDeployment("fooboo", "cluster1-workers1").WithLabels(map[string]string{
 					clusterv1.ClusterNameLabel:                          "cluster1",
 					clusterv1.ClusterTopologyOwnedLabel:                 "",
@@ -2102,74 +2123,6 @@ func TestClusterTopologyValidation(t *testing.T) {
 				}).WithVersion("v1.18.1").Build(),
 			},
 		},
-		{
-			name:      "should return error if DefinitionFrom is set on a Cluster variable",
-			expectErr: true,
-			in: builder.Cluster("fooboo", "cluster1").
-				WithTopology(builder.ClusterTopology().
-					WithClass("foo").
-					WithVersion("v1.30.0").
-					WithVariables(clusterv1.ClusterVariable{
-						Name:           "variable-1",
-						DefinitionFrom: "patch-1",
-						Value:          apiextensionsv1.JSON{},
-					}).
-					Build()).
-				Build(),
-		},
-		{
-			name:      "should return error if DefinitionFrom is set on a control plane variable override",
-			expectErr: true,
-			in: builder.Cluster("fooboo", "cluster1").
-				WithTopology(builder.ClusterTopology().
-					WithClass("foo").
-					WithVersion("v1.30.0").
-					WithControlPlaneVariables(clusterv1.ClusterVariable{
-						Name:           "variable-1",
-						DefinitionFrom: "patch-1",
-						Value:          apiextensionsv1.JSON{},
-					}).
-					Build()).
-				Build(),
-		},
-		{
-			name:      "should return error if DefinitionFrom is set on a MD variable override",
-			expectErr: true,
-			in: builder.Cluster("fooboo", "cluster1").
-				WithTopology(builder.ClusterTopology().
-					WithClass("foo").
-					WithVersion("v1.30.0").
-					WithMachineDeployment(
-						builder.MachineDeploymentTopology("md1").
-							WithClass("bb").
-							WithVariables(clusterv1.ClusterVariable{
-								Name:           "variable-1",
-								DefinitionFrom: "patch-1",
-								Value:          apiextensionsv1.JSON{},
-							}).
-							Build()).
-					Build()).
-				Build(),
-		},
-		{
-			name:      "should return error if DefinitionFrom is set on a MP variable override",
-			expectErr: true,
-			in: builder.Cluster("fooboo", "cluster1").
-				WithTopology(builder.ClusterTopology().
-					WithClass("foo").
-					WithVersion("v1.30.0").
-					WithMachinePool(
-						builder.MachinePoolTopology("mp1").
-							WithClass("bb").
-							WithVariables(clusterv1.ClusterVariable{
-								Name:           "variable-1",
-								DefinitionFrom: "patch-1",
-								Value:          apiextensionsv1.JSON{},
-							}).
-							Build()).
-					Build()).
-				Build(),
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2186,7 +2139,11 @@ func TestClusterTopologyValidation(t *testing.T) {
 				Build()
 
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
-			conditions.MarkTrue(class, clusterv1.ClusterClassVariablesReconciledCondition)
+			conditions.Set(class, metav1.Condition{
+				Type:   clusterv1.ClusterClassVariablesReadyCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.ClusterClassVariablesReadyReason,
+			})
 			// Sets up the fakeClient for the test case.
 			fakeClient := fake.NewClientBuilder().
 				WithObjects(class).
@@ -2218,7 +2175,6 @@ func TestClusterTopologyValidation(t *testing.T) {
 // TestClusterTopologyValidationWithClient tests the additional cases introduced in new validation in the webhook package.
 func TestClusterTopologyValidationWithClient(t *testing.T) {
 	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
-	g := NewWithT(t)
 
 	tests := []struct {
 		name            string
@@ -2285,8 +2241,8 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithClass("clusterclass").
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
-						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							Enable: ptr.To(true),
+						WithControlPlaneMachineHealthCheck(clusterv1.ControlPlaneTopologyHealthCheck{
+							Enabled: ptr.To(true),
 						}).
 						Build()).
 				Build(),
@@ -2303,15 +2259,16 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithClass("clusterclass").
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
-						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
-								UnhealthyConditions: []clusterv1.UnhealthyCondition{},
+						WithControlPlaneMachineHealthCheck(clusterv1.ControlPlaneTopologyHealthCheck{
+							Checks: clusterv1.ControlPlaneTopologyHealthCheckChecks{
+								UnhealthyNodeConditions:   []clusterv1.UnhealthyNodeCondition{},
+								NodeStartupTimeoutSeconds: ptr.To(int32(30)),
 							},
 						}).
 						Build()).
 				Build(),
 			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
-				WithControlPlaneInfrastructureMachineTemplate(&unstructured.Unstructured{}).
+				WithControlPlaneInfrastructureMachineTemplate(builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpinframachinetemplate").Build()).
 				Build(),
 			classReconciled: true,
 			wantErr:         false,
@@ -2324,9 +2281,9 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithClass("clusterclass").
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
-						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
-								UnhealthyConditions: []clusterv1.UnhealthyCondition{
+						WithControlPlaneMachineHealthCheck(clusterv1.ControlPlaneTopologyHealthCheck{
+							Checks: clusterv1.ControlPlaneTopologyHealthCheckChecks{
+								UnhealthyNodeConditions: []clusterv1.UnhealthyNodeCondition{
 									{
 										Type:   corev1.NodeReady,
 										Status: corev1.ConditionFalse,
@@ -2349,13 +2306,23 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithClass("clusterclass").
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
-						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							Enable: ptr.To(true),
+						WithControlPlaneMachineHealthCheck(clusterv1.ControlPlaneTopologyHealthCheck{
+							Enabled: ptr.To(true),
 						}).
 						Build()).
 				Build(),
 			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
-				WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckClass{}).
+				WithControlPlaneMachineHealthCheck(clusterv1.ControlPlaneClassHealthCheck{
+					Checks: clusterv1.ControlPlaneClassHealthCheckChecks{
+						UnhealthyNodeConditions: []clusterv1.UnhealthyNodeCondition{
+							{
+								Type:           corev1.NodeReady,
+								Status:         corev1.ConditionUnknown,
+								TimeoutSeconds: ptr.To(int32(5 * 60)),
+							},
+						},
+					},
+				}).
 				Build(),
 			classReconciled: true,
 			wantErr:         false,
@@ -2368,10 +2335,10 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithClass("clusterclass").
 						WithVersion("v1.22.2").
 						WithControlPlaneReplicas(3).
-						WithControlPlaneMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-							Enable: ptr.To(true),
-							MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
-								UnhealthyConditions: []clusterv1.UnhealthyCondition{
+						WithControlPlaneMachineHealthCheck(clusterv1.ControlPlaneTopologyHealthCheck{
+							Enabled: ptr.To(true),
+							Checks: clusterv1.ControlPlaneTopologyHealthCheckChecks{
+								UnhealthyNodeConditions: []clusterv1.UnhealthyNodeCondition{
 									{
 										Type:   corev1.NodeReady,
 										Status: corev1.ConditionFalse,
@@ -2382,7 +2349,7 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						Build()).
 				Build(),
 			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
-				WithControlPlaneInfrastructureMachineTemplate(&unstructured.Unstructured{}).
+				WithControlPlaneInfrastructureMachineTemplate(builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpinframachinetemplate").Build()).
 				Build(),
 			classReconciled: true,
 			wantErr:         false,
@@ -2398,8 +2365,8 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithMachineDeployment(
 							builder.MachineDeploymentTopology("md1").
 								WithClass("worker-class").
-								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-									Enable: ptr.To(true),
+								WithMachineHealthCheck(clusterv1.MachineDeploymentTopologyHealthCheck{
+									Enabled: ptr.To(true),
 								}).
 								Build(),
 						).
@@ -2424,9 +2391,10 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithMachineDeployment(
 							builder.MachineDeploymentTopology("md1").
 								WithClass("worker-class").
-								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-									MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
-										UnhealthyConditions: []clusterv1.UnhealthyCondition{},
+								WithMachineHealthCheck(clusterv1.MachineDeploymentTopologyHealthCheck{
+									Checks: clusterv1.MachineDeploymentTopologyHealthCheckChecks{
+										UnhealthyNodeConditions:   []clusterv1.UnhealthyNodeCondition{},
+										NodeStartupTimeoutSeconds: ptr.To(int32(30)),
 									},
 								}).
 								Build(),
@@ -2452,8 +2420,8 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithMachineDeployment(
 							builder.MachineDeploymentTopology("md1").
 								WithClass("worker-class").
-								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-									Enable: ptr.To(true),
+								WithMachineHealthCheck(clusterv1.MachineDeploymentTopologyHealthCheck{
+									Enabled: ptr.To(true),
 								}).
 								Build(),
 						).
@@ -2462,7 +2430,17 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 			class: builder.ClusterClass(metav1.NamespaceDefault, "clusterclass").
 				WithWorkerMachineDeploymentClasses(
 					*builder.MachineDeploymentClass("worker-class").
-						WithMachineHealthCheckClass(&clusterv1.MachineHealthCheckClass{}).
+						WithMachineHealthCheckClass(clusterv1.MachineDeploymentClassHealthCheck{
+							Checks: clusterv1.MachineDeploymentClassHealthCheckChecks{
+								UnhealthyNodeConditions: []clusterv1.UnhealthyNodeCondition{
+									{
+										Type:           corev1.NodeReady,
+										Status:         corev1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
+							},
+						}).
 						Build(),
 				).
 				Build(),
@@ -2480,10 +2458,10 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithMachineDeployment(
 							builder.MachineDeploymentTopology("md1").
 								WithClass("worker-class").
-								WithMachineHealthCheck(&clusterv1.MachineHealthCheckTopology{
-									Enable: ptr.To(true),
-									MachineHealthCheckClass: clusterv1.MachineHealthCheckClass{
-										UnhealthyConditions: []clusterv1.UnhealthyCondition{
+								WithMachineHealthCheck(clusterv1.MachineDeploymentTopologyHealthCheck{
+									Enabled: ptr.To(true),
+									Checks: clusterv1.MachineDeploymentTopologyHealthCheckChecks{
+										UnhealthyNodeConditions: []clusterv1.UnhealthyNodeCondition{
 											{
 												Type:   corev1.NodeReady,
 												Status: corev1.ConditionFalse,
@@ -2505,10 +2483,16 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(*testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
 			if tt.classReconciled {
-				conditions.MarkTrue(tt.class, clusterv1.ClusterClassVariablesReconciledCondition)
+				conditions.Set(tt.class, metav1.Condition{
+					Type:   clusterv1.ClusterClassVariablesReadyCondition,
+					Status: metav1.ConditionTrue,
+					Reason: clusterv1.ClusterClassVariablesReadyReason,
+				})
 			}
 			// Sets up the fakeClient for the test case.
 			fakeClient := fake.NewClientBuilder().
@@ -2549,35 +2533,30 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 				Build()).
 		Build()
 
-	ref := &corev1.ObjectReference{
+	ref := &clusterv1.ClusterClassTemplateReference{
 		APIVersion: "group.test.io/foo",
 		Kind:       "barTemplate",
 		Name:       "baz",
-		Namespace:  "default",
 	}
-	compatibleNameChangeRef := &corev1.ObjectReference{
+	compatibleNameChangeRef := &clusterv1.ClusterClassTemplateReference{
 		APIVersion: "group.test.io/foo",
 		Kind:       "barTemplate",
 		Name:       "differentbaz",
-		Namespace:  "default",
 	}
-	compatibleAPIVersionChangeRef := &corev1.ObjectReference{
+	compatibleAPIVersionChangeRef := &clusterv1.ClusterClassTemplateReference{
 		APIVersion: "group.test.io/foo2",
 		Kind:       "barTemplate",
 		Name:       "differentbaz",
-		Namespace:  "default",
 	}
-	incompatibleKindRef := &corev1.ObjectReference{
+	incompatibleKindRef := &clusterv1.ClusterClassTemplateReference{
 		APIVersion: "group.test.io/foo",
 		Kind:       "another-barTemplate",
 		Name:       "another-baz",
-		Namespace:  "default",
 	}
-	incompatibleAPIGroupRef := &corev1.ObjectReference{
+	incompatibleAPIGroupRef := &clusterv1.ClusterClassTemplateReference{
 		APIVersion: "group.nottest.io/foo",
 		Kind:       "barTemplate",
 		Name:       "another-baz",
-		Namespace:  "default",
 	}
 
 	tests := []struct {
@@ -3040,8 +3019,16 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(*testing.T) {
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
-			conditions.MarkTrue(tt.firstClass, clusterv1.ClusterClassVariablesReconciledCondition)
-			conditions.MarkTrue(tt.secondClass, clusterv1.ClusterClassVariablesReconciledCondition)
+			conditions.Set(tt.firstClass, metav1.Condition{
+				Type:   clusterv1.ClusterClassVariablesReadyCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.ClusterClassVariablesReadyReason,
+			})
+			conditions.Set(tt.secondClass, metav1.Condition{
+				Type:   clusterv1.ClusterClassVariablesReadyCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.ClusterClassVariablesReadyReason,
+			})
 
 			// Sets up the fakeClient for the test case.
 			fakeClient := fake.NewClientBuilder().
@@ -3054,7 +3041,7 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 
 			// Create and updated cluster which uses the name of the second class from the test definition in its '.spec.topology.'
 			secondCluster := cluster.DeepCopy()
-			secondCluster.Spec.Topology.Class = tt.secondClass.Name
+			secondCluster.Spec.Topology.ClassRef.Name = tt.secondClass.Name
 
 			// Checks the return error.
 			warnings, err := c.ValidateUpdate(ctx, cluster, secondCluster)
@@ -3071,11 +3058,10 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 // TestMovingBetweenManagedAndUnmanaged cluster tests cases where a clusterClass is added or removed during a cluster update.
 func TestMovingBetweenManagedAndUnmanaged(t *testing.T) {
 	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
-	ref := &corev1.ObjectReference{
+	ref := &clusterv1.ClusterClassTemplateReference{
 		APIVersion: "group.test.io/foo",
 		Kind:       "barTemplate",
 		Name:       "baz",
-		Namespace:  "default",
 	}
 
 	g := NewWithT(t)
@@ -3165,7 +3151,11 @@ func TestMovingBetweenManagedAndUnmanaged(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(*testing.T) {
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
-			conditions.MarkTrue(tt.clusterClass, clusterv1.ClusterClassVariablesReconciledCondition)
+			conditions.Set(tt.clusterClass, metav1.Condition{
+				Type:   clusterv1.ClusterClassVariablesReadyCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.ClusterClassVariablesReadyReason,
+			})
 			// Sets up the fakeClient for the test case.
 			fakeClient := fake.NewClientBuilder().
 				WithObjects(tt.clusterClass, tt.cluster).
@@ -3177,7 +3167,7 @@ func TestMovingBetweenManagedAndUnmanaged(t *testing.T) {
 
 			// Create and updated cluster which uses the name of the second class from the test definition in its '.spec.topology.'
 			updatedCluster := tt.cluster.DeepCopy()
-			updatedCluster.Spec.Topology = tt.updatedTopology
+			updatedCluster.Spec.Topology = ptr.Deref(tt.updatedTopology, clusterv1.Topology{})
 
 			// Checks the return error.
 			warnings, err := c.ValidateUpdate(ctx, tt.cluster, updatedCluster)
@@ -3196,11 +3186,10 @@ func TestMovingBetweenManagedAndUnmanaged(t *testing.T) {
 func TestClusterClassPollingErrors(t *testing.T) {
 	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 	g := NewWithT(t)
-	ref := &corev1.ObjectReference{
+	ref := &clusterv1.ClusterClassTemplateReference{
 		APIVersion: "group.test.io/foo",
 		Kind:       "barTemplate",
 		Name:       "baz",
-		Namespace:  "default",
 	}
 
 	topology := builder.ClusterTopology().WithClass("class1").WithVersion("v1.24.3").Build()
@@ -3216,7 +3205,11 @@ func TestClusterClassPollingErrors(t *testing.T) {
 	ccFullyReconciled := baseClusterClass.DeepCopy().Build()
 	ccFullyReconciled.Generation = 1
 	ccFullyReconciled.Status.ObservedGeneration = 1
-	conditions.MarkTrue(ccFullyReconciled, clusterv1.ClusterClassVariablesReconciledCondition)
+	conditions.Set(ccFullyReconciled, metav1.Condition{
+		Type:   clusterv1.ClusterClassVariablesReadyCondition,
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.ClusterClassVariablesReadyReason,
+	})
 
 	// secondFullyReconciled is a second ClusterClass with a matching generation and observed generation, and VariablesReconciled=True.
 	secondFullyReconciled := ccFullyReconciled.DeepCopy()
@@ -3226,11 +3219,19 @@ func TestClusterClassPollingErrors(t *testing.T) {
 	ccGenerationMismatch := baseClusterClass.DeepCopy().Build()
 	ccGenerationMismatch.Generation = 999
 	ccGenerationMismatch.Status.ObservedGeneration = 1
-	conditions.MarkTrue(ccGenerationMismatch, clusterv1.ClusterClassVariablesReconciledCondition)
+	conditions.Set(ccGenerationMismatch, metav1.Condition{
+		Type:   clusterv1.ClusterClassVariablesReadyCondition,
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.ClusterClassVariablesReadyReason,
+	})
 
 	// ccVariablesReconciledFalse with VariablesReconciled=False.
-	ccVariablesReconciledFalse := baseClusterClass.DeepCopy().Build()
-	conditions.MarkFalse(ccGenerationMismatch, clusterv1.ClusterClassVariablesReconciledCondition, "", clusterv1.ConditionSeverityError, "")
+	ccVariablesReconciledFalse := baseClusterClass.Build().DeepCopy()
+	conditions.Set(ccVariablesReconciledFalse, metav1.Condition{
+		Type:   clusterv1.ClusterClassVariablesReadyCondition,
+		Status: metav1.ConditionFalse,
+		Reason: clusterv1.ClusterClassVariablesReadyVariableDiscoveryFailedReason,
+	})
 
 	tests := []struct {
 		name           string
@@ -3305,7 +3306,7 @@ func TestClusterClassPollingErrors(t *testing.T) {
 			injectedErr: interceptor.Funcs{
 				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					// Throw an error if the second ClusterClass `class2` used as the new ClusterClass is being retrieved.
-					if key.Name == secondTopology.Class {
+					if key.Name == secondTopology.ClassRef.Name {
 						return errors.New("connection error")
 					}
 					return client.Get(ctx, key, obj)
@@ -3322,7 +3323,7 @@ func TestClusterClassPollingErrors(t *testing.T) {
 			injectedErr: interceptor.Funcs{
 				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					// Throw an error if the ClusterClass `class1` used as the old ClusterClass is being retrieved.
-					if key.Name == topology.Class {
+					if key.Name == topology.ClassRef.Name {
 						return errors.New("connection error")
 					}
 					return client.Get(ctx, key, obj)
@@ -3385,6 +3386,8 @@ func Test_validateTopologyControlPlaneVersion(t *testing.T) {
 				builder.ControlPlane("fooboo", "cluster1-cp").WithVersion("v1.19.1").
 					WithStatusFields(map[string]interface{}{"status.version": "v1.19.1"}).
 					Build(),
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
 			},
 		},
 		{
@@ -3648,7 +3651,7 @@ func Test_validateTopologyMachinePoolVersions(t *testing.T) {
 					clusterv1.ClusterNameLabel:                    "cluster1",
 					clusterv1.ClusterTopologyOwnedLabel:           "",
 					clusterv1.ClusterTopologyMachinePoolNameLabel: "pool1",
-				}).WithVersion("v1.19.1").WithStatus(expv1.MachinePoolStatus{NodeRefs: []corev1.ObjectReference{{Name: "mp-node-1"}}}).Build(),
+				}).WithVersion("v1.19.1").WithStatus(clusterv1.MachinePoolStatus{NodeRefs: []corev1.ObjectReference{{Name: "mp-node-1"}}}).Build(),
 			},
 			workloadObjects: []client.Object{
 				&corev1.Node{
@@ -3675,7 +3678,7 @@ func Test_validateTopologyMachinePoolVersions(t *testing.T) {
 					clusterv1.ClusterNameLabel:                    "cluster1",
 					clusterv1.ClusterTopologyOwnedLabel:           "",
 					clusterv1.ClusterTopologyMachinePoolNameLabel: "pool1",
-				}).WithVersion("v1.19.1").WithStatus(expv1.MachinePoolStatus{NodeRefs: []corev1.ObjectReference{{Name: "mp-node-1"}}}).Build(),
+				}).WithVersion("v1.19.1").WithStatus(clusterv1.MachinePoolStatus{NodeRefs: []corev1.ObjectReference{{Name: "mp-node-1"}}}).Build(),
 			},
 			workloadObjects: []client.Object{},
 		},
@@ -3849,13 +3852,12 @@ func TestValidateAutoscalerAnnotationsForCluster(t *testing.T) {
 	}
 }
 
-func refToUnstructured(ref *corev1.ObjectReference) *unstructured.Unstructured {
-	gvk := ref.GetObjectKind().GroupVersionKind()
+func refToUnstructured(ref *clusterv1.ClusterClassTemplateReference) *unstructured.Unstructured {
+	gvk := ref.GroupVersionKind()
 	output := &unstructured.Unstructured{}
 	output.SetKind(gvk.Kind)
 	output.SetAPIVersion(gvk.GroupVersion().String())
 	output.SetName(ref.Name)
-	output.SetNamespace(ref.Namespace)
 	return output
 }
 
