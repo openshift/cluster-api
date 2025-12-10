@@ -8,7 +8,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -5318,7 +5317,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -9109,7 +9107,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -11272,7 +11269,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -13555,7 +13551,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -16170,7 +16165,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -16971,7 +16965,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -19259,7 +19252,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -20174,7 +20166,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -20620,7 +20611,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -22066,7 +22056,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -22819,8 +22808,8 @@ metadata:
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -23186,8 +23175,8 @@ metadata:
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -23816,7 +23805,6 @@ metadata:
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -24073,7 +24061,6 @@ metadata:
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/feature-set: CustomNoUpgrade,TechPreviewNoUpgrade
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -24109,7 +24096,6 @@ rules: []
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -24127,7 +24113,6 @@ spec:
     metadata:
       annotations:
         target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
-      creationTimestamp: null
       labels:
         cluster.x-k8s.io/provider: cluster-api
         control-plane: controller-manager
@@ -24216,7 +24201,6 @@ kind: MutatingWebhookConfiguration
 metadata:
   annotations:
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
@@ -24404,7 +24388,6 @@ kind: ValidatingWebhookConfiguration
 metadata:
   annotations:
     service.beta.openshift.io/inject-cabundle: "true"
-  creationTimestamp: null
   labels:
     cluster.x-k8s.io/provider: cluster-api
     clusterctl.cluster.x-k8s.io: ""
