@@ -6,7 +6,7 @@ import (
 	"os"
 	"path"
 
-	certmangerv1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
+	certmangerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	admissionregistration "k8s.io/api/admissionregistration/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -19,6 +19,7 @@ import (
 var (
 	basePath        = flag.String("base-path", "", "path to the root of the provider's repository")
 	manifestsPath   = flag.String("manifests-path", "", "path to the desired directory where to output the generated manifests")
+	kustomizeDir    = flag.String("kustomize-dir", defaultKustomizeComponentsPath, "directory to search for kustomization.yaml file, relative to the base-path")
 	providerName    = flag.String("provider-name", "", "name of the provider")
 	providerType    = flag.String("provider-type", "", "type of the provider")
 	providerVersion = flag.String("provider-version", "", "version of the provider")
