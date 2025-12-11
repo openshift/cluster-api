@@ -181,10 +181,6 @@ func (m *resWrangler) GetMatchingResourcesByAnyId(
 	matches IdMatcher) []*resource.Resource {
 	var result []*resource.Resource
 	for _, r := range m.rList {
-		if r.RNode.IsNilOrEmpty() {
-			continue
-		}
-
 		for _, id := range append(r.PrevIds(), r.CurId()) {
 			if matches(id) {
 				result = append(result, r)
@@ -597,7 +593,7 @@ func (m *resWrangler) appendReplaceOrMerge(res *resource.Resource) error {
 
 		default:
 			return fmt.Errorf(
-				"id %#v exists; can not use behavior: '%s', behavior must be merge or replace", id, res.Behavior())
+				"id %#v exists; behavior must be merge or replace", id)
 		}
 		i, err := m.Replace(res)
 		if err != nil {
