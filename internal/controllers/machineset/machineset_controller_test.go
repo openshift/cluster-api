@@ -26,6 +26,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	gomegatypes "github.com/onsi/gomega/types"
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,7 +37,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -44,8 +47,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
+	"sigs.k8s.io/cluster-api/internal/hooks"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -59,6 +66,8 @@ var _ reconcile.Reconciler = &Reconciler{}
 func TestMachineSetReconciler(t *testing.T) {
 	setup := func(t *testing.T, g *WithT) (*corev1.Namespace, *clusterv1.Cluster) {
 		t.Helper()
+
+		utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
 
 		t.Log("Creating the namespace")
 		ns, err := env.CreateNamespace(ctx, "test-machine-set-reconciler")
@@ -115,12 +124,16 @@ func TestMachineSetReconciler(t *testing.T) {
 
 		duration10m := ptr.To(int32(10 * 60))
 		duration5m := ptr.To(int32(5 * 60))
+		machineTaints := []clusterv1.MachineTaint{
+			{Key: "taint-key", Value: "taint-value", Effect: corev1.TaintEffectNoSchedule, Propagation: clusterv1.MachineTaintPropagationAlways},
+		}
 		replicas := int32(2)
 		version := "v1.14.2"
 		machineTemplateSpec := clusterv1.MachineTemplateSpec{
 			ObjectMeta: clusterv1.ObjectMeta{
 				Labels: map[string]string{
-					"label-1": "true",
+					"label-1":    "true",
+					"precedence": "MachineSet",
 				},
 				Annotations: map[string]string{
 					"annotation-1": "true",
@@ -148,6 +161,7 @@ func TestMachineSetReconciler(t *testing.T) {
 					NodeVolumeDetachTimeoutSeconds: duration10m,
 				},
 				MinReadySeconds: ptr.To[int32](0),
+				Taints:          machineTaints,
 			},
 		}
 
@@ -207,6 +221,12 @@ func TestMachineSetReconciler(t *testing.T) {
 				"annotations": map[string]interface{}{
 					"precedence": "GenericBootstrapConfig",
 				},
+				"labels": map[string]interface{}{
+					"precedence": "GenericBootstrapConfig",
+				},
+			},
+			"spec": map[string]interface{}{
+				"format": "cloud-init",
 			},
 		}
 		bootstrapTmpl := &unstructured.Unstructured{
@@ -228,6 +248,9 @@ func TestMachineSetReconciler(t *testing.T) {
 			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 			"metadata": map[string]interface{}{
 				"annotations": map[string]interface{}{
+					"precedence": "GenericInfrastructureMachineTemplate",
+				},
+				"labels": map[string]interface{}{
 					"precedence": "GenericInfrastructureMachineTemplate",
 				},
 			},
@@ -293,22 +316,67 @@ func TestMachineSetReconciler(t *testing.T) {
 			}
 			return len(machines.Items)
 		}, timeout).Should(BeEquivalentTo(replicas))
+		machinesMap := map[string]*clusterv1.Machine{}
+		for _, m := range machines.Items {
+			machinesMap[m.Name] = &m
+		}
 
-		t.Log("Creating a InfrastructureMachine for each Machine")
+		t.Log("Verify InfrastructureMachine for each Machine")
 		infraMachines := &unstructured.UnstructuredList{}
 		infraMachines.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
 		infraMachines.SetKind("GenericInfrastructureMachine")
-		g.Eventually(func() int {
-			if err := env.List(ctx, infraMachines, client.InNamespace(namespace.Name)); err != nil {
-				return -1
+		g.Eventually(func(g Gomega) {
+			g.Expect(env.List(ctx, infraMachines, client.InNamespace(namespace.Name))).To(Succeed())
+			g.Expect(infraMachines.Items).To(HaveLen(int(replicas)))
+			for _, im := range infraMachines.Items {
+				g.Expect(machinesMap).To(HaveKey(im.GetName()))
+				g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("annotation-1", "true"), "have annotations of MachineTemplate applied")
+				g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("precedence", "MachineSet"), "the annotations from the MachineSpec template to overwrite the infrastructure template ones")
+				g.Expect(im.GetLabels()).To(HaveKeyWithValue("label-1", "true"), "have labels of MachineTemplate applied")
+				g.Expect(im.GetLabels()).To(HaveKeyWithValue("precedence", "MachineSet"), "the labels from the MachineSpec template to overwrite the infrastructure template ones")
+				g.Expect(cleanupTime(im.GetManagedFields())).To(ConsistOf(toManagedFields([]managedFieldEntry{{
+					// capi-machineset-metadata owns labels and annotations.
+					APIVersion: im.GetAPIVersion(),
+					Manager:    machineSetMetadataManagerName,
+					Operation:  metav1.ManagedFieldsOperationApply,
+					FieldsV1: `{					
+"f:metadata":{
+	"f:annotations":{
+		"f:annotation-1":{},
+		"f:precedence":{}
+	},
+	"f:labels":{
+		"f:cluster.x-k8s.io/cluster-name":{},
+		"f:cluster.x-k8s.io/deployment-name":{},
+		"f:cluster.x-k8s.io/set-name":{},
+		"f:label-1":{},
+		"f:precedence":{}
+	}
+}}`,
+				}, {
+					// capi-machineset owns spec.
+					APIVersion: im.GetAPIVersion(),
+					Manager:    machineSetManagerName,
+					Operation:  metav1.ManagedFieldsOperationApply,
+					FieldsV1: `{
+"f:spec":{
+	"f:size":{}
+}}`,
+				}, {
+					// Machine manager owns ownerReference.
+					APIVersion: im.GetAPIVersion(),
+					Manager:    "manager",
+					Operation:  metav1.ManagedFieldsOperationUpdate,
+					FieldsV1: fmt.Sprintf(`{
+"f:metadata":{
+	"f:ownerReferences":{
+		"k:{\"uid\":\"%s\"}":{}
+	}
+}}`, machinesMap[im.GetName()].UID),
+				}})))
 			}
-			return len(machines.Items)
-		}, timeout).Should(BeEquivalentTo(replicas))
-		for _, im := range infraMachines.Items {
-			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("annotation-1", "true"), "have annotations of MachineTemplate applied")
-			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("precedence", "MachineSet"), "the annotations from the MachineSpec template to overwrite the infrastructure template ones")
-			g.Expect(im.GetLabels()).To(HaveKeyWithValue("label-1", "true"), "have labels of MachineTemplate applied")
-		}
+		}, timeout).Should(Succeed())
+
 		g.Eventually(func() bool {
 			g.Expect(env.List(ctx, infraMachines, client.InNamespace(namespace.Name))).To(Succeed())
 			// The Machine reconciler should remove the ownerReference to the MachineSet on the InfrastructureMachine.
@@ -327,21 +395,60 @@ func TestMachineSetReconciler(t *testing.T) {
 			return !hasMSOwnerRef && hasMachineOwnerRef
 		}, timeout).Should(BeTrue(), "infraMachine should not have ownerRef to MachineSet")
 
-		t.Log("Creating a BootstrapConfig for each Machine")
+		t.Log("Verify BootstrapConfig for each Machine")
 		bootstrapConfigs := &unstructured.UnstructuredList{}
 		bootstrapConfigs.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
 		bootstrapConfigs.SetKind("GenericBootstrapConfig")
-		g.Eventually(func() int {
-			if err := env.List(ctx, bootstrapConfigs, client.InNamespace(namespace.Name)); err != nil {
-				return -1
+		g.Eventually(func(g Gomega) {
+			g.Expect(env.List(ctx, bootstrapConfigs, client.InNamespace(namespace.Name))).To(Succeed())
+			g.Expect(bootstrapConfigs.Items).To(HaveLen(int(replicas)))
+			for _, im := range bootstrapConfigs.Items {
+				g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("annotation-1", "true"), "have annotations of MachineTemplate applied")
+				g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("precedence", "MachineSet"), "the annotations from the MachineSpec template to overwrite the bootstrap config template ones")
+				g.Expect(im.GetLabels()).To(HaveKeyWithValue("label-1", "true"), "have labels of MachineTemplate applied")
+				g.Expect(im.GetLabels()).To(HaveKeyWithValue("precedence", "MachineSet"), "the labels from the MachineSpec template to overwrite the bootstrap config template ones")
+				g.Expect(cleanupTime(im.GetManagedFields())).To(ConsistOf(toManagedFields([]managedFieldEntry{{
+					// capi-machineset-metadata owns labels and annotations.
+					APIVersion: im.GetAPIVersion(),
+					Manager:    machineSetMetadataManagerName,
+					Operation:  metav1.ManagedFieldsOperationApply,
+					FieldsV1: `{					
+"f:metadata":{
+	"f:annotations":{
+		"f:annotation-1":{},
+		"f:precedence":{}
+	},
+	"f:labels":{
+		"f:cluster.x-k8s.io/cluster-name":{},
+		"f:cluster.x-k8s.io/deployment-name":{},
+		"f:cluster.x-k8s.io/set-name":{},
+		"f:label-1":{},
+		"f:precedence":{}
+	}
+}}`,
+				}, {
+					// capi-machineset owns spec.
+					APIVersion: im.GetAPIVersion(),
+					Manager:    machineSetManagerName,
+					Operation:  metav1.ManagedFieldsOperationApply,
+					FieldsV1: `{
+"f:spec":{
+	"f:format":{}
+}}`,
+				}, {
+					// Machine manager owns ownerReference.
+					APIVersion: im.GetAPIVersion(),
+					Manager:    "manager",
+					Operation:  metav1.ManagedFieldsOperationUpdate,
+					FieldsV1: fmt.Sprintf(`{
+"f:metadata":{
+	"f:ownerReferences":{
+		"k:{\"uid\":\"%s\"}":{}
+	}
+}}`, machinesMap[im.GetName()].UID),
+				}})))
 			}
-			return len(machines.Items)
-		}, timeout).Should(BeEquivalentTo(replicas))
-		for _, im := range bootstrapConfigs.Items {
-			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("annotation-1", "true"), "have annotations of MachineTemplate applied")
-			g.Expect(im.GetAnnotations()).To(HaveKeyWithValue("precedence", "MachineSet"), "the annotations from the MachineSpec template to overwrite the bootstrap config template ones")
-			g.Expect(im.GetLabels()).To(HaveKeyWithValue("label-1", "true"), "have labels of MachineTemplate applied")
-		}
+		}, timeout).Should(Succeed())
 		g.Eventually(func() bool {
 			g.Expect(env.List(ctx, bootstrapConfigs, client.InNamespace(namespace.Name))).To(Succeed())
 			// The Machine reconciler should remove the ownerReference to the MachineSet on the Bootstrap object.
@@ -367,10 +474,17 @@ func TestMachineSetReconciler(t *testing.T) {
 		}
 
 		// Verify that in-place mutable fields propagate from MachineSet to Machines.
-		t.Log("Updating NodeDrainTimeoutSeconds on MachineSet")
+		t.Log("Updating NodeDrainTimeoutSeconds and Taints on MachineSet")
 		patchHelper, err := patch.NewHelper(instance, env)
 		g.Expect(err).ToNot(HaveOccurred())
 		instance.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds = duration5m
+		additionalTaint := clusterv1.MachineTaint{
+			Key:         "additional-taint-key",
+			Value:       "additional-taint-value",
+			Effect:      corev1.TaintEffectNoSchedule,
+			Propagation: clusterv1.MachineTaintPropagationAlways,
+		}
+		instance.Spec.Template.Spec.Taints = []clusterv1.MachineTaint{additionalTaint}
 		g.Expect(patchHelper.Patch(ctx, instance)).Should(Succeed())
 
 		t.Log("Verifying new NodeDrainTimeoutSeconds value is set on Machines")
@@ -378,7 +492,7 @@ func TestMachineSetReconciler(t *testing.T) {
 			if err := env.List(ctx, machines, client.InNamespace(namespace.Name)); err != nil {
 				return false
 			}
-			// All the machines should have the new NodeDrainTimeoutValue
+			// All the machines should have the new NodeDrainTimeoutValue and the new taint
 			for _, m := range machines.Items {
 				if m.Spec.Deletion.NodeDrainTimeoutSeconds == nil {
 					return false
@@ -386,9 +500,13 @@ func TestMachineSetReconciler(t *testing.T) {
 				if *m.Spec.Deletion.NodeDrainTimeoutSeconds != *duration5m {
 					return false
 				}
+				if len(m.Spec.Taints) != 1 || m.Spec.Taints[0].Key != additionalTaint.Key ||
+					m.Spec.Taints[0].Value != additionalTaint.Value || m.Spec.Taints[0].Effect != additionalTaint.Effect {
+					return false
+				}
 			}
 			return true
-		}, timeout).Should(BeTrue(), "machine should have the updated NodeDrainTimeoutSeconds value")
+		}, timeout).Should(BeTrue(), "machine should have the updated NodeDrainTimeoutSeconds and Taints values")
 
 		// Try to delete 1 machine and check the MachineSet scales back up.
 		machineToBeDeleted := machines.Items[0]
@@ -502,7 +620,6 @@ func TestMachineSetReconciler(t *testing.T) {
 
 func TestMachineSetOwnerReference(t *testing.T) {
 	testCluster := &clusterv1.Cluster{
-		TypeMeta:   metav1.TypeMeta{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String()},
 		ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceDefault, Name: testClusterName},
 	}
 
@@ -545,8 +662,8 @@ func TestMachineSetOwnerReference(t *testing.T) {
 			ms: ms1,
 			expectedOR: []metav1.OwnerReference{
 				{
-					APIVersion: testCluster.APIVersion,
-					Kind:       testCluster.Kind,
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
 					Name:       testCluster.Name,
 					UID:        testCluster.UID,
 				},
@@ -905,8 +1022,10 @@ func TestAdoptOrphan(t *testing.T) {
 	}
 }
 
-func newMachineSet(name, cluster string, replicas int32) *clusterv1.MachineSet {
-	return &clusterv1.MachineSet{
+type newMachineSetOption func(m *clusterv1.MachineSet)
+
+func newMachineSet(name, cluster string, replicas int32, opts ...newMachineSetOption) *clusterv1.MachineSet {
+	ms := &clusterv1.MachineSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: metav1.NamespaceDefault,
@@ -939,6 +1058,28 @@ func newMachineSet(name, cluster string, replicas int32) *clusterv1.MachineSet {
 			Reason: clusterv1.NotPausedReason,
 		}},
 		},
+	}
+	for _, opt := range opts {
+		opt(ms)
+	}
+	return ms
+}
+
+func withMachineSetLabels(labels map[string]string) newMachineSetOption {
+	return func(m *clusterv1.MachineSet) {
+		m.Labels = labels
+	}
+}
+
+func withMachineSetAnnotations(annotations map[string]string) newMachineSetOption {
+	return func(m *clusterv1.MachineSet) {
+		m.Annotations = annotations
+	}
+}
+
+func withDeletionOrder(order clusterv1.MachineSetDeletionOrder) newMachineSetOption {
+	return func(m *clusterv1.MachineSet) {
+		m.Spec.Deletion.Order = order
 	}
 }
 
@@ -1002,7 +1143,10 @@ func TestMachineSetReconcile_MachinesCreatedConditionFalseOnBadInfraRef(t *testi
 	request := reconcile.Request{
 		NamespacedName: key,
 	}
-	fakeClient := fake.NewClientBuilder().WithObjects(cluster, ms, builder.GenericInfrastructureMachineTemplateCRD.DeepCopy()).WithStatusSubresource(&clusterv1.MachineSet{}).Build()
+	scheme := runtime.NewScheme()
+	g.Expect(apiextensionsv1.AddToScheme(scheme)).To(Succeed())
+	g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, ms, builder.GenericInfrastructureMachineTemplateCRD.DeepCopy()).WithStatusSubresource(&clusterv1.MachineSet{}).Build()
 
 	msr := &Reconciler{
 		Client:   fakeClient,
@@ -1085,34 +1229,7 @@ func TestMachineSetReconciler_updateStatusResizedCondition(t *testing.T) {
 }
 
 func TestMachineSetReconciler_syncMachines(t *testing.T) {
-	setup := func(t *testing.T, g *WithT) (*corev1.Namespace, *clusterv1.Cluster) {
-		t.Helper()
-
-		t.Log("Creating the namespace")
-		ns, err := env.CreateNamespace(ctx, "test-machine-set-reconciler-sync-machines")
-		g.Expect(err).ToNot(HaveOccurred())
-
-		t.Log("Creating the Cluster")
-		cluster := &clusterv1.Cluster{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: ns.Name,
-				Name:      testClusterName,
-			},
-			Spec: clusterv1.ClusterSpec{
-				ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
-					APIGroup: builder.ControlPlaneGroupVersion.Group,
-					Kind:     builder.GenericControlPlaneKind,
-					Name:     "cp1",
-				},
-			},
-		}
-		g.Expect(env.Create(ctx, cluster)).To(Succeed())
-
-		t.Log("Creating the Cluster Kubeconfig Secret")
-		g.Expect(env.CreateKubeconfigSecret(ctx, cluster)).To(Succeed())
-
-		return ns, cluster
-	}
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
 
 	teardown := func(t *testing.T, g *WithT, ns *corev1.Namespace, cluster *clusterv1.Cluster) {
 		t.Helper()
@@ -1124,22 +1241,47 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 	}
 
 	g := NewWithT(t)
-	namespace, testCluster := setup(t, g)
+
+	t.Log("Creating the namespace")
+	namespace, err := env.CreateNamespace(ctx, "test-machine-set-reconciler-sync-machines")
+	g.Expect(err).ToNot(HaveOccurred())
+
+	t.Log("Creating the Cluster")
+	testCluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace.Name,
+			Name:      testClusterName,
+		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
+	}
+	g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
+
+	t.Log("Creating the Cluster Kubeconfig Secret")
+	g.Expect(env.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 	defer teardown(t, g, namespace, testCluster)
 
-	classicManager := "manager"
 	replicas := int32(2)
 	version := "v1.25.3"
 	duration10s := ptr.To(int32(10))
-	duration11s := ptr.To(int32(11))
 	ms := &clusterv1.MachineSet{
 		ObjectMeta: metav1.ObjectMeta{
-			UID:       "abc-123-ms-uid",
 			Name:      "ms-1",
 			Namespace: namespace.Name,
+			Annotations: map[string]string{
+				// Pause the MachineSet controller that is running in the background as part of the controller
+				// suite as we want to control which part of the MachineSet controller is run in this test
+				// by calling the syncMachines func explicitly.
+				clusterv1.PausedAnnotation: "",
+			},
 			Labels: map[string]string{
-				"label-1":                            "true",
-				clusterv1.MachineDeploymentNameLabel: "md-1",
+				"label-1": "true",
+				// Note: not adding the clusterv1.MachineDeploymentNameLabel to keep the test simple.
 			},
 		},
 		Spec: clusterv1.MachineSetSpec{
@@ -1193,12 +1335,12 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "infra-machine-1",
 				"namespace": namespace.Name,
-				"labels": map[string]string{
+				"labels": map[string]interface{}{
 					"preserved-label": "preserved-value",
 					"dropped-label":   "dropped-value",
 					"modified-label":  "modified-value",
 				},
-				"annotations": map[string]string{
+				"annotations": map[string]interface{}{
 					"preserved-annotation": "preserved-value",
 					"dropped-annotation":   "dropped-value",
 					"modified-annotation":  "modified-value",
@@ -1207,7 +1349,6 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			"spec": infraMachineSpec,
 		},
 	}
-	g.Expect(env.Create(ctx, infraMachine, client.FieldOwner(classicManager))).To(Succeed())
 
 	bootstrapConfigSpec := map[string]interface{}{
 		"bootstrap-field": "bootstrap-value",
@@ -1219,12 +1360,12 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config-1",
 				"namespace": namespace.Name,
-				"labels": map[string]string{
+				"labels": map[string]interface{}{
 					"preserved-label": "preserved-value",
 					"dropped-label":   "dropped-value",
 					"modified-label":  "modified-value",
 				},
-				"annotations": map[string]string{
+				"annotations": map[string]interface{}{
 					"preserved-annotation": "preserved-value",
 					"dropped-annotation":   "dropped-value",
 					"modified-annotation":  "modified-value",
@@ -1233,15 +1374,9 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			"spec": bootstrapConfigSpec,
 		},
 	}
-	g.Expect(env.Create(ctx, bootstrapConfig, client.FieldOwner(classicManager))).To(Succeed())
 
 	inPlaceMutatingMachine := &clusterv1.Machine{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: clusterv1.GroupVersion.String(),
-			Kind:       "Machine",
-		},
 		ObjectMeta: metav1.ObjectMeta{
-			UID:       "abc-123-uid",
 			Name:      "in-place-mutating-machine",
 			Namespace: namespace.Name,
 			Labels: map[string]string{
@@ -1256,7 +1391,7 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			},
 		},
 		Spec: clusterv1.MachineSpec{
-			ClusterName: testClusterName,
+			ClusterName: testCluster.Name,
 			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
 				Name:     infraMachine.GetName(),
 				APIGroup: infraMachine.GroupVersionKind().Group,
@@ -1271,15 +1406,9 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			},
 		},
 	}
-	g.Expect(env.Create(ctx, inPlaceMutatingMachine, client.FieldOwner(classicManager))).To(Succeed())
 
 	deletingMachine := &clusterv1.Machine{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: clusterv1.GroupVersion.String(),
-			Kind:       "Machine",
-		},
 		ObjectMeta: metav1.ObjectMeta{
-			UID:         "abc-123-uid",
 			Name:        "deleting-machine",
 			Namespace:   namespace.Name,
 			Labels:      map[string]string{},
@@ -1287,7 +1416,7 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			Finalizers:  []string{"testing-finalizer"},
 		},
 		Spec: clusterv1.MachineSpec{
-			ClusterName: testClusterName,
+			ClusterName: testCluster.Name,
 			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
 				APIGroup: builder.InfrastructureGroupVersion.Group,
 				Kind:     builder.TestInfrastructureMachineKind,
@@ -1298,7 +1427,30 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 			},
 		},
 	}
-	g.Expect(env.Create(ctx, deletingMachine, client.FieldOwner(classicManager))).To(Succeed())
+
+	//
+	// Create objects
+	//
+
+	// Create MachineSet
+	g.Expect(env.CreateAndWait(ctx, ms)).To(Succeed())
+
+	// Create InfraMachine (same as in createInfraMachine)
+	g.Expect(ssa.Patch(ctx, env.Client, machineSetManagerName, infraMachine)).To(Succeed())
+	g.Expect(ssa.RemoveManagedFieldsForLabelsAndAnnotations(ctx, env.Client, env.GetAPIReader(), infraMachine, machineSetManagerName)).To(Succeed())
+
+	// Create BootstrapConfig (same as in createBootstrapConfig)
+	g.Expect(ssa.Patch(ctx, env.Client, machineSetManagerName, bootstrapConfig)).To(Succeed())
+	g.Expect(ssa.RemoveManagedFieldsForLabelsAndAnnotations(ctx, env.Client, env.GetAPIReader(), bootstrapConfig, machineSetManagerName)).To(Succeed())
+
+	// Set ownerReferences of the Machines to the MachineSet to ensure deterministic field ownership by capi-machineset below.
+	// Note: There is code in the Machine controller that sets ownerRefs to the Cluster on standalone Machines.
+	inPlaceMutatingMachine.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(ms, machineSetKind)})
+	deletingMachine.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(ms, machineSetKind)})
+
+	// Create Machines (same as in syncReplicas)
+	g.Expect(ssa.Patch(ctx, env.Client, machineSetManagerName, inPlaceMutatingMachine)).To(Succeed())
+	g.Expect(ssa.Patch(ctx, env.Client, machineSetManagerName, deletingMachine)).To(Succeed())
 	// Delete the machine to put it in the deleting state
 	g.Expect(env.Delete(ctx, deletingMachine)).To(Succeed())
 	// Wait till the machine is marked for deletion
@@ -1318,7 +1470,9 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 	// Run syncMachines to clean up managed fields and have proper field ownership
 	// for Machines, InfrastructureMachines and BootstrapConfigs.
 	reconciler := &Reconciler{
-		Client:   env,
+		// Note: Ensure the fieldManager defaults to manager like in prod.
+		//       Otherwise it defaults to the binary name which is not manager in tests.
+		Client:   client.WithFieldOwner(env.Client, "manager"),
 		ssaCache: ssa.NewCache("test-controller"),
 	}
 	s := &scope{
@@ -1326,72 +1480,100 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 		machines:   machines,
 		getAndAdoptMachinesForMachineSetSucceeded: true,
 	}
-	_, err := reconciler.syncMachines(ctx, s)
+	_, err = reconciler.syncMachines(ctx, s)
 	g.Expect(err).ToNot(HaveOccurred())
 
-	// The inPlaceMutatingMachine should have cleaned up managed fields.
 	updatedInPlaceMutatingMachine := inPlaceMutatingMachine.DeepCopy()
-	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInPlaceMutatingMachine), updatedInPlaceMutatingMachine)).To(Succeed())
-	// Verify ManagedFields
-	g.Expect(updatedInPlaceMutatingMachine.ManagedFields).Should(
-		ContainElement(ssa.MatchManagedFieldsEntry(machineSetManagerName, metav1.ManagedFieldsOperationApply)),
-		"in-place mutable machine should contain an entry for SSA manager",
-	)
-	g.Expect(updatedInPlaceMutatingMachine.ManagedFields).ShouldNot(
-		ContainElement(ssa.MatchManagedFieldsEntry(classicManager, metav1.ManagedFieldsOperationUpdate)),
-		"in-place mutable machine should not contain an entry for old manager",
-	)
+	g.Eventually(func(g Gomega) {
+		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInPlaceMutatingMachine), updatedInPlaceMutatingMachine)).To(Succeed())
+		statusManagedFields := managedFieldsMatching(updatedInPlaceMutatingMachine.ManagedFields, "manager", metav1.ManagedFieldsOperationUpdate, "status")
+		g.Expect(statusManagedFields).To(HaveLen(1))
+		g.Expect(cleanupTime(updatedInPlaceMutatingMachine.ManagedFields)).To(ConsistOf(toManagedFields([]managedFieldEntry{{
+			// capi-machineset owns almost everything.
+			Manager:    machineSetManagerName,
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: clusterv1.GroupVersion.String(),
+			FieldsV1:   fmt.Sprintf("{\"f:metadata\":{\"f:annotations\":{\"f:dropped-annotation\":{},\"f:modified-annotation\":{},\"f:preserved-annotation\":{}},\"f:finalizers\":{\"v:\\\"machine.cluster.x-k8s.io\\\"\":{}},\"f:labels\":{\"f:cluster.x-k8s.io/set-name\":{},\"f:dropped-label\":{},\"f:modified-label\":{},\"f:preserved-label\":{}},\"f:ownerReferences\":{\"k:{\\\"uid\\\":\\\"%s\\\"}\":{}}},\"f:spec\":{\"f:bootstrap\":{\"f:configRef\":{\"f:apiGroup\":{},\"f:kind\":{},\"f:name\":{}}},\"f:clusterName\":{},\"f:infrastructureRef\":{\"f:apiGroup\":{},\"f:kind\":{},\"f:name\":{}}}}", ms.UID),
+		}, {
+			// manager owns the finalizer.
+			Manager:    "manager",
+			Operation:  metav1.ManagedFieldsOperationUpdate,
+			APIVersion: clusterv1.GroupVersion.String(),
+			FieldsV1:   "{\"f:metadata\":{\"f:finalizers\":{\".\":{},\"v:\\\"machine.cluster.x-k8s.io\\\"\":{}}}}",
+		}, {
+			// manager owns status.
+			Manager:    "manager",
+			Operation:  metav1.ManagedFieldsOperationUpdate,
+			APIVersion: clusterv1.GroupVersion.String(),
+			// No need to verify details (a bit non-deterministic, as it depends on Machine controller reconciles).
+			FieldsV1:    string(statusManagedFields[0].FieldsV1.Raw),
+			Subresource: "status",
+		}})))
+	}, timeout).Should(Succeed())
 
-	// The InfrastructureMachine should have ownership of "labels" and "annotations" transferred to
-	// "capi-machineset" manager.
 	updatedInfraMachine := infraMachine.DeepCopy()
-	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInfraMachine), updatedInfraMachine)).To(Succeed())
+	g.Eventually(func(g Gomega) {
+		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInfraMachine), updatedInfraMachine)).To(Succeed())
+		g.Expect(cleanupTime(updatedInfraMachine.GetManagedFields())).To(ConsistOf(toManagedFields([]managedFieldEntry{{
+			// capi-machineset-metadata owns labels and annotations.
+			Manager:    machineSetMetadataManagerName,
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: updatedInfraMachine.GetAPIVersion(),
+			FieldsV1:   "{\"f:metadata\":{\"f:annotations\":{\"f:dropped-annotation\":{},\"f:modified-annotation\":{},\"f:preserved-annotation\":{}},\"f:labels\":{\"f:cluster.x-k8s.io/set-name\":{},\"f:dropped-label\":{},\"f:modified-label\":{},\"f:preserved-label\":{}}}}",
+		}, {
+			// capi-machineset owns spec.
+			Manager:    machineSetManagerName,
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: updatedInfraMachine.GetAPIVersion(),
+			FieldsV1:   "{\"f:spec\":{\"f:infra-field\":{}}}",
+		}, {
+			// manager owns ClusterName label and ownerReferences.
+			Manager:    "manager",
+			Operation:  metav1.ManagedFieldsOperationUpdate,
+			APIVersion: updatedInfraMachine.GetAPIVersion(),
+			FieldsV1:   fmt.Sprintf("{\"f:metadata\":{\"f:labels\":{\"f:cluster.x-k8s.io/cluster-name\":{}},\"f:ownerReferences\":{\".\":{},\"k:{\\\"uid\\\":\\\"%s\\\"}\":{}}}}", inPlaceMutatingMachine.UID),
+		}})))
+	}, timeout).Should(Succeed())
 
-	// Verify ManagedFields
-	g.Expect(updatedInfraMachine.GetManagedFields()).Should(
-		ssa.MatchFieldOwnership(machineSetManagerName, metav1.ManagedFieldsOperationApply, contract.Path{"f:metadata", "f:labels"}))
-	g.Expect(updatedInfraMachine.GetManagedFields()).Should(
-		ssa.MatchFieldOwnership(machineSetManagerName, metav1.ManagedFieldsOperationApply, contract.Path{"f:metadata", "f:annotations"}))
-	g.Expect(updatedInfraMachine.GetManagedFields()).ShouldNot(
-		ssa.MatchFieldOwnership(classicManager, metav1.ManagedFieldsOperationUpdate, contract.Path{"f:metadata", "f:labels"}))
-	g.Expect(updatedInfraMachine.GetManagedFields()).ShouldNot(
-		ssa.MatchFieldOwnership(classicManager, metav1.ManagedFieldsOperationUpdate, contract.Path{"f:metadata", "f:annotations"}))
-	g.Expect(updatedInfraMachine.GetManagedFields()).Should(
-		ssa.MatchFieldOwnership(classicManager, metav1.ManagedFieldsOperationUpdate, contract.Path{"f:spec"}))
-
-	// The BootstrapConfig should have ownership of "labels" and "annotations" transferred to
-	// "capi-machineset" manager.
 	updatedBootstrapConfig := bootstrapConfig.DeepCopy()
-	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedBootstrapConfig), updatedBootstrapConfig)).To(Succeed())
-
-	// Verify ManagedFields
-	g.Expect(updatedBootstrapConfig.GetManagedFields()).Should(
-		ssa.MatchFieldOwnership(machineSetManagerName, metav1.ManagedFieldsOperationApply, contract.Path{"f:metadata", "f:labels"}))
-	g.Expect(updatedBootstrapConfig.GetManagedFields()).Should(
-		ssa.MatchFieldOwnership(machineSetManagerName, metav1.ManagedFieldsOperationApply, contract.Path{"f:metadata", "f:annotations"}))
-	g.Expect(updatedBootstrapConfig.GetManagedFields()).ShouldNot(
-		ssa.MatchFieldOwnership(classicManager, metav1.ManagedFieldsOperationUpdate, contract.Path{"f:metadata", "f:labels"}))
-	g.Expect(updatedBootstrapConfig.GetManagedFields()).ShouldNot(
-		ssa.MatchFieldOwnership(classicManager, metav1.ManagedFieldsOperationUpdate, contract.Path{"f:metadata", "f:annotations"}))
-	g.Expect(updatedBootstrapConfig.GetManagedFields()).Should(
-		ssa.MatchFieldOwnership(classicManager, metav1.ManagedFieldsOperationUpdate, contract.Path{"f:spec"}))
+	g.Eventually(func(g Gomega) {
+		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedBootstrapConfig), updatedBootstrapConfig)).To(Succeed())
+		g.Expect(cleanupTime(updatedBootstrapConfig.GetManagedFields())).To(ConsistOf(toManagedFields([]managedFieldEntry{{
+			// capi-machineset-metadata owns labels and annotations.
+			Manager:    machineSetMetadataManagerName,
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: updatedBootstrapConfig.GetAPIVersion(),
+			FieldsV1:   "{\"f:metadata\":{\"f:annotations\":{\"f:dropped-annotation\":{},\"f:modified-annotation\":{},\"f:preserved-annotation\":{}},\"f:labels\":{\"f:cluster.x-k8s.io/set-name\":{},\"f:dropped-label\":{},\"f:modified-label\":{},\"f:preserved-label\":{}}}}",
+		}, {
+			// capi-machineset owns spec.
+			Manager:    machineSetManagerName,
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: updatedBootstrapConfig.GetAPIVersion(),
+			FieldsV1:   "{\"f:spec\":{\"f:bootstrap-field\":{}}}",
+		}, {
+			// manager owns ClusterName label and ownerReferences.
+			Manager:    "manager",
+			Operation:  metav1.ManagedFieldsOperationUpdate,
+			APIVersion: updatedBootstrapConfig.GetAPIVersion(),
+			FieldsV1:   fmt.Sprintf("{\"f:metadata\":{\"f:labels\":{\"f:cluster.x-k8s.io/cluster-name\":{}},\"f:ownerReferences\":{\".\":{},\"k:{\\\"uid\\\":\\\"%s\\\"}\":{}}}}", inPlaceMutatingMachine.UID),
+		}})))
+	}, timeout).Should(Succeed())
 
 	//
 	// Verify In-place mutating fields
 	//
 
-	// Update the MachineSet and verify the in-mutating fields are propagated.
+	// Update the MachineSet and verify the in-place mutating fields are propagated.
 	ms.Spec.Template.Labels = map[string]string{
 		"preserved-label": "preserved-value",  // Keep the label and value as is
 		"modified-label":  "modified-value-2", // Modify the value of the label
 		// Drop "dropped-label"
 	}
 	expectedLabels := map[string]string{
-		"preserved-label":                    "preserved-value",
-		"modified-label":                     "modified-value-2",
-		clusterv1.MachineSetNameLabel:        ms.Name,
-		clusterv1.MachineDeploymentNameLabel: "md-1",
-		clusterv1.ClusterNameLabel:           testClusterName, // This label is added by the Machine controller.
+		"preserved-label":             "preserved-value",
+		"modified-label":              "modified-value-2",
+		clusterv1.MachineSetNameLabel: ms.Name,
+		clusterv1.ClusterNameLabel:    testCluster.Name, // This label is added by the Machine controller.
 	}
 	ms.Spec.Template.Annotations = map[string]string{
 		"preserved-annotation": "preserved-value",  // Keep the annotation and value as is
@@ -1404,6 +1586,10 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 	ms.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds = duration10s
 	ms.Spec.Template.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = duration10s
 	ms.Spec.Template.Spec.MinReadySeconds = ptr.To[int32](10)
+	machineTaints := []clusterv1.MachineTaint{
+		{Key: "taint-key", Value: "taint-value", Effect: corev1.TaintEffectNoSchedule, Propagation: clusterv1.MachineTaintPropagationAlways},
+	}
+	ms.Spec.Template.Spec.Taints = machineTaints
 	s = &scope{
 		machineSet: ms,
 		machines:   []*clusterv1.Machine{updatedInPlaceMutatingMachine, deletingMachine},
@@ -1414,118 +1600,88 @@ func TestMachineSetReconciler_syncMachines(t *testing.T) {
 
 	// Verify in-place mutable fields are updated on the Machine.
 	updatedInPlaceMutatingMachine = inPlaceMutatingMachine.DeepCopy()
-	g.Eventually(func(g Gomega) {
-		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInPlaceMutatingMachine), updatedInPlaceMutatingMachine)).To(Succeed())
-		// Verify Labels
-		g.Expect(updatedInPlaceMutatingMachine.Labels).Should(Equal(expectedLabels))
-		// Verify Annotations
-		g.Expect(updatedInPlaceMutatingMachine.Annotations).Should(Equal(ms.Spec.Template.Annotations))
-		// Verify Node timeout values
-		g.Expect(updatedInPlaceMutatingMachine.Spec.Deletion.NodeDrainTimeoutSeconds).Should(And(
-			Not(BeNil()),
-			HaveValue(Equal(*ms.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds)),
-		))
-		g.Expect(updatedInPlaceMutatingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds).Should(And(
-			Not(BeNil()),
-			HaveValue(Equal(*ms.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds)),
-		))
-		g.Expect(updatedInPlaceMutatingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).Should(And(
-			Not(BeNil()),
-			HaveValue(Equal(*ms.Spec.Template.Spec.Deletion.NodeVolumeDetachTimeoutSeconds)),
-		))
-		g.Expect(updatedInPlaceMutatingMachine.Spec.MinReadySeconds).Should(And(
-			Not(BeNil()),
-			HaveValue(Equal(*ms.Spec.Template.Spec.MinReadySeconds)),
-		))
-		// Verify readiness gates.
-		g.Expect(updatedInPlaceMutatingMachine.Spec.ReadinessGates).Should(Equal(readinessGates))
-	}, timeout).Should(Succeed())
+	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInPlaceMutatingMachine), updatedInPlaceMutatingMachine)).To(Succeed())
+	g.Expect(updatedInPlaceMutatingMachine.Labels).Should(Equal(expectedLabels))
+	g.Expect(updatedInPlaceMutatingMachine.Annotations).Should(Equal(ms.Spec.Template.Annotations))
+	g.Expect(updatedInPlaceMutatingMachine.Spec.Deletion.NodeDrainTimeoutSeconds).Should(Equal(ms.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds))
+	g.Expect(updatedInPlaceMutatingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds).Should(Equal(ms.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds))
+	g.Expect(updatedInPlaceMutatingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).Should(Equal(ms.Spec.Template.Spec.Deletion.NodeVolumeDetachTimeoutSeconds))
+	g.Expect(updatedInPlaceMutatingMachine.Spec.MinReadySeconds).Should(Equal(ms.Spec.Template.Spec.MinReadySeconds))
+	g.Expect(updatedInPlaceMutatingMachine.Spec.ReadinessGates).Should(Equal(readinessGates))
+	g.Expect(updatedInPlaceMutatingMachine.Spec.Taints).Should(Equal(machineTaints))
 
 	// Verify in-place mutable fields are updated on InfrastructureMachine
 	updatedInfraMachine = infraMachine.DeepCopy()
-	g.Eventually(func(g Gomega) {
-		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInfraMachine), updatedInfraMachine)).To(Succeed())
-		// Verify Labels
-		g.Expect(updatedInfraMachine.GetLabels()).Should(Equal(expectedLabels))
-		// Verify Annotations
-		g.Expect(updatedInfraMachine.GetAnnotations()).Should(Equal(ms.Spec.Template.Annotations))
-		// Verify spec remains the same
-		g.Expect(updatedInfraMachine.Object).Should(HaveKeyWithValue("spec", infraMachineSpec))
-	}, timeout).Should(Succeed())
+	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedInfraMachine), updatedInfraMachine)).To(Succeed())
+	g.Expect(updatedInfraMachine.GetLabels()).Should(Equal(expectedLabels))
+	g.Expect(updatedInfraMachine.GetAnnotations()).Should(Equal(ms.Spec.Template.Annotations))
+	// Verify spec remains the same
+	g.Expect(updatedInfraMachine.Object).Should(HaveKeyWithValue("spec", infraMachineSpec))
 
 	// Verify in-place mutable fields are updated on the BootstrapConfig.
 	updatedBootstrapConfig = bootstrapConfig.DeepCopy()
-	g.Eventually(func(g Gomega) {
-		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedBootstrapConfig), updatedBootstrapConfig)).To(Succeed())
-		// Verify Labels
-		g.Expect(updatedBootstrapConfig.GetLabels()).Should(Equal(expectedLabels))
-		// Verify Annotations
-		g.Expect(updatedBootstrapConfig.GetAnnotations()).Should(Equal(ms.Spec.Template.Annotations))
-		// Verify spec remains the same
-		g.Expect(updatedBootstrapConfig.Object).Should(HaveKeyWithValue("spec", bootstrapConfigSpec))
-	}, timeout).Should(Succeed())
+	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedBootstrapConfig), updatedBootstrapConfig)).To(Succeed())
+	g.Expect(updatedBootstrapConfig.GetLabels()).Should(Equal(expectedLabels))
+	g.Expect(updatedBootstrapConfig.GetAnnotations()).Should(Equal(ms.Spec.Template.Annotations))
+	// Verify spec remains the same
+	g.Expect(updatedBootstrapConfig.Object).Should(HaveKeyWithValue("spec", bootstrapConfigSpec))
 
-	// Wait to ensure Machine is not updated.
-	// Verify that the machine stays the same consistently.
-	g.Consistently(func(g Gomega) {
-		// The deleting machine should not change.
+	// Verify ManagedFields
+	g.Eventually(func(g Gomega) {
 		updatedDeletingMachine := deletingMachine.DeepCopy()
 		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedDeletingMachine), updatedDeletingMachine)).To(Succeed())
+		statusManagedFields := managedFieldsMatching(updatedDeletingMachine.ManagedFields, "manager", metav1.ManagedFieldsOperationUpdate, "status")
+		g.Expect(statusManagedFields).To(HaveLen(1))
+		g.Expect(cleanupTime(updatedDeletingMachine.ManagedFields)).To(ConsistOf(toManagedFields([]managedFieldEntry{{
+			// capi-machineset owns almost everything.
+			Manager:    machineSetManagerName,
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: clusterv1.GroupVersion.String(),
+			FieldsV1:   fmt.Sprintf("{\"f:metadata\":{\"f:finalizers\":{\"v:\\\"testing-finalizer\\\"\":{}},\"f:ownerReferences\":{\"k:{\\\"uid\\\":\\\"%s\\\"}\":{}}},\"f:spec\":{\"f:bootstrap\":{\"f:dataSecretName\":{}},\"f:clusterName\":{},\"f:infrastructureRef\":{\"f:apiGroup\":{},\"f:kind\":{},\"f:name\":{}}}}", ms.UID),
+		}, {
+			// manager owns the fields that are propagated in-place for deleting Machines in syncMachines via patchHelper.
+			Manager:    "manager",
+			Operation:  metav1.ManagedFieldsOperationUpdate,
+			APIVersion: clusterv1.GroupVersion.String(),
+			FieldsV1:   "{\"f:spec\":{\"f:deletion\":{\"f:nodeDrainTimeoutSeconds\":{},\"f:nodeVolumeDetachTimeoutSeconds\":{}},\"f:minReadySeconds\":{},\"f:readinessGates\":{\".\":{},\"k:{\\\"conditionType\\\":\\\"foo\\\"}\":{\".\":{},\"f:conditionType\":{}}},\"f:taints\":{\".\":{},\"k:{\\\"effect\\\":\\\"NoSchedule\\\",\\\"key\\\":\\\"taint-key\\\"}\":{\".\":{},\"f:effect\":{},\"f:key\":{},\"f:propagation\":{},\"f:value\":{}}}}}",
+		}, {
+			// manager owns status.
+			Manager:    "manager",
+			Operation:  metav1.ManagedFieldsOperationUpdate,
+			APIVersion: clusterv1.GroupVersion.String(),
+			// No need to verify details (a bit non-deterministic, as it depends on Machine controller reconciles).
+			FieldsV1:    string(statusManagedFields[0].FieldsV1.Raw),
+			Subresource: "status",
+		}})))
+	}, timeout).Should(Succeed())
 
-		// Verify ManagedFields
-		g.Expect(updatedDeletingMachine.ManagedFields).ShouldNot(
-			ContainElement(ssa.MatchManagedFieldsEntry(machineSetManagerName, metav1.ManagedFieldsOperationApply)),
-			"deleting machine should not contain an entry for SSA manager",
-		)
-		g.Expect(updatedDeletingMachine.ManagedFields).Should(
-			ContainElement(ssa.MatchManagedFieldsEntry("manager", metav1.ManagedFieldsOperationUpdate)),
-			"in-place mutable machine should still contain an entry for old manager",
-		)
-
-		// Verify in-place mutable fields are still the same.
-		g.Expect(updatedDeletingMachine.Labels).Should(Equal(deletingMachine.Labels))
-		g.Expect(updatedDeletingMachine.Annotations).Should(Equal(deletingMachine.Annotations))
-		g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDrainTimeoutSeconds).Should(Equal(deletingMachine.Spec.Deletion.NodeDrainTimeoutSeconds))
-		g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds).Should(Equal(deletingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds))
-		g.Expect(updatedDeletingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).Should(Equal(deletingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds))
-		g.Expect(updatedDeletingMachine.Spec.MinReadySeconds).Should(Equal(deletingMachine.Spec.MinReadySeconds))
-	}, 5*time.Second).Should(Succeed())
-
-	// Verify in-place mutable fields are updated on the deleting machine
-	ms.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds = duration11s
-	ms.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds = duration11s
-	ms.Spec.Template.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = duration11s
-	ms.Spec.Template.Spec.MinReadySeconds = ptr.To[int32](11)
-	s = &scope{
-		machineSet: ms,
-		machines:   []*clusterv1.Machine{updatedInPlaceMutatingMachine, deletingMachine},
-		getAndAdoptMachinesForMachineSetSucceeded: true,
-	}
-	_, err = reconciler.syncMachines(ctx, s)
-	g.Expect(err).ToNot(HaveOccurred())
+	// Verify in-place mutable fields are updated on the deleting Machine.
 	updatedDeletingMachine := deletingMachine.DeepCopy()
-
 	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(updatedDeletingMachine), updatedDeletingMachine)).To(Succeed())
-	// Verify Node timeout values
-	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDrainTimeoutSeconds).Should(And(
-		Not(BeNil()),
-		HaveValue(Equal(*ms.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds)),
-	))
-	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds).Should(And(
-		Not(BeNil()),
-		HaveValue(Equal(*ms.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds)),
-	))
-	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).Should(And(
-		Not(BeNil()),
-		HaveValue(Equal(*ms.Spec.Template.Spec.Deletion.NodeVolumeDetachTimeoutSeconds)),
-	))
-	g.Expect(updatedDeletingMachine.Spec.MinReadySeconds).Should(And(
-		Not(BeNil()),
-		HaveValue(Equal(*ms.Spec.Template.Spec.MinReadySeconds)),
-	))
+	g.Expect(updatedDeletingMachine.Labels).Should(Equal(deletingMachine.Labels))           // Not propagated to a deleting Machine
+	g.Expect(updatedDeletingMachine.Annotations).Should(Equal(deletingMachine.Annotations)) // Not propagated to a deleting Machine
+	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDrainTimeoutSeconds).Should(Equal(ms.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds))
+	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds).Should(Equal(ms.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds))
+	g.Expect(updatedDeletingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).Should(Equal(ms.Spec.Template.Spec.Deletion.NodeVolumeDetachTimeoutSeconds))
+	g.Expect(updatedDeletingMachine.Spec.MinReadySeconds).Should(Equal(ms.Spec.Template.Spec.MinReadySeconds))
+	g.Expect(updatedDeletingMachine.Spec.ReadinessGates).Should(Equal(readinessGates))
+	g.Expect(updatedDeletingMachine.Spec.Taints).Should(Equal(machineTaints))
+	// Verify the machine spec is otherwise unchanged.
+	deletingMachine.Spec.Deletion.NodeDrainTimeoutSeconds = ms.Spec.Template.Spec.Deletion.NodeDrainTimeoutSeconds
+	deletingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds = ms.Spec.Template.Spec.Deletion.NodeDeletionTimeoutSeconds
+	deletingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = ms.Spec.Template.Spec.Deletion.NodeVolumeDetachTimeoutSeconds
+	deletingMachine.Spec.MinReadySeconds = ms.Spec.Template.Spec.MinReadySeconds
+	deletingMachine.Spec.ReadinessGates = ms.Spec.Template.Spec.ReadinessGates
+	deletingMachine.Spec.Taints = machineTaints
+	g.Expect(updatedDeletingMachine.Spec).Should(BeComparableTo(deletingMachine.Spec))
 }
 
 func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
+	// Use a separate scheme for fake client to avoid race conditions with the global scheme.
+	scheme := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(scheme)
+	_ = clusterv1.AddToScheme(scheme)
+
 	t.Run("should delete unhealthy machines if preflight checks pass", func(t *testing.T) {
 		g := NewWithT(t)
 
@@ -1595,7 +1751,7 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 
 		machines := []*clusterv1.Machine{unhealthyMachine, healthyMachine}
 
-		fakeClient := fake.NewClientBuilder().WithObjects(controlPlaneStable, unhealthyMachine, healthyMachine).WithStatusSubresource(&clusterv1.Machine{}).Build()
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(controlPlaneStable, unhealthyMachine, healthyMachine).WithStatusSubresource(&clusterv1.Machine{}).Build()
 		r := &Reconciler{
 			Client: fakeClient,
 		}
@@ -1699,7 +1855,7 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		}
 
 		machines := []*clusterv1.Machine{unhealthyMachine, healthyMachine}
-		fakeClient := fake.NewClientBuilder().WithObjects(controlPlaneUpgrading, builder.GenericControlPlaneCRD, unhealthyMachine, healthyMachine).WithStatusSubresource(&clusterv1.Machine{}).Build()
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(controlPlaneUpgrading, builder.GenericControlPlaneCRD, unhealthyMachine, healthyMachine).WithStatusSubresource(&clusterv1.Machine{}).Build()
 		r := &Reconciler{
 			Client:          fakeClient,
 			PreflightChecks: sets.Set[clusterv1.MachineSetPreflightCheck]{}.Insert(clusterv1.MachineSetPreflightCheckAll),
@@ -1842,7 +1998,7 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 		}
 
 		machines := []*clusterv1.Machine{unhealthyMachine, healthyMachine}
-		fakeClient := fake.NewClientBuilder().WithObjects(
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 			machineDeployment,
 			machineSetOld,
 			machineSetCurrent,
@@ -2024,7 +2180,7 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 			},
 		}
 
-		fakeClient := fake.NewClientBuilder().WithObjects(cluster, machineDeployment, healthyMachine).
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, machineDeployment, healthyMachine).
 			WithStatusSubresource(&clusterv1.Machine{}, &clusterv1.MachineSet{}, &clusterv1.MachineDeployment{})
 		// Create the unhealthy machines.
 		for _, machine := range unhealthyMachines {
@@ -2217,239 +2373,1234 @@ func TestMachineSetReconciler_reconcileUnhealthyMachines(t *testing.T) {
 }
 
 func TestMachineSetReconciler_syncReplicas(t *testing.T) {
-	t.Run("should hold off on creating new machines when preflight checks do not pass", func(t *testing.T) {
-		g := NewWithT(t)
-
-		// An upgrading control plane should cause the preflight checks to not pass.
-		controlPlaneUpgrading := builder.ControlPlane("default", "test-cp").
-			WithVersion("v1.26.2").
-			WithStatusFields(map[string]interface{}{
-				"status.version": "v1.25.2",
-			}).
-			Build()
-		cluster := &clusterv1.Cluster{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-cluster",
-				Namespace: "default",
-			},
-			Spec: clusterv1.ClusterSpec{
-				ControlPlaneRef: contract.ObjToContractVersionedObjectReference(controlPlaneUpgrading),
-			},
-		}
-		machineSet := &clusterv1.MachineSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-machineset",
-				Namespace: "default",
-			},
-			Spec: clusterv1.MachineSetSpec{
-				Replicas: ptr.To[int32](1),
-			},
-		}
-
-		fakeClient := fake.NewClientBuilder().WithObjects(controlPlaneUpgrading, builder.GenericControlPlaneCRD, machineSet).WithStatusSubresource(&clusterv1.MachineSet{}).Build()
-		r := &Reconciler{
-			Client:          fakeClient,
-			PreflightChecks: sets.Set[clusterv1.MachineSetPreflightCheck]{}.Insert(clusterv1.MachineSetPreflightCheckAll),
-		}
-		s := &scope{
-			cluster:    cluster,
-			machineSet: machineSet,
-			machines:   []*clusterv1.Machine{},
+	tests := []struct {
+		name                                      string
+		getAndAdoptMachinesForMachineSetSucceeded bool
+		machineSet                                *clusterv1.MachineSet
+		machines                                  []*clusterv1.Machine
+		expectMachinesToAdd                       *int
+		expectMachinesToDelete                    *int
+		expectedTargetMSName                      *string
+		expectedMachinesToMove                    *int
+	}{
+		{
+			name: "no op when getAndAdoptMachinesForMachineSetSucceeded is false",
+			getAndAdoptMachinesForMachineSetSucceeded: false,
+			machineSet:             newMachineSet("ms1", "cluster1", 0),
+			machines:               []*clusterv1.Machine{},
+			expectMachinesToAdd:    nil,
+			expectMachinesToDelete: nil,
+			expectedTargetMSName:   nil,
+			expectedMachinesToMove: nil,
+		},
+		{
+			name: "no op when all the expected machine already exists",
 			getAndAdoptMachinesForMachineSetSucceeded: true,
-		}
-		result, err := r.syncReplicas(ctx, s)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(result.IsZero()).To(BeFalse(), "syncReplicas should not return a 'zero' result")
+			machineSet: newMachineSet("ms1", "cluster1", 2),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1"),
+				fakeMachine("m2"),
+			},
+			expectMachinesToAdd:    nil,
+			expectMachinesToDelete: nil,
+			expectedTargetMSName:   nil,
+			expectedMachinesToMove: nil,
+		},
+		{
+			name: "should create machines when too few exists",
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+			machineSet: newMachineSet("ms1", "cluster1", 5),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1"),
+				fakeMachine("m2"),
+			},
+			expectMachinesToAdd:    ptr.To(3),
+			expectMachinesToDelete: nil,
+			expectedTargetMSName:   nil,
+			expectedMachinesToMove: nil,
+		},
+		{
+			name: "should delete machines when too many exists and MS is not instructed to move to another MachineSet",
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+			machineSet: newMachineSet("ms1", "cluster1", 2),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1"),
+				fakeMachine("m2"),
+				fakeMachine("m3"),
+				fakeMachine("m4"),
+			},
+			expectMachinesToAdd:    nil,
+			expectMachinesToDelete: ptr.To(2),
+			expectedTargetMSName:   nil,
+			expectedMachinesToMove: nil,
+		},
+		{
+			name: "should move machines when too many exists and MS is instructed to move to another MachineSet",
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+			machineSet: newMachineSet("ms1", "cluster1", 2, withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"})),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1"),
+				fakeMachine("m2"),
+				fakeMachine("m3"),
+				fakeMachine("m4"),
+			},
+			expectMachinesToAdd:    nil,
+			expectMachinesToDelete: nil,
+			expectedTargetMSName:   ptr.To("ms2"),
+			expectedMachinesToMove: ptr.To(2),
+		},
+		{
+			name: "When the Machine set is receiving machines from other MachineSets, delete machines should delete only exceeding machines left after taking into account pending machines",
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+			machineSet: newMachineSet("ms2", "cluster1", 2, withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1"})),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1"),
+				fakeMachine("m2"),
+				fakeMachine("m3"),
+				fakeMachine("m4", withMachineAnnotations(map[string]string{clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+			},
+			expectMachinesToAdd:    nil,
+			expectMachinesToDelete: ptr.To(1),
+			expectedTargetMSName:   nil,
+			expectedMachinesToMove: nil,
+		},
+		{
+			name: "When the Machine set is receiving machines from other MachineSets, should not delete if there are no exceeding machines left after taking into account pending machines",
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+			machineSet: newMachineSet("ms2", "cluster1", 2, withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1"})),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1"),
+				fakeMachine("m2"),
+				fakeMachine("m3", withMachineAnnotations(map[string]string{clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+			},
+			expectMachinesToAdd:    nil,
+			expectMachinesToDelete: nil,
+			expectedTargetMSName:   nil,
+			expectedMachinesToMove: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 
-		// Verify the proper condition is set on the MachineSet.
-		condition := clusterv1.MachinesCreatedV1Beta1Condition
-		g.Expect(v1beta1conditions.Has(machineSet, condition)).
-			To(BeTrue(), "MachineSet should have the %s condition set", condition)
-		machinesCreatedCondition := v1beta1conditions.Get(machineSet, condition)
-		g.Expect(machinesCreatedCondition.Status).
-			To(Equal(corev1.ConditionFalse), "%s condition status should be %s", condition, corev1.ConditionFalse)
-		g.Expect(machinesCreatedCondition.Reason).
-			To(Equal(clusterv1.PreflightCheckFailedV1Beta1Reason), "%s condition reason should be %s", condition, clusterv1.PreflightCheckFailedV1Beta1Reason)
+			s := &scope{
+				machineSet: tt.machineSet,
+				machines:   tt.machines,
+				getAndAdoptMachinesForMachineSetSucceeded: tt.getAndAdoptMachinesForMachineSetSucceeded,
+			}
 
-		// Verify no new Machines are created.
-		machineList := &clusterv1.MachineList{}
-		g.Expect(r.Client.List(ctx, machineList)).To(Succeed())
-		g.Expect(machineList.Items).To(BeEmpty(), "There should not be any machines")
-	})
+			r := &Reconciler{
+				overrideCreateMachines: func(_ context.Context, _ *scope, machinesToAdd int) (ctrl.Result, error) {
+					g.Expect(tt.expectMachinesToAdd).ToNot(BeNil(), "unexpected call to create machines")
+					g.Expect(machinesToAdd).To(Equal(*tt.expectMachinesToAdd), "call to create machines does not have the expected machinesToAdd number")
+					return ctrl.Result{}, nil
+				},
+				overrideMoveMachines: func(_ context.Context, _ *scope, targetMSName string, machinesToMove int) (ctrl.Result, error) {
+					g.Expect(tt.expectedMachinesToMove).ToNot(BeNil(), "unexpected call to move machines")
+					g.Expect(tt.expectedTargetMSName).ToNot(BeNil(), "unexpected call to move machines")
+					g.Expect(targetMSName).To(Equal(*tt.expectedTargetMSName), "call to move machines does not have the expected targetMS name")
+					g.Expect(machinesToMove).To(Equal(*tt.expectedMachinesToMove), "call to move machines does not have the expected machinesToMove number")
+					return ctrl.Result{}, nil
+				},
+				overrideDeleteMachines: func(_ context.Context, _ *scope, machinesToDelete int) (ctrl.Result, error) {
+					g.Expect(tt.expectMachinesToDelete).ToNot(BeNil(), "unexpected call to delete machines")
+					g.Expect(machinesToDelete).To(Equal(*tt.expectMachinesToDelete), "call to delete machines does not have the expected machinesToDelete number")
+					return ctrl.Result{}, nil
+				},
+			}
+			res, err := r.syncReplicas(ctx, s)
+			g.Expect(err).ToNot(HaveOccurred(), "unexpected error when syncing replicas")
+			g.Expect(res.IsZero()).To(BeTrue(), "unexpected non zero result when syncing replicas")
+		})
+	}
 }
 
-func TestMachineSetReconciler_syncReplicas_WithErrors(t *testing.T) {
-	t.Run("should hold off on sync replicas when create Infrastructure of machine failed ", func(t *testing.T) {
-		g := NewWithT(t)
-		scheme := runtime.NewScheme()
-		g.Expect(apiextensionsv1.AddToScheme(scheme)).To(Succeed())
-		g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+func TestMachineSetReconciler_createMachines_preflightChecks(t *testing.T) {
+	// This test is not included in the table test for createMachines because it requires a specific setup.
+	g := NewWithT(t)
 
-		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(builder.GenericBootstrapConfigTemplateCRD, builder.GenericInfrastructureMachineTemplateCRD).WithInterceptorFuncs(interceptor.Funcs{
-			Create: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-				// simulate scenarios where infra object creation fails
-				if obj.GetObjectKind().GroupVersionKind().Kind == "GenericInfrastructureMachine" {
-					return fmt.Errorf("inject error for create machineInfrastructure")
-				}
-				return client.Create(ctx, obj, opts...)
-			},
-		}).Build()
+	// An upgrading control plane should cause the preflight checks to not pass.
+	controlPlaneUpgrading := builder.ControlPlane("default", "test-cp").
+		WithVersion("v1.26.2").
+		WithStatusFields(map[string]interface{}{
+			"status.version": "v1.25.2",
+		}).
+		Build()
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: contract.ObjToContractVersionedObjectReference(controlPlaneUpgrading),
+		},
+	}
+	machineSet := &clusterv1.MachineSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-machineset",
+			Namespace: "default",
+		},
+		Spec: clusterv1.MachineSetSpec{
+			Replicas: ptr.To[int32](1),
+		},
+	}
 
-		r := &Reconciler{
-			Client: fakeClient,
-		}
-		testCluster := &clusterv1.Cluster{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-cluster",
-				Namespace: "default",
-			},
-		}
+	fakeClient := fake.NewClientBuilder().WithObjects(controlPlaneUpgrading, builder.GenericControlPlaneCRD, machineSet).WithStatusSubresource(&clusterv1.MachineSet{}).Build()
+	r := &Reconciler{
+		Client:          fakeClient,
+		PreflightChecks: sets.Set[clusterv1.MachineSetPreflightCheck]{}.Insert(clusterv1.MachineSetPreflightCheckAll),
+	}
+	s := &scope{
+		cluster:    cluster,
+		machineSet: machineSet,
+		machines:   []*clusterv1.Machine{},
+		getAndAdoptMachinesForMachineSetSucceeded: true,
+	}
+	result, err := r.createMachines(ctx, s, 3)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(result.IsZero()).To(BeFalse(), "syncReplicas should not return a 'zero' result")
 
-		duration10m := ptr.To(int32(10 * 60))
-		machineSet := &clusterv1.MachineSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:       "machineset1",
-				Namespace:  metav1.NamespaceDefault,
-				Finalizers: []string{"block-deletion"},
-			},
-			Spec: clusterv1.MachineSetSpec{
-				Replicas:    ptr.To[int32](1),
-				ClusterName: "test-cluster",
-				Template: clusterv1.MachineTemplateSpec{
-					Spec: clusterv1.MachineSpec{
-						ClusterName: testCluster.Name,
-						Version:     "v1.14.2",
-						Bootstrap: clusterv1.Bootstrap{
-							ConfigRef: clusterv1.ContractVersionedObjectReference{
-								APIGroup: clusterv1.GroupVersionBootstrap.Group,
-								Kind:     builder.GenericBootstrapConfigTemplateKind,
-								Name:     "ms-template",
-							},
-						},
-						InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-							APIGroup: clusterv1.GroupVersionInfrastructure.Group,
-							Kind:     builder.GenericInfrastructureMachineTemplateKind,
+	// Verify the proper condition is set on the MachineSet.
+	condition := clusterv1.MachinesCreatedV1Beta1Condition
+	g.Expect(v1beta1conditions.Has(machineSet, condition)).
+		To(BeTrue(), "MachineSet should have the %s condition set", condition)
+	machinesCreatedCondition := v1beta1conditions.Get(machineSet, condition)
+	g.Expect(machinesCreatedCondition.Status).
+		To(Equal(corev1.ConditionFalse), "%s condition status should be %s", condition, corev1.ConditionFalse)
+	g.Expect(machinesCreatedCondition.Reason).
+		To(Equal(clusterv1.PreflightCheckFailedV1Beta1Reason), "%s condition reason should be %s", condition, clusterv1.PreflightCheckFailedV1Beta1Reason)
+
+	// Verify no new Machines are created.
+	machineList := &clusterv1.MachineList{}
+	g.Expect(r.Client.List(ctx, machineList)).To(Succeed())
+	g.Expect(machineList.Items).To(BeEmpty(), "There should not be any machines")
+}
+
+func TestMachineSetReconciler_createMachines(t *testing.T) {
+	machineSet := &clusterv1.MachineSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "machineset1",
+			Namespace: metav1.NamespaceDefault,
+		},
+		Spec: clusterv1.MachineSetSpec{
+			Replicas:    ptr.To[int32](1),
+			ClusterName: "test-cluster",
+			Template: clusterv1.MachineTemplateSpec{
+				Spec: clusterv1.MachineSpec{
+					ClusterName: "test-cluster",
+					Version:     "v1.14.2",
+					Bootstrap: clusterv1.Bootstrap{
+						ConfigRef: clusterv1.ContractVersionedObjectReference{
+							APIGroup: clusterv1.GroupVersionBootstrap.Group,
+							Kind:     builder.GenericBootstrapConfigTemplateKind,
 							Name:     "ms-template",
 						},
-						Deletion: clusterv1.MachineDeletionSpec{
-							NodeDrainTimeoutSeconds:        duration10m,
-							NodeDeletionTimeoutSeconds:     duration10m,
-							NodeVolumeDetachTimeoutSeconds: duration10m,
-						},
-						MinReadySeconds: ptr.To[int32](10),
+					},
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+						Kind:     builder.GenericInfrastructureMachineTemplateKind,
+						Name:     "ms-template",
 					},
 				},
 			},
-		}
+		},
+	}
 
-		// Create bootstrap template resource.
-		bootstrapResource := map[string]interface{}{
-			"kind":       "GenericBootstrapConfig",
-			"apiVersion": clusterv1.GroupVersionBootstrap.String(),
-			"metadata": map[string]interface{}{
-				"annotations": map[string]interface{}{
-					"precedence": "GenericBootstrapConfig",
-				},
+	// Create bootstrap template resource.
+	bootstrapResource := map[string]interface{}{
+		"kind":       builder.GenericBootstrapConfigKind,
+		"apiVersion": clusterv1.GroupVersionBootstrap.String(),
+		"metadata": map[string]interface{}{
+			"annotations": map[string]interface{}{
+				"precedence": "GenericBootstrapConfig",
 			},
-		}
+		},
+	}
 
-		bootstrapTmpl := &unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"spec": map[string]interface{}{
-					"template": bootstrapResource,
-				},
-			},
-		}
-		bootstrapTmpl.SetKind("GenericBootstrapConfigTemplate")
-		bootstrapTmpl.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
-		bootstrapTmpl.SetName("ms-template")
-		bootstrapTmpl.SetNamespace(metav1.NamespaceDefault)
-		g.Expect(r.Client.Create(context.TODO(), bootstrapTmpl)).To(Succeed())
-
-		// Create infrastructure template resource.
-		infraResource := map[string]interface{}{
-			"kind":       "GenericInfrastructureMachine",
-			"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
-			"metadata": map[string]interface{}{
-				"annotations": map[string]interface{}{
-					"precedence": "GenericInfrastructureMachineTemplate",
-				},
-			},
+	bootstrapTmpl := &unstructured.Unstructured{
+		Object: map[string]interface{}{
 			"spec": map[string]interface{}{
-				"size": "3xlarge",
+				"template": bootstrapResource,
 			},
-		}
-		infraTmpl := &unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"spec": map[string]interface{}{
-					"template": infraResource,
+		},
+	}
+	bootstrapTmpl.SetKind(builder.GenericBootstrapConfigTemplateKind)
+	bootstrapTmpl.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
+	bootstrapTmpl.SetName("ms-template")
+	bootstrapTmpl.SetNamespace(metav1.NamespaceDefault)
+
+	// Create infrastructure template resource.
+	infraResource := map[string]interface{}{
+		"kind":       builder.GenericInfrastructureMachineKind,
+		"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
+		"metadata": map[string]interface{}{
+			"annotations": map[string]interface{}{
+				"precedence": "GenericInfrastructureMachineTemplate",
+			},
+		},
+		"spec": map[string]interface{}{
+			"size": "3xlarge",
+		},
+	}
+	infraTmpl := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": infraResource,
+			},
+		},
+	}
+	infraTmpl.SetKind(builder.GenericInfrastructureMachineTemplateKind)
+	infraTmpl.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
+	infraTmpl.SetName("ms-template")
+	infraTmpl.SetNamespace(metav1.NamespaceDefault)
+
+	tests := []struct {
+		name             string
+		machinesToAdd    int
+		interceptorFuncs func(i *int) interceptor.Funcs
+		wantMachines     int
+		wantErr          bool
+		wantErrorMessage string
+	}{
+		{
+			name:             "should create machines",
+			machinesToAdd:    4,
+			interceptorFuncs: func(_ *int) interceptor.Funcs { return interceptor.Funcs{} },
+			wantMachines:     4,
+			wantErr:          false,
+		},
+		{
+			name:          "should stop creating machines when there are failures and rollback partial changes",
+			machinesToAdd: 4,
+			interceptorFuncs: func(i *int) interceptor.Funcs {
+				return interceptor.Funcs{
+					Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+						clientObject, ok := obj.(client.Object)
+						if !ok {
+							return errors.Errorf("error during object creation: unexpected ApplyConfiguration")
+						}
+						if clientObject.GetObjectKind().GroupVersionKind().Kind == "Machine" {
+							*i++
+							if *i == 2 { // Note: fail for the second machine only (there should not be call for following machines)
+								return fmt.Errorf("inject error for create Machine")
+							}
+						}
+						return c.Apply(ctx, obj, opts...)
+					},
+				}
+			},
+			wantMachines: 1,
+			wantErr:      true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			scheme := runtime.NewScheme()
+			g.Expect(apiextensionsv1.AddToScheme(scheme)).To(Succeed())
+			g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+
+			i := 0
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				builder.GenericBootstrapConfigTemplateCRD,
+				builder.GenericInfrastructureMachineTemplateCRD,
+				machineSet,
+				bootstrapTmpl,
+				infraTmpl,
+			).WithInterceptorFuncs(tt.interceptorFuncs(&i)).Build()
+
+			// TODO(controller-runtime-0.23): This workaround is needed because controller-runtime v0.22 does not set resourceVersion correctly with SSA (fixed with v0.23).
+			fakeClient = interceptor.NewClient(fakeClient, interceptor.Funcs{
+				Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+					clientObject, ok := obj.(client.Object)
+					if !ok {
+						return errors.Errorf("error during object creation: unexpected ApplyConfiguration")
+					}
+					clientObject.SetResourceVersion("1")
+					return c.Apply(ctx, obj, opts...)
 				},
-			},
-		}
-		infraTmpl.SetKind("GenericInfrastructureMachineTemplate")
-		infraTmpl.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
-		infraTmpl.SetName("ms-template")
-		infraTmpl.SetNamespace(metav1.NamespaceDefault)
-		g.Expect(r.Client.Create(context.TODO(), infraTmpl)).To(Succeed())
+			})
 
-		s := &scope{
-			cluster:    testCluster,
-			machineSet: machineSet,
-			machines:   []*clusterv1.Machine{},
-			getAndAdoptMachinesForMachineSetSucceeded: true,
-		}
-		_, err := r.syncReplicas(ctx, s)
-		g.Expect(err).To(HaveOccurred())
-		g.Expect(err.Error()).To(ContainSubstring("inject error for create machineInfrastructure"))
+			r := &Reconciler{
+				Client:   fakeClient,
+				recorder: record.NewFakeRecorder(32),
+				// Note: This field is only used for unit tests that use fake client because the fake client does not properly set resourceVersion
+				//       on BootstrapConfig/InfraMachine after ssa.Patch and then ssa.RemoveManagedFieldsForLabelsAndAnnotations would fail.
+				disableRemoveManagedFieldsForLabelsAndAnnotations: true,
+			}
+			s := &scope{
+				machineSet: machineSet,
+				machines:   []*clusterv1.Machine{},
+				getAndAdoptMachinesForMachineSetSucceeded: true,
+			}
+			res, err := r.createMachines(ctx, s, tt.machinesToAdd)
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred(), "expected error when creating machines, got none")
+			} else {
+				g.Expect(err).ToNot(HaveOccurred(), "unexpected error when creating machines")
+			}
+			g.Expect(res.IsZero()).To(BeTrue(), "unexpected non zero result when creating machines")
 
-		// Verify the proper condition is set on the MachineSet.
-		condition := clusterv1.MachinesCreatedV1Beta1Condition
-		g.Expect(v1beta1conditions.Has(machineSet, condition)).To(BeTrue(), "MachineSet should have the %s condition set", condition)
+			// Verify new Machines are created.
+			machineList := &clusterv1.MachineList{}
+			g.Expect(r.Client.List(ctx, machineList)).To(Succeed())
+			g.Expect(machineList.Items).To(HaveLen(tt.wantMachines), "Unexpected machine")
 
-		machinesCreatedCondition := v1beta1conditions.Get(machineSet, condition)
-		g.Expect(machinesCreatedCondition.Status).
-			To(Equal(corev1.ConditionFalse), "%s condition status should be %s", condition, corev1.ConditionFalse)
-		g.Expect(machinesCreatedCondition.Reason).
-			To(Equal(clusterv1.InfrastructureTemplateCloningFailedV1Beta1Reason), "%s condition reason should be %s", condition, clusterv1.InfrastructureTemplateCloningFailedV1Beta1Reason)
+			for _, machine := range machineList.Items {
+				// Verify boostrap object created
+				bootstrap := &unstructured.Unstructured{}
+				bootstrap.SetKind(machine.Spec.Bootstrap.ConfigRef.Kind)
+				bootstrap.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
+				bootstrap.SetNamespace(machine.Namespace)
+				bootstrap.SetName(machine.Spec.Bootstrap.ConfigRef.Name)
+				g.Expect(r.Client.Get(ctx, client.ObjectKeyFromObject(bootstrap), bootstrap)).To(Succeed(), "failed to get bootstrap object")
 
-		// Verify no new Machines are created.
-		machineList := &clusterv1.MachineList{}
-		g.Expect(r.Client.List(ctx, machineList)).To(Succeed())
-		g.Expect(machineList.Items).To(BeEmpty(), "There should not be any machines")
+				// Verify infra object created
+				infra := &unstructured.Unstructured{}
+				infra.SetKind(machine.Spec.InfrastructureRef.Kind)
+				infra.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
+				infra.SetNamespace(machine.Namespace)
+				infra.SetName(machine.Spec.InfrastructureRef.Name)
+				g.Expect(r.Client.Get(ctx, client.ObjectKeyFromObject(infra), infra)).To(Succeed(), "failed to get infra object")
+			}
 
-		// Verify no boostrap object created
-		bootstrapList := &unstructured.UnstructuredList{}
-		bootstrapList.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   bootstrapTmpl.GetObjectKind().GroupVersionKind().Group,
-			Version: bootstrapTmpl.GetObjectKind().GroupVersionKind().Version,
-			Kind:    strings.TrimSuffix(bootstrapTmpl.GetObjectKind().GroupVersionKind().Kind, clusterv1.TemplateSuffix),
+			// Verify no additional boostrap object created
+			bootstrapList := &unstructured.UnstructuredList{}
+			bootstrapList.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   bootstrapTmpl.GetObjectKind().GroupVersionKind().Group,
+				Version: bootstrapTmpl.GetObjectKind().GroupVersionKind().Version,
+				Kind:    strings.TrimSuffix(bootstrapTmpl.GetObjectKind().GroupVersionKind().Kind, clusterv1.TemplateSuffix),
+			})
+			g.Expect(r.Client.List(ctx, bootstrapList)).To(Succeed())
+			g.Expect(bootstrapList.Items).To(HaveLen(tt.wantMachines), "Unexpected bootstrap objects")
+
+			// Verify no additional  infra object created
+			infraList := &unstructured.UnstructuredList{}
+			infraList.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   infraTmpl.GetObjectKind().GroupVersionKind().Group,
+				Version: infraTmpl.GetObjectKind().GroupVersionKind().Version,
+				Kind:    strings.TrimSuffix(infraTmpl.GetObjectKind().GroupVersionKind().Kind, clusterv1.TemplateSuffix),
+			})
+			g.Expect(r.Client.List(ctx, infraList)).To(Succeed())
+			g.Expect(infraList.Items).To(HaveLen(tt.wantMachines), "Unexpected infra objects")
 		})
-		g.Expect(r.Client.List(ctx, bootstrapList)).To(Succeed())
-		g.Expect(bootstrapList.Items).To(BeEmpty(), "There should not be any bootstrap object")
-
-		// Verify no infra object created
-		infraList := &unstructured.UnstructuredList{}
-		infraList.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   infraTmpl.GetObjectKind().GroupVersionKind().Group,
-			Version: infraTmpl.GetObjectKind().GroupVersionKind().Version,
-			Kind:    strings.TrimSuffix(infraTmpl.GetObjectKind().GroupVersionKind().Kind, clusterv1.TemplateSuffix),
-		})
-		g.Expect(r.Client.List(ctx, infraList)).To(Succeed())
-		g.Expect(infraList.Items).To(BeEmpty(), "There should not be any infra object")
-	})
+	}
 }
 
-type computeDesiredMachineTestCase struct {
-	name            string
-	ms              *clusterv1.MachineSet
-	existingMachine *clusterv1.Machine
-	wantMachine     *clusterv1.Machine
-	wantName        []gomegatypes.GomegaMatcher
+func TestMachineSetReconciler_deleteMachines(t *testing.T) {
+	tests := []struct {
+		name             string
+		ms               *clusterv1.MachineSet
+		machines         []*clusterv1.Machine
+		machinesToDelete int
+		interceptorFuncs interceptor.Funcs
+		wantMachines     []string
+		wantErr          bool
+		wantErrorMessage string
+	}{
+		{
+			name: "should delete machines using the given deletion order",
+			ms:   newMachineSet("ms1", "cluster1", 2, withDeletionOrder(clusterv1.NewestMachineSetDeletionOrder)),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode()),
+				fakeMachine("m3", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode()),
+				fakeMachine("m4", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()), // newest
+			},
+			machinesToDelete: 2,
+			interceptorFuncs: interceptor.Funcs{},
+			wantMachines:     []string{"m1", "m2"}, // m3 and m4 deleted because they are newest and deletion order is NewestMachineSetDeletionOrder
+			wantErr:          false,
+		},
+		{
+			name: "should not delete more machines when enough machines are already deleting",
+			ms:   newMachineSet("ms1", "cluster1", 2, withDeletionOrder(clusterv1.NewestMachineSetDeletionOrder)),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode(), withDeletionTimestamp()),
+				fakeMachine("m3", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode()),
+				fakeMachine("m4", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode(), withDeletionTimestamp()), // newest
+			},
+			machinesToDelete: 2,
+			interceptorFuncs: interceptor.Funcs{},
+			wantMachines:     []string{"m1", "m3"}, // m2 and m4 already deleted, no additional machines deleted
+			wantErr:          false,
+		},
+		{
+			name: "should delete machines when not enough machines are already deleting",
+			ms:   newMachineSet("ms1", "cluster1", 2, withDeletionOrder(clusterv1.NewestMachineSetDeletionOrder)),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode()),
+				fakeMachine("m3", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode()),
+				fakeMachine("m4", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode(), withDeletionTimestamp()), // newest
+			},
+			machinesToDelete: 2,
+			interceptorFuncs: interceptor.Funcs{},
+			wantMachines:     []string{"m1", "m2"}, // m3 deleted, m4 already deleted
+			wantErr:          false,
+		},
+		{
+			name: "should keep deleting machines when one deletion fails",
+			ms:   newMachineSet("ms1", "cluster1", 2), // use default deletion order, oldest machine deleted first
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode()),
+				fakeMachine("m3", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode()),
+				fakeMachine("m4", withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()), // newest
+			},
+			machinesToDelete: 2,
+			interceptorFuncs: interceptor.Funcs{
+				Delete: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if obj.GetName() == "m1" {
+						return fmt.Errorf("error when deleting m1")
+					}
+					return client.Delete(ctx, obj, opts...)
+				},
+			},
+			wantMachines:     []string{"m1", "m3", "m4"}, // m1 and m2 deleted, but m1 failed to delete
+			wantErr:          true,
+			wantErrorMessage: "error when deleting m1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			objs := []client.Object{tt.ms}
+			for _, m := range tt.machines {
+				objs = append(objs, m)
+			}
+			fakeClient := fake.NewClientBuilder().WithObjects(objs...).WithInterceptorFuncs(tt.interceptorFuncs).Build()
+			r := &Reconciler{
+				Client:   fakeClient,
+				recorder: record.NewFakeRecorder(32),
+			}
+			s := &scope{
+				machineSet: tt.ms,
+				machines:   tt.machines,
+			}
+			res, err := r.deleteMachines(ctx, s, tt.machinesToDelete)
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred(), "expected error when deleting machines, got none")
+				g.Expect(err.Error()).To(ContainSubstring(tt.wantErrorMessage))
+			} else {
+				g.Expect(err).ToNot(HaveOccurred(), "unexpected error when deleting machines")
+			}
+			g.Expect(res.IsZero()).To(BeTrue(), "unexpected non zero result when deleting machines")
+
+			machines := &clusterv1.MachineList{}
+			g.Expect(fakeClient.List(ctx, machines)).ToNot(HaveOccurred(), "unexpected error when listing machines")
+
+			machineNames := []string{}
+			for i := range machines.Items {
+				if machines.Items[i].DeletionTimestamp.IsZero() {
+					machineNames = append(machineNames, machines.Items[i].Name)
+				}
+			}
+			g.Expect(machineNames).To(ConsistOf(tt.wantMachines), "Unexpected machine")
+		})
+	}
+}
+
+func TestMachineSetReconciler_startMoveMachines(t *testing.T) {
+	machinesByMachineSet := func(machines *clusterv1.MachineList, ms *clusterv1.MachineSet) []string {
+		msMachines := []string{}
+		for i := range machines.Items {
+			// Note: Checking both ownerReferences and unique label
+			if len(machines.Items[i].OwnerReferences) == 1 &&
+				machines.Items[i].OwnerReferences[0].Kind == "MachineSet" &&
+				machines.Items[i].OwnerReferences[0].Name == ms.Name &&
+				machines.Items[i].Labels[clusterv1.MachineDeploymentUniqueLabel] == ms.Labels[clusterv1.MachineDeploymentUniqueLabel] {
+				msMachines = append(msMachines, machines.Items[i].Name)
+			}
+		}
+		sort.Strings(msMachines)
+		return msMachines
+	}
+
+	tests := []struct {
+		name                 string
+		ms                   *clusterv1.MachineSet
+		targetMS             *clusterv1.MachineSet
+		machines             []*clusterv1.Machine
+		machinesToMove       int
+		interceptorFuncs     interceptor.Funcs
+		wantMachinesNotMoved []string
+		wantMovedMachines    []string
+		wantErr              bool
+		wantErrorMessage     string
+	}{
+		{
+			name: "should fail when taget ms cannot be found",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("do-not-exist", "cluster1", 2),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withOwnerMachineSet("ms1"), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withOwnerMachineSet("ms1"), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()),
+			},
+			machinesToMove:       1,
+			interceptorFuncs:     interceptor.Funcs{},
+			wantMachinesNotMoved: []string{"m1", "m2"},
+			wantMovedMachines:    nil,
+			wantErr:              true,
+			wantErrorMessage:     "failed to get MachineSet",
+		},
+		{
+			name: "should fail when current and taget ms disagree on the move operation",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("ms2", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "456"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms3,ms4"}),
+			),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withOwnerMachineSet("ms1"), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withOwnerMachineSet("ms1"), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()),
+			},
+			machinesToMove:       1,
+			interceptorFuncs:     interceptor.Funcs{},
+			wantMachinesNotMoved: []string{"m1", "m2"},
+			wantMovedMachines:    nil,
+			wantErr:              true,
+			wantErrorMessage:     "MachineSet ms1 is set to move replicas to ms2, but ms2 only accepts Machines from ms3,ms4",
+		},
+		{
+			name: "should fail when target MS doesn't have a unique label",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("ms2", "cluster1", 2,
+				// unique label missing
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1,ms3"}),
+			),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withOwnerMachineSet("ms1"), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withOwnerMachineSet("ms1"), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()),
+			},
+			machinesToMove:       1,
+			interceptorFuncs:     interceptor.Funcs{},
+			wantMachinesNotMoved: []string{"m1", "m2"},
+			wantMovedMachines:    nil,
+			wantErr:              true,
+			wantErrorMessage:     fmt.Sprintf("MachineSet ms2 does not have the %s label", clusterv1.MachineDeploymentUniqueLabel),
+		},
+		{
+			name: "should move machines",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				withDeletionOrder(clusterv1.NewestMachineSetDeletionOrder),
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("ms2", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "456"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1,ms3"}),
+			),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode()),
+				fakeMachine("m3", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode()),
+				fakeMachine("m4", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()), // newest
+			},
+			machinesToMove:       2,
+			interceptorFuncs:     interceptor.Funcs{},
+			wantMachinesNotMoved: []string{"m1", "m2"},
+			wantMovedMachines:    []string{"m3", "m4"}, // newest machines moved first with NewestMachineSetDeletionOrder
+			wantErr:              false,
+		},
+		{
+			name: "should not move machines not yet provisioned",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				withDeletionOrder(clusterv1.NewestMachineSetDeletionOrder),
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("ms2", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "456"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1,ms3"}),
+			),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute))),
+				fakeMachine("m2", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute))),
+			},
+			machinesToMove:       2,
+			interceptorFuncs:     interceptor.Funcs{},
+			wantMachinesNotMoved: []string{"m1", "m2"},
+			wantMovedMachines:    []string{},
+			wantErr:              false,
+		},
+		{
+			name: "should not move deleting machines, decrease the move count",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				withDeletionOrder(clusterv1.NewestMachineSetDeletionOrder),
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("ms2", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "456"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1,ms3"}),
+			),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode()),
+				fakeMachine("m3", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode()),
+				fakeMachine("m4", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode(), withDeletionTimestamp()), // newest
+			},
+			machinesToMove:       2,
+			interceptorFuncs:     interceptor.Funcs{},
+			wantMachinesNotMoved: []string{"m1", "m2", "m4"},
+			wantMovedMachines:    []string{"m3"}, // newest machines moved first with NewestMachineSetDeletionOrder, but m4 is deleting so don't touch it
+			wantErr:              false,
+		},
+		{
+			name: "should not move more machines that are already updating in place, pick another machine instead",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				// use default deletion order, oldest machine move first
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("ms2", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "456"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1,ms3"}),
+			),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode(), withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+				fakeMachine("m3", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode(), withMachineAnnotations(map[string]string{runtimev1.PendingHooksAnnotation: "UpdateMachine"})),
+				fakeMachine("m4", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()), // newest
+			},
+			machinesToMove:       2,
+			interceptorFuncs:     interceptor.Funcs{},
+			wantMachinesNotMoved: []string{"m2", "m3"},
+			wantMovedMachines:    []string{"m1", "m4"}, // oldest machines moved first with the default deletion order, but m2 and m3 are updating in place so don't touch them but pick other machines instead
+			wantErr:              false,
+		},
+		{
+			name: "should keep moving machines when one move fails",
+			ms: newMachineSet("ms1", "cluster1", 2,
+				// use default deletion order, oldest machine move first
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetMoveMachinesToMachineSetAnnotation: "ms2"}),
+			),
+			targetMS: newMachineSet("ms2", "cluster1", 2,
+				withMachineSetLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "456"}),
+				withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms1,ms3"}),
+			),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-4*time.Minute)), withHealthyNode()), // oldest
+				fakeMachine("m2", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-3*time.Minute)), withHealthyNode()),
+				fakeMachine("m3", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-2*time.Minute)), withHealthyNode()),
+				fakeMachine("m4", withOwnerMachineSet("ms1"), withMachineLabels(map[string]string{clusterv1.MachineDeploymentUniqueLabel: "123"}), withMachineFinalizer(), withCreationTimestamp(time.Now().Add(-1*time.Minute)), withHealthyNode()), // newest
+			},
+			machinesToMove: 2,
+			interceptorFuncs: interceptor.Funcs{
+				Patch: func(ctx context.Context, client client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+					if obj.GetName() == "m1" {
+						return fmt.Errorf("error when moving m1")
+					}
+					return client.Patch(ctx, obj, patch, opts...)
+				},
+			},
+			wantMachinesNotMoved: []string{"m1", "m3", "m4"},
+			wantMovedMachines:    []string{"m2"}, // oldest machines moved first with the default deletion order, but m1 failed to move
+			wantErr:              true,
+			wantErrorMessage:     "error when moving m1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			objs := []client.Object{tt.ms}
+			if tt.targetMS.Name != "do-not-exist" {
+				objs = append(objs, tt.targetMS)
+			}
+			for _, m := range tt.machines {
+				objs = append(objs, m)
+			}
+			fakeClient := fake.NewClientBuilder().WithObjects(objs...).WithInterceptorFuncs(tt.interceptorFuncs).Build()
+			r := &Reconciler{
+				Client:   fakeClient,
+				recorder: record.NewFakeRecorder(32),
+			}
+			s := &scope{
+				machineSet: tt.ms,
+				machines:   tt.machines,
+			}
+			res, err := r.startMoveMachines(ctx, s, tt.targetMS.Name, tt.machinesToMove)
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred(), "expected error when moving machines, got none")
+				g.Expect(err.Error()).To(ContainSubstring(tt.wantErrorMessage))
+			} else {
+				g.Expect(err).ToNot(HaveOccurred(), "unexpected error when moving machines")
+			}
+			g.Expect(res.IsZero()).To(BeTrue(), "unexpected non zero result when moving machines")
+
+			machines := &clusterv1.MachineList{}
+			g.Expect(fakeClient.List(ctx, machines)).ToNot(HaveOccurred(), "unexpected error when listing machines")
+			g.Expect(machinesByMachineSet(machines, tt.ms)).To(ConsistOf(tt.wantMachinesNotMoved))
+
+			movedMachines := machinesByMachineSet(machines, tt.targetMS)
+			g.Expect(movedMachines).To(ConsistOf(tt.wantMovedMachines))
+			for _, name := range movedMachines {
+				for _, m := range machines.Items {
+					if m.Name == name {
+						g.Expect(m.Annotations).To(HaveKeyWithValue(clusterv1.UpdateInProgressAnnotation, ""))
+						g.Expect(m.Annotations).To(HaveKeyWithValue(clusterv1.PendingAcknowledgeMoveAnnotation, ""))
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMachineSetReconciler_triggerInPlaceUpdate(t *testing.T) {
+	machinesNotInPlaceUpdating := func(machines *clusterv1.MachineList) []string {
+		msMachines := []string{}
+		for i := range machines.Items {
+			if machines.Items[i].Annotations[runtimev1.PendingHooksAnnotation] != "UpdateMachine" {
+				msMachines = append(msMachines, machines.Items[i].Name)
+			}
+		}
+		sort.Strings(msMachines)
+		return msMachines
+	}
+	machinesInPlaceUpdating := func(machines *clusterv1.MachineList) []string {
+		msMachines := []string{}
+		for i := range machines.Items {
+			if machines.Items[i].Annotations[runtimev1.PendingHooksAnnotation] == "UpdateMachine" {
+				msMachines = append(msMachines, machines.Items[i].Name)
+			}
+		}
+		sort.Strings(msMachines)
+		return msMachines
+	}
+
+	// Create bootstrap template resource.
+	bootstrapResource := map[string]interface{}{
+		"kind":       builder.GenericBootstrapConfigKind,
+		"apiVersion": clusterv1.GroupVersionBootstrap.String(),
+		"spec": map[string]interface{}{
+			"foo": "bar",
+		},
+	}
+
+	bootstrapTmpl := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": bootstrapResource,
+			},
+		},
+	}
+	bootstrapTmpl.SetKind(builder.GenericBootstrapConfigTemplateKind)
+	bootstrapTmpl.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
+	bootstrapTmpl.SetNamespace(metav1.NamespaceDefault)
+	bootstrapTmpl.SetName("ms-bootstrap-template")
+
+	bootstrapObj := &unstructured.Unstructured{
+		Object: bootstrapResource["spec"].(map[string]interface{}),
+	}
+	bootstrapObj.SetKind(builder.GenericBootstrapConfigKind)
+	bootstrapObj.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
+	bootstrapObj.SetNamespace(metav1.NamespaceDefault)
+	bootstrapObj.SetName("bootstrap")
+
+	// Create infrastructure template resource.
+	infraResource := map[string]interface{}{
+		"kind":       builder.GenericInfrastructureMachineKind,
+		"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
+		"spec": map[string]interface{}{
+			"size": "3xlarge",
+		},
+	}
+	infraTmpl := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": infraResource,
+			},
+		},
+	}
+	infraTmpl.SetKind(builder.GenericInfrastructureMachineTemplateKind)
+	infraTmpl.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
+	infraTmpl.SetNamespace(metav1.NamespaceDefault)
+	infraTmpl.SetName("ms-infra-template")
+
+	infraObj := &unstructured.Unstructured{
+		Object: infraResource["spec"].(map[string]interface{}),
+	}
+	infraObj.SetKind(builder.GenericInfrastructureMachineKind)
+	infraObj.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
+	infraObj.SetNamespace(metav1.NamespaceDefault)
+	infraObj.SetName("infra")
+
+	tests := []struct {
+		name                           string
+		ms                             *clusterv1.MachineSet
+		machines                       []*clusterv1.Machine
+		noBootStrapConfig              bool
+		interceptorFuncs               interceptor.Funcs
+		wantMachinesNotInPlaceUpdating []string
+		wantMachinesInPlaceUpdating    []string
+		wantErr                        bool
+		wantErrorMessage               string
+	}{
+		{
+			name: "No op when machines did not start move / do not have the UpdateInProgressAnnotation",
+			ms:   newMachineSet("ms1", "cluster1", 2),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1"),
+				fakeMachine("m2"),
+			},
+			interceptorFuncs:               interceptor.Funcs{},
+			wantMachinesNotInPlaceUpdating: []string{"m1", "m2"},
+			wantMachinesInPlaceUpdating:    nil,
+			wantErr:                        false,
+		},
+		{
+			name: "No op when in-place update has been already triggered",
+			ms:   newMachineSet("ms1", "cluster1", 2),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", runtimev1.PendingHooksAnnotation: "UpdateMachine"})),
+				fakeMachine("m2", withMachineAnnotations(map[string]string{runtimev1.PendingHooksAnnotation: "UpdateMachine"})), // updating in place, failed to complete (to remove both UpdateInProgressAnnotation and PendingHooksAnnotation)
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+					return errors.New("injected error performing get") // we should not perform any get if in-place update has been already triggered
+				},
+			},
+			wantMachinesNotInPlaceUpdating: nil,
+			wantMachinesInPlaceUpdating:    []string{"m1", "m2"},
+			wantErr:                        false,
+		},
+		{
+			name: "No op when it fails to get InfraMachine",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if obj.GetObjectKind().GroupVersionKind().Kind == builder.GenericInfrastructureMachineKind && key.Name == "m1" {
+						return errors.New("injected error when getting m1-infra")
+					}
+					return client.Get(ctx, key, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when getting m1-infra",
+		},
+		{
+			name: "No op when it fails to compute desired InfraMachine",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if key.Name == "ms-infra-template" {
+						return errors.New("injected error when getting ms-infra-template")
+					}
+					return client.Get(ctx, key, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when getting ms-infra-template",
+		},
+		{
+			name: "No op when it fails to get BootstrapConfig",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if obj.GetObjectKind().GroupVersionKind().Kind == builder.GenericBootstrapConfigKind && key.Name == "m1" {
+						return errors.New("injected error when getting m1-bootstrap")
+					}
+					return client.Get(ctx, key, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when getting m1-bootstrap",
+		},
+		{
+			name: "No op when it fails to compute desired BootstrapConfig",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if key.Name == "ms-bootstrap-template" {
+						return errors.New("injected error when getting ms-bootstrap-template")
+					}
+					return client.Get(ctx, key, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when getting ms-bootstrap-template",
+		},
+		{
+			name: "No op when it fails to update InfraMachine",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+					clientObject, ok := obj.(client.Object)
+					if !ok {
+						return errors.Errorf("error during object creation: unexpected ApplyConfiguration")
+					}
+					if clientObject.GetObjectKind().GroupVersionKind().Kind == builder.GenericInfrastructureMachineKind && clientObject.GetName() == "m1" {
+						return errors.New("injected error when applying m1-infra")
+					}
+					return c.Apply(ctx, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when applying m1-infra",
+		},
+		{
+			name: "No op when it fails to update boostrap config",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+					clientObject, ok := obj.(client.Object)
+					if !ok {
+						return errors.Errorf("error during object creation: unexpected ApplyConfiguration")
+					}
+					if clientObject.GetObjectKind().GroupVersionKind().Kind == builder.GenericBootstrapConfigKind && clientObject.GetName() == "m1" {
+						return errors.New("injected error when applying m1-bootstrap")
+					}
+					return c.Apply(ctx, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when applying m1-bootstrap",
+		},
+		{
+			name: "No op when it fails to update machine",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+					clientObject, ok := obj.(client.Object)
+					if !ok {
+						return errors.Errorf("error during object creation: unexpected ApplyConfiguration")
+					}
+					if clientObject.GetName() == "m1" {
+						return errors.New("injected error when applying m1")
+					}
+					return c.Apply(ctx, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when applying m1",
+		},
+		{
+			name: "No op when ms is accepting moved replicas, machine is still pending acknowledge",
+			ms:   newMachineSet("ms1", "cluster1", 1, withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms2"})),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+			},
+			interceptorFuncs:               interceptor.Funcs{},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantErr:                        false,
+		},
+		{
+			name: "Trigger in-place when ms is accepting moved replicas, machine is still pending acknowledge, machine is acknowledged",
+			ms:   newMachineSet("ms1", "cluster1", 1, withMachineSetAnnotations(map[string]string{clusterv1.MachineSetReceiveMachinesFromMachineSetsAnnotation: "ms2", clusterv1.AcknowledgedMoveAnnotation: "m1"})),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+			},
+			interceptorFuncs:            interceptor.Funcs{},
+			wantMachinesInPlaceUpdating: []string{"m1"},
+			wantErr:                     false,
+		},
+		{
+			name: "Trigger in-place when ms is not accepting anymore moved replicas, machine is still pending acknowledge",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+			},
+			interceptorFuncs:            interceptor.Funcs{},
+			wantMachinesInPlaceUpdating: []string{"m1"},
+			wantErr:                     false,
+		},
+		{
+			name: "Keeps triggering in-place when one machine fails",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+				fakeMachine("m2", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+				fakeMachine("m3", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+			},
+			interceptorFuncs: interceptor.Funcs{
+				Get: func(ctx context.Context, client client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if obj.GetObjectKind().GroupVersionKind().Kind == builder.GenericInfrastructureMachineKind && key.Name == "m1" {
+						return errors.New("injected error when getting m1-infra")
+					}
+					return client.Get(ctx, key, obj, opts...)
+				},
+			},
+			wantMachinesNotInPlaceUpdating: []string{"m1"},
+			wantMachinesInPlaceUpdating:    []string{"m2", "m3"},
+			wantErr:                        true,
+			wantErrorMessage:               "injected error when getting m1-infra",
+		},
+		{
+			name: "Trigger in-place for machines without bootstrap config",
+			ms:   newMachineSet("ms1", "cluster1", 1),
+			machines: []*clusterv1.Machine{
+				fakeMachine("m1", withMachineAnnotations(map[string]string{clusterv1.UpdateInProgressAnnotation: "", clusterv1.PendingAcknowledgeMoveAnnotation: ""})),
+			},
+			noBootStrapConfig:           true,
+			interceptorFuncs:            interceptor.Funcs{},
+			wantMachinesInPlaceUpdating: []string{"m1"},
+			wantErr:                     false,
+		},
+	}
+
+	// We want to test that trigger in place handles version and failure domain, which are not reconciled by syncMachines
+	versionBeforeInplaceUpdate := "v1.33.0"
+	versionAfterInplaceUpdate := "v1.34.0"
+	failureDomainBeforeInplaceUpdate := "fd-1"
+	failureDomainAfterInplaceUpdate := "fd-2"
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			tt.ms.Spec.Template.Spec.Version = versionAfterInplaceUpdate
+			tt.ms.Spec.Template.Spec.FailureDomain = failureDomainAfterInplaceUpdate
+			tt.ms.Spec.Template.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+				APIGroup: infraTmpl.GroupVersionKind().Group,
+				Kind:     infraTmpl.GetKind(),
+				Name:     infraTmpl.GetName(),
+			}
+
+			objs := []client.Object{
+				builder.GenericInfrastructureMachineTemplateCRD.DeepCopy(),
+				builder.GenericInfrastructureMachineCRD.DeepCopy(),
+				builder.GenericBootstrapConfigTemplateCRD.DeepCopy(),
+				builder.GenericBootstrapConfigCRD.DeepCopy(),
+				tt.ms,
+				infraTmpl,
+			}
+			if !tt.noBootStrapConfig {
+				tt.ms.Spec.Template.Spec.Bootstrap.ConfigRef = clusterv1.ContractVersionedObjectReference{
+					APIGroup: bootstrapTmpl.GroupVersionKind().Group,
+					Kind:     bootstrapTmpl.GetKind(),
+					Name:     bootstrapTmpl.GetName(),
+				}
+				objs = append(objs, bootstrapTmpl)
+			}
+
+			for _, m := range tt.machines {
+				m.SetNamespace(tt.ms.Namespace)
+
+				if hooks.IsPending(runtimehooksv1.UpdateMachine, m) {
+					m.Spec.Version = versionAfterInplaceUpdate
+					m.Spec.FailureDomain = failureDomainAfterInplaceUpdate
+				} else {
+					// NOTE: following values must be changed when in place upgrade is triggered for a machine
+					m.Spec.Version = versionBeforeInplaceUpdate
+					m.Spec.FailureDomain = failureDomainBeforeInplaceUpdate
+				}
+
+				mInfraObj := infraObj.DeepCopy()
+				mInfraObj.SetName(m.Name)
+				m.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+					APIGroup: mInfraObj.GroupVersionKind().Group,
+					Kind:     mInfraObj.GetKind(),
+					Name:     mInfraObj.GetName(),
+				}
+				objs = append(objs, m, mInfraObj)
+
+				if !tt.noBootStrapConfig {
+					mBootstrapObj := bootstrapObj.DeepCopy()
+					mBootstrapObj.SetName(m.Name)
+					m.Spec.Bootstrap.ConfigRef = clusterv1.ContractVersionedObjectReference{
+						APIGroup: mBootstrapObj.GroupVersionKind().Group,
+						Kind:     mBootstrapObj.GetKind(),
+						Name:     mBootstrapObj.GetName(),
+					}
+					objs = append(objs, mBootstrapObj)
+				}
+			}
+			fakeClient := fake.NewClientBuilder().WithObjects(objs...).WithInterceptorFuncs(tt.interceptorFuncs).Build()
+			r := &Reconciler{
+				Client:   fakeClient,
+				recorder: record.NewFakeRecorder(32),
+			}
+			s := &scope{
+				machineSet: tt.ms,
+				machines:   tt.machines,
+			}
+			res, err := r.triggerInPlaceUpdate(ctx, s)
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred(), "expected error when triggering in-place update, got none")
+				g.Expect(err.Error()).To(ContainSubstring(tt.wantErrorMessage))
+			} else {
+				g.Expect(err).ToNot(HaveOccurred(), "unexpected error when triggering in-place update")
+			}
+			g.Expect(res.IsZero()).To(BeTrue(), "unexpected non zero result when triggering in-place update")
+
+			machines := &clusterv1.MachineList{}
+			g.Expect(fakeClient.List(ctx, machines)).ToNot(HaveOccurred(), "unexpected error when listing machines")
+			g.Expect(machinesNotInPlaceUpdating(machines)).To(ConsistOf(tt.wantMachinesNotInPlaceUpdating))
+
+			updatingMachines := machinesInPlaceUpdating(machines)
+			g.Expect(updatingMachines).To(ConsistOf(tt.wantMachinesInPlaceUpdating))
+			for _, m := range machines.Items {
+				if hooks.IsPending(runtimehooksv1.UpdateMachine, &m) {
+					g.Expect(m.Spec.Version).To(Equal(versionAfterInplaceUpdate))
+					g.Expect(m.Spec.FailureDomain).To(Equal(failureDomainAfterInplaceUpdate))
+				} else {
+					g.Expect(m.Spec.Version).To(Equal(versionBeforeInplaceUpdate))
+					g.Expect(m.Spec.FailureDomain).To(Equal(failureDomainBeforeInplaceUpdate))
+				}
+			}
+		})
+	}
 }
 
 func TestComputeDesiredMachine(t *testing.T) {
 	duration5s := ptr.To(int32(5))
 	duration10s := ptr.To(int32(10))
+
+	machineTaint := clusterv1.MachineTaint{
+		Key:         "taint-key",
+		Value:       "taint-value",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+	changedMachineTaint := clusterv1.MachineTaint{
+		Key:         "changed-taint-key",
+		Value:       "changed-taint-value",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
 
 	namingTemplateKey := "-md"
 	mdName := "testmd"
@@ -2490,6 +3641,9 @@ func TestComputeDesiredMachine(t *testing.T) {
 				NodeDeletionTimeoutSeconds:     duration10s,
 			},
 			MinReadySeconds: ptr.To[int32](10),
+			Taints: []clusterv1.MachineTaint{
+				machineTaint,
+			},
 		},
 	}
 
@@ -2513,6 +3667,7 @@ func TestComputeDesiredMachine(t *testing.T) {
 				NodeDeletionTimeoutSeconds:     duration10s,
 			},
 			MinReadySeconds: ptr.To[int32](10),
+			Taints:          []clusterv1.MachineTaint{machineTaint},
 		},
 	}
 
@@ -2541,6 +3696,7 @@ func TestComputeDesiredMachine(t *testing.T) {
 	existingMachine.Spec.Deletion.NodeDeletionTimeoutSeconds = duration5s
 	existingMachine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = duration5s
 	existingMachine.Spec.MinReadySeconds = ptr.To[int32](5)
+	existingMachine.Spec.Taints = []clusterv1.MachineTaint{changedMachineTaint}
 
 	expectedUpdatedMachine := skeletonMachine.DeepCopy()
 	expectedUpdatedMachine.Name = existingMachine.Name
@@ -2550,7 +3706,13 @@ func TestComputeDesiredMachine(t *testing.T) {
 	expectedUpdatedMachine.Spec.InfrastructureRef = *existingMachine.Spec.InfrastructureRef.DeepCopy()
 	expectedUpdatedMachine.Spec.Bootstrap.ConfigRef = *existingMachine.Spec.Bootstrap.ConfigRef.DeepCopy()
 
-	tests := []computeDesiredMachineTestCase{
+	tests := []struct {
+		name            string
+		ms              *clusterv1.MachineSet
+		existingMachine *clusterv1.Machine
+		wantMachine     *clusterv1.Machine
+		wantName        []gomegatypes.GomegaMatcher
+	}{
 		{
 			name: "should return the correct Machine object when creating a new Machine",
 			ms: &clusterv1.MachineSet{
@@ -2857,226 +4019,6 @@ func TestReconciler_reconcileDelete(t *testing.T) {
 	}
 }
 
-func TestNewMachineUpToDateCondition(t *testing.T) {
-	reconciliationTime := time.Now()
-	tests := []struct {
-		name              string
-		machineDeployment *clusterv1.MachineDeployment
-		machineSet        *clusterv1.MachineSet
-		expectCondition   *metav1.Condition
-	}{
-		{
-			name:              "no condition returned for stand-alone MachineSet",
-			machineDeployment: nil,
-			machineSet:        &clusterv1.MachineSet{},
-			expectCondition:   nil,
-		},
-		{
-			name: "up-to-date",
-			machineDeployment: &clusterv1.MachineDeployment{
-				Spec: clusterv1.MachineDeploymentSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			machineSet: &clusterv1.MachineSet{
-				Spec: clusterv1.MachineSetSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			expectCondition: &metav1.Condition{
-				Type:   clusterv1.MachineUpToDateCondition,
-				Status: metav1.ConditionTrue,
-				Reason: clusterv1.MachineUpToDateReason,
-			},
-		},
-		{
-			name: "not up-to-date",
-			machineDeployment: &clusterv1.MachineDeployment{
-				Spec: clusterv1.MachineDeploymentSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			machineSet: &clusterv1.MachineSet{
-				Spec: clusterv1.MachineSetSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.30.0",
-						},
-					},
-				},
-			},
-			expectCondition: &metav1.Condition{
-				Type:    clusterv1.MachineUpToDateCondition,
-				Status:  metav1.ConditionFalse,
-				Reason:  clusterv1.MachineNotUpToDateReason,
-				Message: "* Version v1.30.0, v1.31.0 required",
-			},
-		},
-		{
-			name: "up-to-date, spec.rolloutAfter not expired",
-			machineDeployment: &clusterv1.MachineDeployment{
-				Spec: clusterv1.MachineDeploymentSpec{
-					Rollout: clusterv1.MachineDeploymentRolloutSpec{
-						After: metav1.Time{Time: reconciliationTime.Add(1 * time.Hour)}, // rollout after not yet expired
-					},
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			machineSet: &clusterv1.MachineSet{
-				ObjectMeta: metav1.ObjectMeta{
-					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // MS created before rollout after
-				},
-				Spec: clusterv1.MachineSetSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			expectCondition: &metav1.Condition{
-				Type:   clusterv1.MachineUpToDateCondition,
-				Status: metav1.ConditionTrue,
-				Reason: clusterv1.MachineUpToDateReason,
-			},
-		},
-		{
-			name: "not up-to-date, rollout After expired",
-			machineDeployment: &clusterv1.MachineDeployment{
-				Spec: clusterv1.MachineDeploymentSpec{
-					Rollout: clusterv1.MachineDeploymentRolloutSpec{
-						After: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // rollout after expired
-					},
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			machineSet: &clusterv1.MachineSet{
-				ObjectMeta: metav1.ObjectMeta{
-					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-2 * time.Hour)}, // MS created before rollout after
-				},
-				Spec: clusterv1.MachineSetSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			expectCondition: &metav1.Condition{
-				Type:    clusterv1.MachineUpToDateCondition,
-				Status:  metav1.ConditionFalse,
-				Reason:  clusterv1.MachineNotUpToDateReason,
-				Message: "* MachineDeployment spec.rolloutAfter expired",
-			},
-		},
-		{
-			name: "not up-to-date, rollout After expired and a new MS created",
-			machineDeployment: &clusterv1.MachineDeployment{
-				Spec: clusterv1.MachineDeploymentSpec{
-					Rollout: clusterv1.MachineDeploymentRolloutSpec{
-						After: metav1.Time{Time: reconciliationTime.Add(-2 * time.Hour)}, // rollout after expired
-					},
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			machineSet: &clusterv1.MachineSet{
-				ObjectMeta: metav1.ObjectMeta{
-					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // MS created after rollout after
-				},
-				Spec: clusterv1.MachineSetSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			expectCondition: &metav1.Condition{
-				Type:   clusterv1.MachineUpToDateCondition,
-				Status: metav1.ConditionTrue,
-				Reason: clusterv1.MachineUpToDateReason,
-			},
-		},
-		{
-			name: "not up-to-date, version changed, rollout After expired",
-			machineDeployment: &clusterv1.MachineDeployment{
-				Spec: clusterv1.MachineDeploymentSpec{
-					Rollout: clusterv1.MachineDeploymentRolloutSpec{
-						After: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // rollout after expired
-					},
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.30.0",
-						},
-					},
-				},
-			},
-			machineSet: &clusterv1.MachineSet{
-				ObjectMeta: metav1.ObjectMeta{
-					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-2 * time.Hour)}, // MS created before rollout after
-				},
-				Spec: clusterv1.MachineSetSpec{
-					Template: clusterv1.MachineTemplateSpec{
-						Spec: clusterv1.MachineSpec{
-							Version: "v1.31.0",
-						},
-					},
-				},
-			},
-			expectCondition: &metav1.Condition{
-				Type:   clusterv1.MachineUpToDateCondition,
-				Status: metav1.ConditionFalse,
-				Reason: clusterv1.MachineNotUpToDateReason,
-				Message: "* Version v1.31.0, v1.30.0 required\n" +
-					"* MachineDeployment spec.rolloutAfter expired",
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-
-			s := &scope{
-				owningMachineDeployment: tt.machineDeployment,
-				machineSet:              tt.machineSet,
-				reconciliationTime:      reconciliationTime,
-			}
-
-			condition := newMachineUpToDateCondition(s)
-			if tt.expectCondition != nil {
-				g.Expect(condition).ToNot(BeNil())
-				g.Expect(*condition).To(conditions.MatchCondition(*tt.expectCondition, conditions.IgnoreLastTransitionTime(true)))
-			} else {
-				g.Expect(condition).To(BeNil())
-			}
-		})
-	}
-}
-
 func TestSortMachinesToRemediate(t *testing.T) {
 	unhealthyMachinesWithAnnotations := []*clusterv1.Machine{}
 	for i := range 4 {
@@ -3162,4 +4104,205 @@ func TestSortMachinesToRemediate(t *testing.T) {
 		})
 		g.Expect(machines).To(Equal(append(unhealthyMachinesWithAnnotations, unhealthyMachines...)))
 	})
+}
+
+func cleanupTime(fields []metav1.ManagedFieldsEntry) []metav1.ManagedFieldsEntry {
+	for i := range fields {
+		fields[i].Time = nil
+	}
+	return fields
+}
+
+type managedFieldEntry struct {
+	Manager     string
+	Operation   metav1.ManagedFieldsOperationType
+	APIVersion  string
+	FieldsV1    string
+	Subresource string
+}
+
+func toManagedFields(managedFields []managedFieldEntry) []metav1.ManagedFieldsEntry {
+	res := []metav1.ManagedFieldsEntry{}
+	for _, f := range managedFields {
+		res = append(res, metav1.ManagedFieldsEntry{
+			Manager:     f.Manager,
+			Operation:   f.Operation,
+			APIVersion:  f.APIVersion,
+			FieldsType:  "FieldsV1",
+			FieldsV1:    &metav1.FieldsV1{Raw: []byte(trimSpaces(f.FieldsV1))},
+			Subresource: f.Subresource,
+		})
+	}
+	return res
+}
+
+func trimSpaces(s string) string {
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\t", "")
+	return s
+}
+
+func managedFieldsMatching(managedFields []metav1.ManagedFieldsEntry, manager string, operation metav1.ManagedFieldsOperationType, subresource string) []metav1.ManagedFieldsEntry {
+	res := []metav1.ManagedFieldsEntry{}
+	for _, f := range managedFields {
+		if f.Manager == manager && f.Operation == operation && f.Subresource == subresource {
+			res = append(res, f)
+		}
+	}
+	return res
+}
+
+func TestReconciler_completeMoveMachine(t *testing.T) {
+	testCluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceDefault, Name: testClusterName},
+	}
+
+	g := NewWithT(t)
+	scheme := runtime.NewScheme()
+	g.Expect(apiextensionsv1.AddToScheme(scheme)).To(Succeed())
+	g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+
+	// Create bootstrap template resource.
+	bootstrapResource := map[string]interface{}{
+		"kind":       "GenericBootstrapConfig",
+		"apiVersion": clusterv1.GroupVersionBootstrap.String(),
+		"spec":       map[string]interface{}{},
+	}
+	bootstrapTmpl := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": bootstrapResource,
+			},
+		},
+	}
+	bootstrapTmpl.SetKind("GenericBootstrapConfigTemplate")
+	bootstrapTmpl.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
+	bootstrapTmpl.SetName("ms-template")
+	bootstrapTmpl.SetNamespace(metav1.NamespaceDefault)
+
+	// Create infrastructure template resource.
+	infraResource := map[string]interface{}{
+		"kind":       "GenericInfrastructureMachine",
+		"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
+		"spec":       map[string]interface{}{},
+	}
+	infraTmpl := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": infraResource,
+			},
+		},
+	}
+	infraTmpl.SetKind("GenericInfrastructureMachineTemplate")
+	infraTmpl.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
+	infraTmpl.SetName("ms-template")
+	infraTmpl.SetNamespace(metav1.NamespaceDefault)
+
+	// Create a MachineSet with a specific version and failure domain
+	machineSet := &clusterv1.MachineSet{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "ms-",
+			Namespace:    metav1.NamespaceDefault,
+		},
+		Spec: clusterv1.MachineSetSpec{
+			ClusterName: testClusterName,
+			Template: clusterv1.MachineTemplateSpec{
+				Spec: clusterv1.MachineSpec{
+					ClusterName: testClusterName,
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "GenericInfrastructureMachineTemplate",
+						Name:     "ms-template",
+						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+					},
+					Bootstrap: clusterv1.Bootstrap{
+						ConfigRef: clusterv1.ContractVersionedObjectReference{
+							Kind:     "GenericBootstrapConfigTemplate",
+							Name:     "ms-template",
+							APIGroup: clusterv1.GroupVersionBootstrap.Group,
+						},
+					},
+					Version:       "v1.20.0",
+					FailureDomain: "failure-domain-1",
+				},
+			},
+		},
+	}
+
+	bootstrapObj := &unstructured.Unstructured{
+		Object: bootstrapResource["spec"].(map[string]interface{}),
+	}
+	bootstrapObj.SetKind(builder.GenericBootstrapConfigKind)
+	bootstrapObj.SetAPIVersion(clusterv1.GroupVersionBootstrap.String())
+	bootstrapObj.SetNamespace(metav1.NamespaceDefault)
+	bootstrapObj.SetName("current-machine")
+
+	infraObj := &unstructured.Unstructured{
+		Object: infraResource["spec"].(map[string]interface{}),
+	}
+	infraObj.SetKind(builder.GenericInfrastructureMachineKind)
+	infraObj.SetAPIVersion(clusterv1.GroupVersionInfrastructure.String())
+	infraObj.SetNamespace(metav1.NamespaceDefault)
+	infraObj.SetName("current-machine")
+
+	// Create a Machine with a different version and failure domain
+	machine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "current-machine",
+			Namespace: metav1.NamespaceDefault,
+		},
+		Spec: clusterv1.MachineSpec{
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "current-machine",
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+			},
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					Kind:     "GenericBootstrapConfig",
+					Name:     "current-machine",
+					APIGroup: clusterv1.GroupVersionBootstrap.Group,
+				},
+			},
+			ClusterName:   testClusterName,
+			Version:       "v1.19.0",
+			FailureDomain: "failure-domain-2",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		builder.GenericBootstrapConfigCRD,
+		builder.GenericInfrastructureMachineCRD,
+		builder.GenericBootstrapConfigTemplateCRD,
+		builder.GenericInfrastructureMachineTemplateCRD,
+		bootstrapTmpl,
+		infraTmpl,
+		bootstrapObj,
+		infraObj,
+		testCluster,
+		machineSet,
+		machine,
+	).Build()
+	msr := &Reconciler{
+		Client:   fakeClient,
+		recorder: record.NewFakeRecorder(32),
+	}
+
+	s := &scope{
+		machineSet: machineSet,
+		machines:   []*clusterv1.Machine{machine},
+		getAndAdoptMachinesForMachineSetSucceeded: true,
+	}
+
+	err := msr.completeMoveMachine(ctx, s, machine)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	g.Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(bootstrapObj), bootstrapObj)).To(Succeed())
+	g.Expect(bootstrapObj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.UpdateInProgressAnnotation, ""))
+
+	g.Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(infraObj), infraObj)).To(Succeed())
+	g.Expect(infraObj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.UpdateInProgressAnnotation, ""))
+
+	g.Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(machine), machine)).To(Succeed())
+	g.Expect(machine.Spec.Version).To(Equal(machineSet.Spec.Template.Spec.Version))
+	g.Expect(machine.Spec.FailureDomain).To(Equal(machineSet.Spec.Template.Spec.FailureDomain))
 }

@@ -109,6 +109,7 @@ microk8s                BootstrapProvider          https://github.com/canonical/
 rke2                    BootstrapProvider          https://github.com/rancher/cluster-api-provider-rke2/releases/latest/                             bootstrap-components.yaml
 talos                   BootstrapProvider          https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/latest/               bootstrap-components.yaml
 canonical-kubernetes    ControlPlaneProvider       https://github.com/canonical/cluster-api-k8s/releases/latest/                                     control-plane-components.yaml
+hosted-control-plane    ControlPlaneProvider       https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/latest/            control-plane-components.yaml
 k0sproject-k0smotron    ControlPlaneProvider       https://github.com/k0sproject/k0smotron/releases/latest/                                          control-plane-components.yaml
 kamaji                  ControlPlaneProvider       https://github.com/clastix/cluster-api-control-plane-provider-kamaji/releases/latest/             control-plane-components.yaml
 kubeadm                 ControlPlaneProvider       https://github.com/kubernetes-sigs/cluster-api/releases/latest/                                   control-plane-components.yaml
@@ -136,6 +137,7 @@ kubekey                 InfrastructureProvider     https://github.com/kubesphere
 kubevirt                InfrastructureProvider     https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/releases/latest/                 infrastructure-components.yaml
 linode-linode           InfrastructureProvider     https://github.com/linode/cluster-api-provider-linode/releases/latest/                            infrastructure-components.yaml
 maas                    InfrastructureProvider     https://github.com/spectrocloud/cluster-api-provider-maas/releases/latest/                        infrastructure-components.yaml
+metal-stack             InfrastructureProvider     https://github.com/metal-stack/cluster-api-provider-metal-stack/releases/latest/                  infrastructure-components.yaml
 metal3                  InfrastructureProvider     https://github.com/metal3-io/cluster-api-provider-metal3/releases/latest/                         infrastructure-components.yaml
 my-infra-provider       InfrastructureProvider     /home/.config/cluster-api/overrides/infrastructure-docker/latest/                                 infrastructure-components.yaml
 nested                  InfrastructureProvider     https://github.com/kubernetes-sigs/cluster-api-provider-nested/releases/latest/                   infrastructure-components.yaml
@@ -202,6 +204,10 @@ var expectedOutputYaml = `- File: core_components.yaml
   Name: canonical-kubernetes
   ProviderType: ControlPlaneProvider
   URL: https://github.com/canonical/cluster-api-k8s/releases/latest/
+- File: control-plane-components.yaml
+  Name: hosted-control-plane
+  ProviderType: ControlPlaneProvider
+  URL: https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/latest/
 - File: control-plane-components.yaml
   Name: k0sproject-k0smotron
   ProviderType: ControlPlaneProvider
@@ -310,6 +316,10 @@ var expectedOutputYaml = `- File: core_components.yaml
   Name: maas
   ProviderType: InfrastructureProvider
   URL: https://github.com/spectrocloud/cluster-api-provider-maas/releases/latest/
+- File: infrastructure-components.yaml
+  Name: metal-stack
+  ProviderType: InfrastructureProvider
+  URL: https://github.com/metal-stack/cluster-api-provider-metal-stack/releases/latest/
 - File: infrastructure-components.yaml
   Name: metal3
   ProviderType: InfrastructureProvider

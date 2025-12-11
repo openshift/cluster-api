@@ -39,9 +39,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
+	"sigs.k8s.io/cluster-api/util/cache"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
@@ -159,10 +161,6 @@ func TestGetWorkloadCluster(t *testing.T) {
 			secret.KubeconfigDataName: testEnvKubeconfig,
 		},
 	}
-	clusterKey := client.ObjectKey{
-		Name:      "my-cluster",
-		Namespace: ns.Name,
-	}
 
 	tests := []struct {
 		name       string
@@ -171,40 +169,34 @@ func TestGetWorkloadCluster(t *testing.T) {
 		expectErr  bool
 	}{
 		{
-			name:       "returns a workload cluster",
-			clusterKey: clusterKey,
-			objs:       []client.Object{etcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
-			expectErr:  false,
+			name:      "returns a workload cluster",
+			objs:      []client.Object{etcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
+			expectErr: false,
 		},
 		{
-			name:       "returns error if cannot get rest.Config from kubeconfigSecret",
-			clusterKey: clusterKey,
-			objs:       []client.Object{etcdSecret.DeepCopy()},
-			expectErr:  true,
+			name:      "returns error if cannot get rest.Config from kubeconfigSecret",
+			objs:      []client.Object{etcdSecret.DeepCopy()},
+			expectErr: true,
 		},
 		{
-			name:       "returns error if unable to find the etcd secret",
-			clusterKey: clusterKey,
-			objs:       []client.Object{kubeconfigSecret.DeepCopy()},
-			expectErr:  true,
+			name:      "returns error if unable to find the etcd secret",
+			objs:      []client.Object{kubeconfigSecret.DeepCopy()},
+			expectErr: true,
 		},
 		{
-			name:       "returns error if unable to find the certificate in the etcd secret",
-			clusterKey: clusterKey,
-			objs:       []client.Object{emptyCrtEtcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
-			expectErr:  true,
+			name:      "returns error if unable to find the certificate in the etcd secret",
+			objs:      []client.Object{emptyCrtEtcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
+			expectErr: true,
 		},
 		{
-			name:       "returns error if unable to find the key in the etcd secret",
-			clusterKey: clusterKey,
-			objs:       []client.Object{emptyKeyEtcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
-			expectErr:  true,
+			name:      "returns error if unable to find the key in the etcd secret",
+			objs:      []client.Object{emptyKeyEtcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
+			expectErr: true,
 		},
 		{
-			name:       "returns error if unable to generate client cert",
-			clusterKey: clusterKey,
-			objs:       []client.Object{badCrtEtcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
-			expectErr:  true,
+			name:      "returns error if unable to generate client cert",
+			objs:      []client.Object{badCrtEtcdSecret.DeepCopy(), kubeconfigSecret.DeepCopy()},
+			expectErr: true,
 		},
 	}
 
@@ -239,6 +231,7 @@ func TestGetWorkloadCluster(t *testing.T) {
 				Client:              env.GetClient(),
 				SecretCachingClient: secretCachingClient,
 				ClusterCache:        clusterCache,
+				ClientCertCache:     cache.New[ClientCertEntry](24 * time.Hour),
 			}
 
 			// Ensure the ClusterCache reconciled at least once (and if possible created a clusterAccessor).
@@ -247,7 +240,7 @@ func TestGetWorkloadCluster(t *testing.T) {
 			})
 			g.Expect(err).ToNot(HaveOccurred())
 
-			workloadCluster, err := m.GetWorkloadCluster(ctx, tt.clusterKey)
+			workloadCluster, err := m.GetWorkloadCluster(ctx, cluster, bootstrapv1.EncryptionAlgorithmRSA2048)
 			if tt.expectErr {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(workloadCluster).To(BeNil())
@@ -301,7 +294,6 @@ func machineListForTestGetMachinesForCluster() *clusterv1.MachineList {
 	}
 	machine := func(name string) clusterv1.Machine {
 		return clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: metav1.NamespaceDefault,

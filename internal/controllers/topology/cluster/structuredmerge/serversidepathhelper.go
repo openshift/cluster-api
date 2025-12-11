@@ -133,19 +133,22 @@ func (h *serverSidePatchHelper) HasChanges() bool {
 }
 
 // Patch will server side apply the current intent (the modified object.
-func (h *serverSidePatchHelper) Patch(ctx context.Context) error {
+func (h *serverSidePatchHelper) Patch(ctx context.Context) (string, error) {
 	if !h.HasChanges() {
-		return nil
+		return "", nil
 	}
 
 	log := ctrl.LoggerFrom(ctx)
 	log.V(5).Info("Patching object", "intent", h.modified)
 
-	options := []client.PatchOption{
+	options := []client.ApplyOption{
 		client.FieldOwner(TopologyManagerName),
 		// NOTE: we are using force ownership so in case of conflicts the topology controller
 		// overwrite values and become sole manager.
 		client.ForceOwnership,
 	}
-	return h.client.Patch(ctx, h.modified, client.Apply, options...)
+	if err := h.client.Apply(ctx, client.ApplyConfigurationFromUnstructured(h.modified), options...); err != nil {
+		return "", err
+	}
+	return h.modified.GetResourceVersion(), nil
 }

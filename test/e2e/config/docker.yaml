@@ -69,15 +69,6 @@ providers:
       new: --metrics-addr=:8080
     files:
       - sourcePath: "../data/shared/v1.6/metadata.yaml"
-  - name: "{go://sigs.k8s.io/cluster-api@v1.8}"
-    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.8}/core-components.yaml"
-    type: "url"
-    contract: v1beta1
-    replacements:
-      - old: --metrics-addr=127.0.0.1:8080
-        new: --metrics-addr=:8080
-    files:
-      - sourcePath: "../data/shared/v1.8/metadata.yaml"
   - name: "{go://sigs.k8s.io/cluster-api@v1.9}"
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.9}/core-components.yaml"
     type: "url"
@@ -96,7 +87,16 @@ providers:
         new: --metrics-addr=:8080
     files:
       - sourcePath: "../data/shared/v1.10/metadata.yaml"
-  - name: v1.11.99 # next; use manifest from source files
+  - name: "{go://sigs.k8s.io/cluster-api@v1.11}"
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.11}/core-components.yaml"
+    type: "url"
+    contract: v1beta1
+    replacements:
+      - old: --metrics-addr=127.0.0.1:8080
+        new: --metrics-addr=:8080
+    files:
+      - sourcePath: "../data/shared/v1.11/metadata.yaml"
+  - name: v1.12.99 # next; use manifest from source files
     value: ../../../config/default
     files:
     - sourcePath: "../data/shared/main/metadata.yaml"
@@ -140,15 +140,6 @@ providers:
       new: --metrics-addr=:8080
     files:
     - sourcePath: "../data/shared/v1.6/metadata.yaml"
-  - name: "{go://sigs.k8s.io/cluster-api@v1.8}"
-    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.8}/bootstrap-components.yaml"
-    type: "url"
-    contract: v1beta1
-    replacements:
-      - old: --metrics-addr=127.0.0.1:8080
-        new: --metrics-addr=:8080
-    files:
-      - sourcePath: "../data/shared/v1.8/metadata.yaml"
   - name: "{go://sigs.k8s.io/cluster-api@v1.9}"
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.9}/bootstrap-components.yaml"
     type: "url"
@@ -167,7 +158,16 @@ providers:
         new: --metrics-addr=:8080
     files:
       - sourcePath: "../data/shared/v1.10/metadata.yaml"
-  - name: v1.11.99 # next; use manifest from source files
+  - name: "{go://sigs.k8s.io/cluster-api@v1.11}"
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.11}/bootstrap-components.yaml"
+    type: "url"
+    contract: v1beta1
+    replacements:
+      - old: --metrics-addr=127.0.0.1:8080
+        new: --metrics-addr=:8080
+    files:
+      - sourcePath: "../data/shared/v1.11/metadata.yaml"
+  - name: v1.12.99 # next; use manifest from source files
     value: ../../../bootstrap/kubeadm/config/default
     files:
     - sourcePath: "../data/shared/main/metadata.yaml"
@@ -211,15 +211,6 @@ providers:
       new: --metrics-addr=:8080
     files:
     - sourcePath: "../data/shared/v1.6/metadata.yaml"
-  - name: "{go://sigs.k8s.io/cluster-api@v1.8}"
-    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.8}/control-plane-components.yaml"
-    type: "url"
-    contract: v1beta1
-    replacements:
-      - old: --metrics-addr=127.0.0.1:8080
-        new: --metrics-addr=:8080
-    files:
-      - sourcePath: "../data/shared/v1.8/metadata.yaml"
   - name: "{go://sigs.k8s.io/cluster-api@v1.9}"
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.9}/control-plane-components.yaml"
     type: "url"
@@ -238,7 +229,16 @@ providers:
         new: --metrics-addr=:8080
     files:
       - sourcePath: "../data/shared/v1.10/metadata.yaml"
-  - name: v1.11.99 # next; use manifest from source files
+  - name: "{go://sigs.k8s.io/cluster-api@v1.11}"
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.11}/control-plane-components.yaml"
+    type: "url"
+    contract: v1beta1
+    replacements:
+      - old: --metrics-addr=127.0.0.1:8080
+        new: --metrics-addr=:8080
+    files:
+      - sourcePath: "../data/shared/v1.11/metadata.yaml"
+  - name: v1.12.99 # next; use manifest from source files
     value: ../../../controlplane/kubeadm/config/default
     files:
     - sourcePath: "../data/shared/main/metadata.yaml"
@@ -290,18 +290,6 @@ providers:
     - sourcePath: "../data/infrastructure-docker/v1.6/cluster-template.yaml"
     - sourcePath: "../data/infrastructure-docker/v1.6/cluster-template-topology.yaml"
     - sourcePath: "../data/infrastructure-docker/v1.6/clusterclass-quick-start.yaml"
-  - name: "{go://sigs.k8s.io/cluster-api@v1.8}"
-    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.8}/infrastructure-components-development.yaml"
-    type: "url"
-    contract: v1beta1
-    replacements:
-      - old: --metrics-addr=127.0.0.1:8080
-        new: --metrics-addr=:8080
-    files:
-      - sourcePath: "../data/shared/v1.8/metadata.yaml"
-      - sourcePath: "../data/infrastructure-docker/v1.8/cluster-template.yaml"
-      - sourcePath: "../data/infrastructure-docker/v1.8/cluster-template-topology.yaml"
-      - sourcePath: "../data/infrastructure-docker/v1.8/clusterclass-quick-start.yaml"
   - name: "{go://sigs.k8s.io/cluster-api@v1.9}"
     value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.9}/infrastructure-components-development.yaml"
     type: "url"
@@ -326,12 +314,25 @@ providers:
       - sourcePath: "../data/infrastructure-docker/v1.10/cluster-template.yaml"
       - sourcePath: "../data/infrastructure-docker/v1.10/cluster-template-topology.yaml"
       - sourcePath: "../data/infrastructure-docker/v1.10/clusterclass-quick-start.yaml"
-  - name: v1.11.99 # next; use manifest from source files
+  - name: "{go://sigs.k8s.io/cluster-api@v1.11}"
+    value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.11}/infrastructure-components-development.yaml"
+    type: "url"
+    contract: v1beta1
+    replacements:
+      - old: --metrics-addr=127.0.0.1:8080
+        new: --metrics-addr=:8080
+    files:
+      - sourcePath: "../data/shared/v1.11/metadata.yaml"
+      - sourcePath: "../data/infrastructure-docker/v1.11/cluster-template.yaml"
+      - sourcePath: "../data/infrastructure-docker/v1.11/cluster-template-topology.yaml"
+      - sourcePath: "../data/infrastructure-docker/v1.11/clusterclass-quick-start.yaml"
+  - name: v1.12.99 # next; use manifest from source files
     value: ../../../test/infrastructure/docker/config/default
     files:
     # Add cluster templates
     - sourcePath: "../data/infrastructure-docker/main/cluster-template.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-md-remediation.yaml"
+    - sourcePath: "../data/infrastructure-docker/main/cluster-template-md-taints.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-kcp-remediation.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-kcp-adoption.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-machine-pool.yaml"
@@ -342,6 +343,7 @@ providers:
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-ipv6.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-topology-dualstack-ipv6-primary.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-topology-dualstack-ipv4-primary.yaml"
+    - sourcePath: "../data/infrastructure-docker/main/cluster-template-topology-in-place.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-topology-no-workers.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-topology-runtimesdk-v1beta1.yaml"
     - sourcePath: "../data/infrastructure-docker/main/cluster-template-topology-kcp-only.yaml"
@@ -359,7 +361,7 @@ providers:
 - name: test-extension
   type: RuntimeExtensionProvider
   versions:
-    - name: v1.11.99 # next; use manifest from source files
+    - name: v1.12.99 # next; use manifest from source files
       value: ../../../test/extension/config/default
       files:
       - sourcePath: "../data/shared/main/metadata.yaml"
@@ -369,13 +371,14 @@ variables:
   # allowing the same e2e config file to be re-used in different Prow jobs e.g. each one with a K8s version permutation.
   # The following Kubernetes versions should be the latest versions with already published kindest/node images.
   # This avoids building node images in the default case which improves the test duration significantly.
-  KUBERNETES_VERSION_MANAGEMENT: "v1.34.0"
-  KUBERNETES_VERSION: "v1.34.0"
-  KUBERNETES_VERSION_UPGRADE_FROM: "v1.33.4"
-  KUBERNETES_VERSION_UPGRADE_TO: "v1.34.0"
-  KUBERNETES_VERSION_LATEST_CI: "ci/latest-1.34"
-  ETCD_VERSION_UPGRADE_TO: "3.6.4-0"
-  COREDNS_VERSION_UPGRADE_TO: "v1.12.1"
+  KUBERNETES_VERSION_MANAGEMENT: "v1.35.0-rc.0"
+  KUBERNETES_VERSION: "v1.35.0-rc.0"
+  KUBERNETES_VERSION_CHAINED_UPGRADE_FROM: "v1.31.0" # Should always be KUBERNETES_VERSION_UPGRADE_TO - 4 minor
+  KUBERNETES_VERSION_UPGRADE_FROM: "v1.34.0"
+  KUBERNETES_VERSION_UPGRADE_TO: "v1.35.0-rc.0"
+  KUBERNETES_VERSION_LATEST_CI: "ci/latest-1.35"
+  ETCD_VERSION_UPGRADE_TO: "3.6.5-0"
+  COREDNS_VERSION_UPGRADE_TO: "v1.13.1"
   DOCKER_SERVICE_DOMAIN: "cluster.local"
   IP_FAMILY: "dual"
   DOCKER_SERVICE_CIDRS: "10.128.0.0/12"
@@ -397,6 +400,9 @@ variables:
   EXP_RUNTIME_SDK: "true"
   EXP_MACHINE_SET_PREFLIGHT_CHECKS: "true"
   EXP_PRIORITY_QUEUE: "false"
+  EXP_RECONCILER_RATE_LIMITING: "true"
+  EXP_IN_PLACE_UPDATES: "true"
+  EXP_MACHINE_TAINT_PROPAGATION: "true"
   CAPI_DIAGNOSTICS_ADDRESS: ":8080"
   CAPI_INSECURE_DIAGNOSTICS: "true"
 
@@ -408,6 +414,8 @@ intervals:
   default/wait-machine-pool-nodes: ["5m", "10s"]
   default/wait-delete-cluster: ["3m", "10s"]
   default/wait-machine-upgrade: ["20m", "10s"]
+  default/wait-control-plane-upgrade: ["15m", "10s"]
+  default/wait-machine-deployment-upgrade: ["10m", "10s"]
   default/wait-machine-pool-upgrade: ["5m", "10s"]
   default/wait-nodes-ready: ["10m", "10s"]
   default/wait-machine-remediation: ["5m", "10s"]
@@ -422,3 +430,4 @@ intervals:
   scale/wait-cluster: ["10m", "10s"]
   scale/wait-control-plane: ["20m", "10s"]
   scale/wait-worker-nodes: ["20m", "10s"]
+  self-hosted/wait-control-plane-upgrade: ["20m", "10s"]

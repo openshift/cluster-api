@@ -26,16 +26,21 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
-	builder "sigs.k8s.io/cluster-api/util/test/builder"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
 func TestSetBootstrapReadyCondition(t *testing.T) {
@@ -1166,12 +1171,11 @@ func TestSetNodeHealthyAndReadyConditions(t *testing.T) {
 
 func TestDeletingCondition(t *testing.T) {
 	testCases := []struct {
-		name                    string
-		machine                 *clusterv1.Machine
-		reconcileDeleteExecuted bool
-		deletingReason          string
-		deletingMessage         string
-		expectCondition         metav1.Condition
+		name            string
+		machine         *clusterv1.Machine
+		deletingReason  string
+		deletingMessage string
+		expectCondition metav1.Condition
 	}{
 		{
 			name: "deletionTimestamp not set",
@@ -1181,9 +1185,8 @@ func TestDeletingCondition(t *testing.T) {
 					Namespace: metav1.NamespaceDefault,
 				},
 			},
-			reconcileDeleteExecuted: false,
-			deletingReason:          "",
-			deletingMessage:         "",
+			deletingReason:  "",
+			deletingMessage: "",
 			expectCondition: metav1.Condition{
 				Type:   clusterv1.MachineDeletingCondition,
 				Status: metav1.ConditionFalse,
@@ -1199,9 +1202,8 @@ func TestDeletingCondition(t *testing.T) {
 					DeletionTimestamp: &metav1.Time{Time: time.Now()},
 				},
 			},
-			reconcileDeleteExecuted: true,
-			deletingReason:          clusterv1.MachineDeletingWaitingForPreDrainHookReason,
-			deletingMessage:         "Waiting for pre-drain hooks to succeed (hooks: test-hook)",
+			deletingReason:  clusterv1.MachineDeletingWaitingForPreDrainHookReason,
+			deletingMessage: "Waiting for pre-drain hooks to succeed (hooks: test-hook)",
 			expectCondition: metav1.Condition{
 				Type:    clusterv1.MachineDeletingCondition,
 				Status:  metav1.ConditionTrue,
@@ -1218,8 +1220,7 @@ func TestDeletingCondition(t *testing.T) {
 					DeletionTimestamp: &metav1.Time{Time: time.Now()},
 				},
 			},
-			reconcileDeleteExecuted: true,
-			deletingReason:          clusterv1.MachineDeletingDrainingNodeReason,
+			deletingReason: clusterv1.MachineDeletingDrainingNodeReason,
 			deletingMessage: `Drain not completed yet (started at 2024-10-09T16:13:59Z):
 * Pods with deletionTimestamp that still exist: pod-2-deletionTimestamp-set-1, pod-2-deletionTimestamp-set-2, pod-2-deletionTimestamp-set-3, pod-3-to-trigger-eviction-successfully-1, pod-3-to-trigger-eviction-successfully-2, ... (2 more)
 * Pods with eviction failed:
@@ -1244,43 +1245,13 @@ func TestDeletingCondition(t *testing.T) {
   * ... (1 more error applying to 1 Pod)`,
 			},
 		},
-		{
-			name: "deletionTimestamp set, reconcileDelete not executed",
-			machine: &clusterv1.Machine{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:              "machine-test",
-					Namespace:         metav1.NamespaceDefault,
-					DeletionTimestamp: &metav1.Time{Time: time.Now()},
-				},
-				Status: clusterv1.MachineStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:    clusterv1.MachineDeletingCondition,
-							Status:  metav1.ConditionTrue,
-							Reason:  clusterv1.MachineDeletingWaitingForPreDrainHookReason,
-							Message: "Waiting for pre-drain hooks to succeed (hooks: test-hook)",
-						},
-					},
-				},
-			},
-			reconcileDeleteExecuted: false,
-			deletingReason:          "",
-			deletingMessage:         "",
-			// Condition was not updated because reconcileDelete was not executed.
-			expectCondition: metav1.Condition{
-				Type:    clusterv1.MachineDeletingCondition,
-				Status:  metav1.ConditionTrue,
-				Reason:  clusterv1.MachineDeletingWaitingForPreDrainHookReason,
-				Message: "Waiting for pre-drain hooks to succeed (hooks: test-hook)",
-			},
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			setDeletingCondition(ctx, tc.machine, tc.reconcileDeleteExecuted, tc.deletingReason, tc.deletingMessage)
+			setDeletingCondition(ctx, tc.machine, tc.deletingReason, tc.deletingMessage)
 
 			deletingCondition := conditions.Get(tc.machine, clusterv1.MachineDeletingCondition)
 			g.Expect(deletingCondition).ToNot(BeNil())
@@ -1404,6 +1375,402 @@ func TestTransformControlPlaneAndEtcdConditions(t *testing.T) {
 	}
 }
 
+func TestSetUpdatingCondition(t *testing.T) {
+	tests := []struct {
+		name            string
+		machine         *clusterv1.Machine
+		updatingReason  string
+		updatingMessage string
+		expectCondition *metav1.Condition
+	}{
+		{
+			name:            "A machine not in-place updating is not updating",
+			machine:         &clusterv1.Machine{},
+			updatingReason:  "foo",
+			updatingMessage: "bar",
+			expectCondition: &metav1.Condition{
+				Type:   clusterv1.MachineUpdatingCondition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.MachineNotUpdatingReason,
+			},
+		},
+		{
+			name: "A machine starting in-place update is updating",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						clusterv1.UpdateInProgressAnnotation: "",
+					},
+				},
+			},
+			updatingReason:  "foo",
+			updatingMessage: "bar",
+			expectCondition: &metav1.Condition{
+				Type:    clusterv1.MachineUpdatingCondition,
+				Status:  metav1.ConditionTrue,
+				Reason:  "foo",
+				Message: "bar",
+			},
+		},
+		{
+			name: "A machine in-place updating is updating",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						clusterv1.UpdateInProgressAnnotation: "",
+						runtimev1.PendingHooksAnnotation:     "UpdateMachine",
+					},
+				},
+			},
+			updatingReason:  "foo",
+			updatingMessage: "bar",
+			expectCondition: &metav1.Condition{
+				Type:    clusterv1.MachineUpdatingCondition,
+				Status:  metav1.ConditionTrue,
+				Reason:  "foo",
+				Message: "bar",
+			},
+		},
+		{
+			name: "A machine stopping in-place updating is updating",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						runtimev1.PendingHooksAnnotation: "UpdateMachine",
+					},
+				},
+			},
+			updatingReason:  "foo",
+			updatingMessage: "bar",
+			expectCondition: &metav1.Condition{
+				Type:    clusterv1.MachineUpdatingCondition,
+				Status:  metav1.ConditionTrue,
+				Reason:  "foo",
+				Message: "bar",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			setUpdatingCondition(ctx, tt.machine, tt.updatingReason, tt.updatingMessage)
+
+			condition := conditions.Get(tt.machine, clusterv1.MachineUpdatingCondition)
+			g.Expect(condition).ToNot(BeNil())
+			g.Expect(*condition).To(conditions.MatchCondition(*tt.expectCondition, conditions.IgnoreLastTransitionTime(true)))
+		})
+	}
+}
+
+func TestSetUpToDateCondition(t *testing.T) {
+	reconciliationTime := time.Now()
+	tests := []struct {
+		name              string
+		machineDeployment *clusterv1.MachineDeployment
+		machineSet        *clusterv1.MachineSet
+		machine           *clusterv1.Machine
+		expectCondition   *metav1.Condition
+	}{
+		{
+			name:              "no condition returned for stand-alone Machines",
+			machineDeployment: nil,
+			machineSet:        nil,
+			machine:           &clusterv1.Machine{},
+			expectCondition:   nil,
+		},
+		{
+			name:              "no condition returned for stand-alone MachineSet",
+			machineDeployment: nil,
+			machineSet:        &clusterv1.MachineSet{},
+			machine:           &clusterv1.Machine{},
+			expectCondition:   nil,
+		},
+		{
+			name: "up-to-date",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{},
+			expectCondition: &metav1.Condition{
+				Type:   clusterv1.MachineUpToDateCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.MachineUpToDateReason,
+			},
+		},
+		{
+			name: "updating",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{
+				Status: clusterv1.MachineStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   clusterv1.MachineUpdatingCondition,
+							Status: metav1.ConditionTrue,
+							Reason: clusterv1.MachineInPlaceUpdatingReason,
+						},
+					},
+				},
+			},
+			expectCondition: &metav1.Condition{
+				Type:    clusterv1.MachineUpToDateCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  clusterv1.MachineUpToDateUpdatingReason,
+				Message: "* In-place update in progress",
+			},
+		},
+		{
+			name: "updating (message from Updating)",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{
+				Status: clusterv1.MachineStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:    clusterv1.MachineUpdatingCondition,
+							Status:  metav1.ConditionTrue,
+							Reason:  clusterv1.MachineInPlaceUpdatingReason,
+							Message: "In-place update in progress: Extension is updating Machine",
+						},
+					},
+				},
+			},
+			expectCondition: &metav1.Condition{
+				Type:    clusterv1.MachineUpToDateCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  clusterv1.MachineUpToDateUpdatingReason,
+				Message: "* In-place update in progress: Extension is updating Machine",
+			},
+		},
+		{
+			name: "not up-to-date",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.30.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{},
+			expectCondition: &metav1.Condition{
+				Type:    clusterv1.MachineUpToDateCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  clusterv1.MachineNotUpToDateReason,
+				Message: "* Version v1.30.0, v1.31.0 required",
+			},
+		},
+		{
+			name: "up-to-date, spec.rolloutAfter not expired",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						After: metav1.Time{Time: reconciliationTime.Add(1 * time.Hour)}, // rollout after not yet expired
+					},
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // MS created before rollout after
+				},
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{},
+			expectCondition: &metav1.Condition{
+				Type:   clusterv1.MachineUpToDateCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.MachineUpToDateReason,
+			},
+		},
+		{
+			name: "not up-to-date, rollout After expired",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						After: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // rollout after expired
+					},
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-2 * time.Hour)}, // MS created before rollout after
+				},
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{},
+			expectCondition: &metav1.Condition{
+				Type:    clusterv1.MachineUpToDateCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  clusterv1.MachineNotUpToDateReason,
+				Message: "* MachineDeployment spec.rolloutAfter expired",
+			},
+		},
+		{
+			name: "not up-to-date, rollout After expired and a new MS created",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						After: metav1.Time{Time: reconciliationTime.Add(-2 * time.Hour)}, // rollout after expired
+					},
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // MS created after rollout after
+				},
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{},
+			expectCondition: &metav1.Condition{
+				Type:   clusterv1.MachineUpToDateCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.MachineUpToDateReason,
+			},
+		},
+		{
+			name: "not up-to-date, version changed, rollout After expired",
+			machineDeployment: &clusterv1.MachineDeployment{
+				Spec: clusterv1.MachineDeploymentSpec{
+					Rollout: clusterv1.MachineDeploymentRolloutSpec{
+						After: metav1.Time{Time: reconciliationTime.Add(-1 * time.Hour)}, // rollout after expired
+					},
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.30.0",
+						},
+					},
+				},
+			},
+			machineSet: &clusterv1.MachineSet{
+				ObjectMeta: metav1.ObjectMeta{
+					CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-2 * time.Hour)}, // MS created before rollout after
+				},
+				Spec: clusterv1.MachineSetSpec{
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: "v1.31.0",
+						},
+					},
+				},
+			},
+			machine: &clusterv1.Machine{},
+			expectCondition: &metav1.Condition{
+				Type:   clusterv1.MachineUpToDateCondition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.MachineNotUpToDateReason,
+				Message: "* Version v1.31.0, v1.30.0 required\n" +
+					"* MachineDeployment spec.rolloutAfter expired",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			setUpToDateCondition(ctx, tt.machine, tt.machineSet, tt.machineDeployment)
+
+			condition := conditions.Get(tt.machine, clusterv1.MachineUpToDateCondition)
+			if tt.expectCondition != nil {
+				g.Expect(condition).ToNot(BeNil())
+				g.Expect(*condition).To(conditions.MatchCondition(*tt.expectCondition, conditions.IgnoreLastTransitionTime(true)))
+			} else {
+				g.Expect(condition).To(BeNil())
+			}
+		})
+	}
+}
+
 func TestSetReadyCondition(t *testing.T) {
 	testCases := []struct {
 		name            string
@@ -1438,6 +1805,11 @@ func TestSetReadyCondition(t *testing.T) {
 							Type:   clusterv1.MachineDeletingCondition,
 							Status: metav1.ConditionFalse,
 							Reason: clusterv1.MachineNotDeletingReason,
+						},
+						{
+							Type:   clusterv1.MachineUpdatingCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.MachineNotUpdatingReason,
 						},
 					},
 				},
@@ -1479,6 +1851,11 @@ func TestSetReadyCondition(t *testing.T) {
 							Reason:  clusterv1.MachineDeletingWaitingForPreDrainHookReason,
 							Message: "Waiting for pre-drain hooks to succeed (hooks: test-hook)",
 						},
+						{
+							Type:   clusterv1.MachineUpdatingCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.MachineNotUpdatingReason,
+						},
 					},
 				},
 			},
@@ -1487,6 +1864,51 @@ func TestSetReadyCondition(t *testing.T) {
 				Status:  metav1.ConditionFalse,
 				Reason:  clusterv1.MachineNotReadyReason,
 				Message: "* Deleting: Machine deletion in progress, stage: WaitingForPreDrainHook",
+			},
+		},
+		{
+			name: "Aggregates Ready condition correctly while the machine is updating",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "machine-test",
+					Namespace: metav1.NamespaceDefault,
+				},
+				Status: clusterv1.MachineStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   clusterv1.MachineBootstrapConfigReadyCondition,
+							Status: metav1.ConditionTrue,
+							Reason: "Foo",
+						},
+						{
+							Type:   clusterv1.InfrastructureReadyCondition,
+							Status: metav1.ConditionTrue,
+							Reason: "Foo",
+						},
+						{
+							Type:   clusterv1.MachineNodeHealthyCondition,
+							Status: metav1.ConditionTrue,
+							Reason: "Foo",
+						},
+						{
+							Type:   clusterv1.MachineDeletingCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.MachineNotDeletingReason,
+						},
+						{
+							Type:    clusterv1.MachineUpdatingCondition,
+							Status:  metav1.ConditionTrue,
+							Reason:  clusterv1.MachineInPlaceUpdatingReason,
+							Message: "In-place update in progress",
+						},
+					},
+				},
+			},
+			expectCondition: metav1.Condition{
+				Type:    clusterv1.MachineReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  clusterv1.MachineNotReadyReason,
+				Message: "* Updating: In-place update in progress",
 			},
 		},
 		{
@@ -1527,6 +1949,11 @@ func TestSetReadyCondition(t *testing.T) {
   * some other error 3: pod-8-to-trigger-eviction-some-other-error
   * some other error 4: pod-9-to-trigger-eviction-some-other-error
   * ... (1 more error applying to 1 Pod)`,
+						},
+						{
+							Type:   clusterv1.MachineUpdatingCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.MachineNotUpdatingReason,
 						},
 					},
 				},
@@ -1572,6 +1999,11 @@ func TestSetReadyCondition(t *testing.T) {
 							Type:   clusterv1.MachineDeletingCondition,
 							Status: metav1.ConditionFalse,
 							Reason: clusterv1.MachineNotDeletingReason,
+						},
+						{
+							Type:   clusterv1.MachineUpdatingCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.MachineNotUpdatingReason,
 						},
 					},
 				},
@@ -1639,6 +2071,11 @@ func TestSetReadyCondition(t *testing.T) {
 							Type:   clusterv1.MachineDeletingCondition,
 							Status: metav1.ConditionFalse,
 							Reason: clusterv1.MachineNotDeletingReason,
+						},
+						{
+							Type:   clusterv1.MachineUpdatingCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.MachineNotUpdatingReason,
 						},
 					},
 				},
@@ -1709,6 +2146,11 @@ func TestSetReadyCondition(t *testing.T) {
 							Type:   clusterv1.MachineDeletingCondition,
 							Status: metav1.ConditionFalse,
 							Reason: clusterv1.MachineNotDeletingReason,
+						},
+						{
+							Type:   clusterv1.MachineUpdatingCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.MachineNotUpdatingReason,
 						},
 					},
 				},
@@ -1888,6 +2330,7 @@ func TestAvailableCondition(t *testing.T) {
 		name            string
 		machine         *clusterv1.Machine
 		expectCondition metav1.Condition
+		expectRes       ctrl.Result
 	}{
 		{
 			name: "Not Ready",
@@ -1911,6 +2354,7 @@ func TestAvailableCondition(t *testing.T) {
 				Status: metav1.ConditionFalse,
 				Reason: clusterv1.MachineNotReadyReason,
 			},
+			expectRes: ctrl.Result{},
 		},
 		{
 			name: "Ready but still waiting for MinReadySeconds",
@@ -1935,6 +2379,7 @@ func TestAvailableCondition(t *testing.T) {
 				Status: metav1.ConditionFalse,
 				Reason: clusterv1.MachineWaitingForMinReadySecondsReason,
 			},
+			expectRes: ctrl.Result{RequeueAfter: 10 * time.Second},
 		},
 		{
 			name: "Ready and available",
@@ -1959,6 +2404,7 @@ func TestAvailableCondition(t *testing.T) {
 				Status: metav1.ConditionTrue,
 				Reason: clusterv1.MachineAvailableReason,
 			},
+			expectRes: ctrl.Result{},
 		},
 	}
 
@@ -1966,11 +2412,16 @@ func TestAvailableCondition(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			setAvailableCondition(ctx, tc.machine)
+			res := setAvailableCondition(ctx, tc.machine)
 
 			availableCondition := conditions.Get(tc.machine, clusterv1.MachineAvailableCondition)
 			g.Expect(availableCondition).ToNot(BeNil())
 			g.Expect(*availableCondition).To(conditions.MatchCondition(tc.expectCondition, conditions.IgnoreLastTransitionTime(true)))
+
+			g.Expect(res.IsZero()).To(Equal(tc.expectRes.IsZero()))
+			if !tc.expectRes.IsZero() {
+				g.Expect(res.RequeueAfter).To(BeNumerically("~", tc.expectRes.RequeueAfter, 100*time.Millisecond))
+			}
 		})
 	}
 }
@@ -2071,7 +2522,8 @@ func TestReconcileMachinePhases(t *testing.T) {
 
 		g.Expect(env.Create(ctx, bootstrapConfig)).To(Succeed())
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		// Wait until BootstrapConfig has the ownerReference.
 		g.Eventually(func(g Gomega) bool {
@@ -2123,7 +2575,8 @@ func TestReconcileMachinePhases(t *testing.T) {
 
 		g.Expect(env.Create(ctx, bootstrapConfig)).To(Succeed())
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		// Wait until Machine was reconciled.
 		g.Eventually(func(g Gomega) bool {
@@ -2168,7 +2621,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 		// We have to subtract 2 seconds, because .status.lastUpdated does not contain milliseconds.
 		preUpdate := time.Now().Add(-2 * time.Second)
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		// Set the LastUpdated to be able to verify it is updated when the phase changes
 		modifiedMachine := machine.DeepCopy()
@@ -2240,7 +2693,9 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 		// We have to subtract 2 seconds, because .status.lastUpdated does not contain milliseconds.
 		preUpdate := time.Now().Add(-2 * time.Second)
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		modifiedMachine := machine.DeepCopy()
 		// Set NodeRef.
@@ -2329,7 +2784,8 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 		// We have to subtract 2 seconds, because .status.lastUpdated does not contain milliseconds.
 		preUpdate := time.Now().Add(-2 * time.Second)
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		modifiedMachine := machine.DeepCopy()
 		// Set NodeRef.
@@ -2407,7 +2863,8 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 		// We have to subtract 2 seconds, because .status.lastUpdated does not contain milliseconds.
 		preUpdate := time.Now().Add(-2 * time.Second)
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		modifiedMachine := machine.DeepCopy()
 		// Set NodeRef.
@@ -2431,6 +2888,104 @@ func TestReconcileMachinePhases(t *testing.T) {
 				return false
 			}
 			g.Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseRunning))
+			// Verify that the LastUpdated timestamp was updated
+			g.Expect(machine.Status.LastUpdated.IsZero()).To(BeFalse())
+			g.Expect(machine.Status.LastUpdated.After(preUpdate)).To(BeTrue())
+			return true
+		}, 10*time.Second).Should(BeTrue())
+	})
+
+	t.Run("Should set `Updating` when Machine is in-place updating", func(t *testing.T) {
+		utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.InPlaceUpdates, true)
+
+		g := NewWithT(t)
+
+		ns, err := env.CreateNamespace(ctx, "test-reconcile-machine-phases")
+		g.Expect(err).ToNot(HaveOccurred())
+		defer func() {
+			g.Expect(env.Cleanup(ctx, ns)).To(Succeed())
+		}()
+
+		nodeProviderID := fmt.Sprintf("test://%s", util.RandomString(6))
+
+		cluster := defaultCluster.DeepCopy()
+		cluster.Namespace = ns.Name
+
+		bootstrapConfig := defaultBootstrap.DeepCopy()
+		bootstrapConfig.SetNamespace(ns.Name)
+		infraMachine := defaultInfra.DeepCopy()
+		infraMachine.SetNamespace(ns.Name)
+		g.Expect(unstructured.SetNestedField(infraMachine.Object, nodeProviderID, "spec", "providerID")).To(Succeed())
+		machine := defaultMachine.DeepCopy()
+		machine.Namespace = ns.Name
+
+		// Create Node.
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "machine-test-node-",
+			},
+			Spec: corev1.NodeSpec{ProviderID: nodeProviderID},
+		}
+		g.Expect(env.Create(ctx, node)).To(Succeed())
+		defer func() {
+			g.Expect(env.Cleanup(ctx, node)).To(Succeed())
+		}()
+
+		g.Expect(env.Create(ctx, cluster)).To(Succeed())
+		defaultKubeconfigSecret = kubeconfig.GenerateSecret(cluster, kubeconfig.FromEnvTestConfig(env.Config, cluster))
+		g.Expect(env.Create(ctx, defaultKubeconfigSecret)).To(Succeed())
+		// Set InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+		patch := client.MergeFrom(cluster.DeepCopy())
+		cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
+		g.Expect(env.Status().Patch(ctx, cluster, patch)).To(Succeed())
+
+		g.Expect(env.Create(ctx, bootstrapConfig)).To(Succeed())
+		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
+		// We have to subtract 2 seconds, because .status.lastUpdated does not contain milliseconds.
+		preUpdate := time.Now().Add(-2 * time.Second)
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
+
+		modifiedMachine := machine.DeepCopy()
+		// Set NodeRef.
+		machine.Status.NodeRef = clusterv1.MachineNodeReference{Name: node.Name}
+		g.Expect(env.Status().Patch(ctx, modifiedMachine, client.MergeFrom(machine))).To(Succeed())
+
+		// Set bootstrap ready.
+		modifiedBootstrapConfig := bootstrapConfig.DeepCopy()
+		g.Expect(unstructured.SetNestedField(modifiedBootstrapConfig.Object, true, "status", "initialization", "dataSecretCreated")).To(Succeed())
+		g.Expect(unstructured.SetNestedField(modifiedBootstrapConfig.Object, "secret-data", "status", "dataSecretName")).To(Succeed())
+		g.Expect(env.Status().Patch(ctx, modifiedBootstrapConfig, client.MergeFrom(bootstrapConfig))).To(Succeed())
+
+		// Set infra ready.
+		modifiedInfraMachine := infraMachine.DeepCopy()
+		g.Expect(unstructured.SetNestedField(modifiedInfraMachine.Object, true, "status", "initialization", "provisioned")).To(Succeed())
+		g.Expect(env.Status().Patch(ctx, modifiedInfraMachine, client.MergeFrom(infraMachine))).To(Succeed())
+
+		// Set annotations on Machine, BootstrapConfig and InfraMachine to trigger an in-place update.
+		orig := modifiedBootstrapConfig.DeepCopy()
+		annotations.AddAnnotations(modifiedBootstrapConfig, map[string]string{
+			clusterv1.UpdateInProgressAnnotation: "",
+		})
+		g.Expect(env.Patch(ctx, modifiedBootstrapConfig, client.MergeFrom(orig))).To(Succeed())
+		orig = modifiedInfraMachine.DeepCopy()
+		annotations.AddAnnotations(modifiedInfraMachine, map[string]string{
+			clusterv1.UpdateInProgressAnnotation: "",
+		})
+		g.Expect(env.Patch(ctx, modifiedInfraMachine, client.MergeFrom(orig))).To(Succeed())
+		origMachine := modifiedMachine.DeepCopy()
+		annotations.AddAnnotations(modifiedMachine, map[string]string{
+			runtimev1.PendingHooksAnnotation:     "UpdateMachine",
+			clusterv1.UpdateInProgressAnnotation: "",
+		})
+		g.Expect(env.Patch(ctx, modifiedMachine, client.MergeFrom(origMachine))).To(Succeed())
+
+		// Wait until Machine was reconciled.
+		g.Eventually(func(g Gomega) bool {
+			if err := env.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil {
+				return false
+			}
+			g.Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseUpdating))
 			// Verify that the LastUpdated timestamp was updated
 			g.Expect(machine.Status.LastUpdated.IsZero()).To(BeFalse())
 			g.Expect(machine.Status.LastUpdated.After(preUpdate)).To(BeTrue())
@@ -2474,7 +3029,8 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 		// We have to subtract 2 seconds, because .status.lastUpdated does not contain milliseconds.
 		preUpdate := time.Now().Add(-2 * time.Second)
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		// Set bootstrap ready.
 		modifiedBootstrapConfig := bootstrapConfig.DeepCopy()
@@ -2546,7 +3102,8 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(env.Create(ctx, infraMachine)).To(Succeed())
 		// We have to subtract 2 seconds, because .status.lastUpdated does not contain milliseconds.
 		preUpdate := time.Now().Add(-2 * time.Second)
-		g.Expect(env.Create(ctx, machine)).To(Succeed())
+		// Create and wait on machine to make sure caches sync and reconciliation triggers.
+		g.Expect(env.CreateAndWait(ctx, machine)).To(Succeed())
 
 		// Set bootstrap ready.
 		modifiedBootstrapConfig := bootstrapConfig.DeepCopy()
@@ -2578,7 +3135,7 @@ func TestReconcileMachinePhases(t *testing.T) {
 		g.Expect(env.Patch(ctx, modifiedMachine, client.MergeFrom(machine))).To(Succeed())
 
 		// Delete Machine
-		g.Expect(env.Delete(ctx, machine)).To(Succeed())
+		g.Expect(env.DeleteAndWait(ctx, machine)).To(Succeed())
 
 		// Wait until Machine was reconciled.
 		g.Eventually(func(g Gomega) bool {
