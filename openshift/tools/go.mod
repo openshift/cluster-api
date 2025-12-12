@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.24.3
 
 require (
-	github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20251209152545-de2bd18f0a52
+	github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20251210142848-8ee10a15ba23
 	sigs.k8s.io/kustomize/kustomize/v5 v5.8.0
 )
 

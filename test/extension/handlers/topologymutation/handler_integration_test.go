@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
@@ -50,11 +51,13 @@ import (
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimeclient "sigs.k8s.io/cluster-api/exp/runtime/client"
 	"sigs.k8s.io/cluster-api/exp/topology/desiredstate"
 	"sigs.k8s.io/cluster-api/exp/topology/scope"
 	"sigs.k8s.io/cluster-api/feature"
+	"sigs.k8s.io/cluster-api/util/cache"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/contract"
 	"sigs.k8s.io/cluster-api/webhooks"
@@ -114,7 +117,14 @@ func TestHandler(t *testing.T) {
 	clientWithV1Beta2ContractCRD := fake.NewClientBuilder().WithScheme(scheme).WithObjects(crd).Build()
 
 	// Create a desired state generator.
-	desiredStateGenerator := desiredstate.NewGenerator(clientWithV1Beta2ContractCRD, nil, runtimeClient)
+	desiredStateGenerator, err := desiredstate.NewGenerator(
+		clientWithV1Beta2ContractCRD,
+		clustercache.NewFakeEmptyClusterCache(),
+		runtimeClient,
+		cache.New[cache.HookEntry](cache.HookCacheDefaultTTL),
+		cache.New[desiredstate.GenerateUpgradePlanCacheEntry](10*time.Minute),
+	)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// Note: as of today we don't have to set any fields and also don't have to call
 	// SetupWebhookWithManager because DefaultAndValidateVariables doesn't need any of that.
@@ -415,7 +425,11 @@ type injectRuntimeClient struct {
 	runtimeExtension TopologyMutationHook
 }
 
-func (i injectRuntimeClient) CallExtension(ctx context.Context, hook runtimecatalog.Hook, _ metav1.Object, _ string, req runtimehooksv1.RequestObject, resp runtimehooksv1.ResponseObject, _ ...runtimeclient.CallExtensionOption) error {
+func (i *injectRuntimeClient) GetAllExtensions(_ context.Context, _ runtimecatalog.Hook, _ client.Object) ([]string, error) {
+	panic("implement me")
+}
+
+func (i injectRuntimeClient) CallExtension(ctx context.Context, hook runtimecatalog.Hook, _ client.Object, _ string, req runtimehooksv1.RequestObject, resp runtimehooksv1.ResponseObject, _ ...runtimeclient.CallExtensionOption) error {
 	// Note: We have to copy the requests. Otherwise we could get side effect by Runtime Extensions
 	// modifying the request instead of properly returning a response. Also after Unmarshal,
 	// only the Raw fields in runtime.RawExtension fields should be filled out and Object should be nil.
@@ -427,8 +441,11 @@ func (i injectRuntimeClient) CallExtension(ctx context.Context, hook runtimecata
 			return err
 		}
 		i.runtimeExtension.DiscoverVariables(ctx, reqCopy, resp.(*runtimehooksv1.DiscoverVariablesResponse))
-		if resp.GetStatus() == runtimehooksv1.ResponseStatusFailure {
-			return errors.Errorf("failed to call extension handler: got failure response: %v", resp.GetMessage())
+		if resp.GetStatus() != runtimehooksv1.ResponseStatusSuccess {
+			if resp.GetStatus() == runtimehooksv1.ResponseStatusFailure {
+				return errors.Errorf("failed to call extension handler: got failure response: %v", resp.GetMessage())
+			}
+			return errors.Errorf("failed to call extension handler: got unknown response status %q", resp.GetStatus())
 		}
 		return nil
 	case runtimecatalog.HookName(runtimehooksv1.GeneratePatches):
@@ -437,8 +454,11 @@ func (i injectRuntimeClient) CallExtension(ctx context.Context, hook runtimecata
 			return err
 		}
 		i.runtimeExtension.GeneratePatches(ctx, reqCopy, resp.(*runtimehooksv1.GeneratePatchesResponse))
-		if resp.GetStatus() == runtimehooksv1.ResponseStatusFailure {
-			return errors.Errorf("failed to call extension handler: got failure response: %v", resp.GetMessage())
+		if resp.GetStatus() != runtimehooksv1.ResponseStatusSuccess {
+			if resp.GetStatus() == runtimehooksv1.ResponseStatusFailure {
+				return errors.Errorf("failed to call extension handler: got failure response: %v", resp.GetMessage())
+			}
+			return errors.Errorf("failed to call extension handler: got unknown response status %q", resp.GetStatus())
 		}
 		return nil
 	case runtimecatalog.HookName(runtimehooksv1.ValidateTopology):
@@ -447,8 +467,11 @@ func (i injectRuntimeClient) CallExtension(ctx context.Context, hook runtimecata
 			return err
 		}
 		i.runtimeExtension.ValidateTopology(ctx, reqCopy, resp.(*runtimehooksv1.ValidateTopologyResponse))
-		if resp.GetStatus() == runtimehooksv1.ResponseStatusFailure {
-			return errors.Errorf("failed to call extension handler: got failure response: %v", resp.GetMessage())
+		if resp.GetStatus() != runtimehooksv1.ResponseStatusSuccess {
+			if resp.GetStatus() == runtimehooksv1.ResponseStatusFailure {
+				return errors.Errorf("failed to call extension handler: got failure response: %v", resp.GetMessage())
+			}
+			return errors.Errorf("failed to call extension handler: got unknown response status %q", resp.GetStatus())
 		}
 		return nil
 	}
@@ -490,6 +513,6 @@ func (i injectRuntimeClient) Unregister(_ *runtimev1.ExtensionConfig) error {
 	panic("implement me")
 }
 
-func (i injectRuntimeClient) CallAllExtensions(_ context.Context, _ runtimecatalog.Hook, _ metav1.Object, _ runtimehooksv1.RequestObject, _ runtimehooksv1.ResponseObject) error {
+func (i injectRuntimeClient) CallAllExtensions(_ context.Context, _ runtimecatalog.Hook, _ client.Object, _ runtimehooksv1.RequestObject, _ runtimehooksv1.ResponseObject) error {
 	panic("implement me")
 }

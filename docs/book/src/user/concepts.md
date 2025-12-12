@@ -49,17 +49,33 @@ A "Machine" is the declarative spec for an infrastructure component hosting a Ku
 
 Common fields such as Kubernetes version are modeled as fields on the Machine's spec. Any information that is provider-specific is part of the `InfrastructureRef` and is not portable between different providers.
 
-#### Machine Immutability (In-place Upgrade vs. Replace)
+#### Machine Immutability (In-place update vs. Replace)
 
 From the perspective of Cluster API, all Machines are immutable: once they are created, they are never updated (except for labels, annotations and status), only deleted.
 
 For this reason, MachineDeployments are preferable. MachineDeployments handle changes to machines by replacing them, in the same way core Deployments handle changes to Pod specifications.
+
+Over time several improvement have been applied to Cluster API in oder to perform machine rollout only when necessary and
+for minimizing risks and impacts of this operation on users workloads.
+
+Starting from Cluster API v1.12, users can intentionally trade off some of the benefits that they get of Machine immutability by 
+using Cluster API extensions points to add the capability to perform in-place updates under well-defined circumstances.
+
+Notably, the Cluster API user experience will remain the same no matter of the in-place update feature is enabled
+or not, because ultimately users should care ONLY about the desired state.
+
+Cluster API is responsible to choose the best strategy to achieve desired state, and with the introduction of
+update extensions, Cluster API is expanding the set of tools that can be used to achieve the desired state.
 
 ### MachineDeployment
 
 A MachineDeployment provides declarative updates for Machines and MachineSets.
 
 A MachineDeployment works similarly to a core Kubernetes [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). A MachineDeployment reconciles changes to a Machine spec by rolling out changes to 2 MachineSets, the old and the newly updated.
+
+### MachinePool
+
+A MachinePool is a declarative spec for a group of Machines. It is similar to a MachineDeployment, but is specific to a particular Infrastructure Provider. For more information, please check out [MachinePool](../tasks/experimental-features/machine-pools.md).
 
 ### MachineSet
 

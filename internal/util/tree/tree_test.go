@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/fatih/color"
-	"github.com/olekukonko/tablewriter"
 	. "github.com/onsi/gomega"
 	gtype "github.com/onsi/gomega/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -211,15 +210,15 @@ func Test_V1Beta1TreePrefix(t *testing.T) {
 			name: "Conditions should get the right prefix",
 			objectTree: func() *tree.ObjectTree {
 				root := fakeObject("root")
-				obectjTree := tree.NewObjectTree(root, tree.ObjectTreeOptions{})
+				obectjTree := tree.NewObjectTree(root, tree.ObjectTreeOptions{
+					ShowOtherConditions: "All",
+				})
 
 				o1 := fakeObject("child1",
-					withAnnotation(tree.ShowObjectConditionsAnnotation, "True"),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C1.1")),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C1.2")),
 				)
 				o2 := fakeObject("child2",
-					withAnnotation(tree.ShowObjectConditionsAnnotation, "True"),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C2.1")),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C2.2")),
 				)
@@ -241,17 +240,17 @@ func Test_V1Beta1TreePrefix(t *testing.T) {
 			name: "Conditions should get the right prefix if the object has a child",
 			objectTree: func() *tree.ObjectTree {
 				root := fakeObject("root")
-				obectjTree := tree.NewObjectTree(root, tree.ObjectTreeOptions{})
+				obectjTree := tree.NewObjectTree(root, tree.ObjectTreeOptions{
+					ShowOtherConditions: "All",
+				})
 
 				o1 := fakeObject("child1",
-					withAnnotation(tree.ShowObjectConditionsAnnotation, "True"),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C1.1")),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C1.2")),
 				)
 				o1_1 := fakeObject("child1.1")
 
 				o2 := fakeObject("child2",
-					withAnnotation(tree.ShowObjectConditionsAnnotation, "True"),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C2.1")),
 					withV1Beta1Condition(v1beta1conditions.TrueCondition("C2.2")),
 				)
@@ -279,20 +278,19 @@ func Test_V1Beta1TreePrefix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 			var output bytes.Buffer
-
-			// Creates the output table
-			tbl := tablewriter.NewWriter(&output)
-
-			formatTableTreeV1Beta1(tbl)
+			tbl := createObjectTreeV1Beta1(&output)
 
 			// Add row for the root object, the cluster, and recursively for all the nodes representing the cluster status.
-			addObjectRowV1Beta1("", tbl, tt.objectTree, tt.objectTree.GetRoot())
-			tbl.Render()
-
+			err := addObjectRowV1Beta1("", tbl, tt.objectTree, tt.objectTree.GetRoot())
+			g.Expect(err).ToNot(HaveOccurred(), "Failed to add object rows")
+			if err := tbl.Render(); err != nil {
+				t.Fatalf("Error rendering table: %v", err)
+			}
 			// Compare the output with the expected prefix.
 			// We only check whether the output starts with the expected prefix,
 			// meaning expectPrefix does not contain the full expected output.
-			g.Expect(output.String()).Should(MatchTable(tt.expectPrefix))
+			outputString := output.String()
+			g.Expect(outputString).Should(MatchTable(tt.expectPrefix))
 		})
 	}
 }
@@ -328,12 +326,12 @@ func Test_TreePrefix(t *testing.T) {
 				return objectTree
 			}(),
 			expectPrefix: []string{
-				"Object/root              Available: False  NotAvailable",
-				"│                                                              second line",
-				"├─Object/child1          Available: False  NotAvailable",
-				"│                                                              second line",
-				"└─Object/child2          Available: False  NotAvailable",
-				"                                                               second line",
+				"Object/root              False  NotAvailable",
+				"│                                                   second line",
+				"├─Object/child1          False  NotAvailable",
+				"│                                                   second line",
+				"└─Object/child2          False  NotAvailable",
+				"                                                    second line",
 			},
 		},
 		{
@@ -362,10 +360,10 @@ func Test_TreePrefix(t *testing.T) {
 				return obectjTree
 			}(),
 			expectPrefix: []string{
-				"Object/root                  Available: True   Available",
-				"├─Object/child1              Available: True   Available",
-				"└─Object/child2              Available: False  NotAvailable",
-				"  │                                                                second line",
+				"Object/root                  True   Available",
+				"├─Object/child1              True   Available",
+				"└─Object/child2              False  NotAvailable",
+				"  │                                                     second line",
 				"  └─Object/child2.1",
 			},
 		},
@@ -404,16 +402,16 @@ func Test_TreePrefix(t *testing.T) {
 				return obectjTree
 			}(),
 			expectPrefix: []string{
-				"Object/root                    Available: True   Available",
-				"├─Object/child1                Available: True   Available",
-				"│ └─Object/child2              Available: False  NotAvailable",
-				"│   │                                                                second line",
-				"│   └─Object/child3            Available: False  NotAvailable",
-				"│     │                                                              second line",
-				"│     └─Object/child4          Available: False  NotAvailable",
-				"│                                                                    second line",
-				"└─Object/child5                Available: False  NotAvailable",
-				"                                                                     second line",
+				"Object/root                    True   Available",
+				"├─Object/child1                True   Available",
+				"│ └─Object/child2              False  NotAvailable",
+				"│   │                                                     second line",
+				"│   └─Object/child3            False  NotAvailable",
+				"│     │                                                   second line",
+				"│     └─Object/child4          False  NotAvailable",
+				"│                                                         second line",
+				"└─Object/child5                False  NotAvailable",
+				"                                                          second line",
 			},
 		},
 		{
@@ -447,14 +445,14 @@ func Test_TreePrefix(t *testing.T) {
 				return obectjTree
 			}(),
 			expectPrefix: []string{
-				"Object/root                    Available: True   Available",
-				"└─Object/child1                Available: True   Available",
-				"  └─Object/child2              Available: False  NotAvailable",
-				"    │                                                                second line",
-				"    └─Object/child3            Available: False  NotAvailable",
-				"      │                                                              second line",
-				"      └─Object/child4          Available: False  NotAvailable",
-				"                                                                     second line",
+				"Object/root                    True   Available",
+				"└─Object/child1                True   Available",
+				"  └─Object/child2              False  NotAvailable",
+				"    │                                                     second line",
+				"    └─Object/child3            False  NotAvailable",
+				"      │                                                   second line",
+				"      └─Object/child4          False  NotAvailable",
+				"                                                          second line",
 			},
 		},
 		{
@@ -493,16 +491,16 @@ func Test_TreePrefix(t *testing.T) {
 				return obectjTree
 			}(),
 			expectPrefix: []string{
-				"Object/root                  Available: True   Available",
-				"├─Object/child1              Available: True   Available",
-				"├─Object/child2              Available: False  NotAvailable",
-				"│ │                                                                second line",
-				"│ └─Object/child2.1          Available: False  NotAvailable",
-				"│                                                                  second line",
-				"└─Object/child3              Available: False  NotAvailable",
-				"  │                                                                second line",
-				"  └─Object/child3.1          Available: False  NotAvailable",
-				"                                                                   second line",
+				"Object/root                  True   Available",
+				"├─Object/child1              True   Available",
+				"├─Object/child2              False  NotAvailable",
+				"│ │                                                     second line",
+				"│ └─Object/child2.1          False  NotAvailable",
+				"│                                                       second line",
+				"└─Object/child3              False  NotAvailable",
+				"  │                                                     second line",
+				"  └─Object/child3.1          False  NotAvailable",
+				"                                                        second line",
 			},
 		},
 	}
@@ -511,15 +509,15 @@ func Test_TreePrefix(t *testing.T) {
 			g := NewWithT(t)
 			var output bytes.Buffer
 
-			// Creates the output table
-			tbl := tablewriter.NewWriter(&output)
-
-			formatTableTree(tbl)
+			tbl := createObjectTree(&output)
 
 			// Add row for the root object, the cluster, and recursively for all the nodes representing the cluster status.
-			addObjectRow("", tbl, tt.objectTree, tt.objectTree.GetRoot())
-			tbl.Render()
+			err := addObjectRow("", tbl, tt.objectTree, tt.objectTree.GetRoot())
+			g.Expect(err).ToNot(HaveOccurred(), "Failed to add object rows")
 
+			if err := tbl.Render(); err != nil {
+				t.Fatalf("Error rendering table: %v", err)
+			}
 			// Remove empty lines from the output. We need this because v1beta2 adds lines at the beginning and end.
 			outputString := strings.TrimSpace(output.String())
 

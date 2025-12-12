@@ -185,7 +185,7 @@ github.com/onsi/gomega/types
 # github.com/opencontainers/go-digest v1.0.0
 ## explicit; go 1.13
 github.com/opencontainers/go-digest
-# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20251209152545-de2bd18f0a52
+# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20251210142848-8ee10a15ba23
 ## explicit; go 1.24.0
 github.com/openshift/cluster-capi-operator/manifests-gen
 # github.com/pelletier/go-toml/v2 v2.2.3

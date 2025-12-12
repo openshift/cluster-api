@@ -67,9 +67,10 @@ The table below documents support matrix for Cluster API versions (versions olde
 
 | Minor Release | Status                  | Supported Until (including maintenance mode)                                                |
 |---------------|-------------------------|---------------------------------------------------------------------------------------------|
+| v1.12.x       | Standard support period | in maintenance mode when v1.14.0 will be released, EOL when v1.15.0 will be released        |
 | v1.11.x       | Standard support period | in maintenance mode when v1.13.0 will be released, EOL when v1.14.0 will be released        |
-| v1.10.x       | Standard support period | in maintenance mode when v1.12.0 will be released, EOL when v1.13.0 will be released        |
-| v1.9.x        | Maintenance mode        | Maintenance mode since 2025-08-12 - v1.11.0 release date, EOL when v1.12.0 will be released |
+| v1.10.x       | Maintenance mode        | Maintenance mode since 2025-12-18 - v1.12.0 release date, EOL when v1.13.0 will be released  |
+| v1.9.x        | EOL                     | EOL since 2025-12-18 - v1.12.0 release date                                                 |
 | v1.8.x        | EOL                     | EOL since 2025-08-12 - v1.11.0 release date                                                 |
 | v1.7.x        | EOL                     | EOL since 2025-04-22 - v1.10.0 release date                                                 |
 | v1.6.x        | EOL                     | EOL since 2024-12-10 - v1.9.0 release date                                                  |
@@ -79,6 +80,41 @@ The table below documents support matrix for Cluster API versions (versions olde
 | v1.2.x        | EOL                     | EOL since 2023-07-25 - v1.5.0 release date                                                  |
 | v1.1.x        | EOL                     | EOL since 2023-03-28 - v1.4.0 release date                                                  |
 | v1.0.x        | EOL                     | EOL since 2022-12-01 - v1.3.0 release date                                                  |
+
+<aside class="note warning">
+
+<h1>Warning</h1>
+
+When importing Cluster API go modules as a dependency, you MUST consider any Cluster API behaviour that is not defined 
+by an API field or by a well-defined extension point, as a Cluster API internal implementation detail, and internal 
+implementation details can change at any time.
+
+Accordingly, in order to not expose users of projects importing Cluster API go modules as a dependency to the risk 
+that issue arises when one of the Cluster API internal behavior changes, you MUST NOT rely on any Cluster API 
+internal behaviours.
+
+Please note that this applies to any public go func or types; As a only and notable exception, maintainers 
+are committed to avoid as much as possible breaking changes within the same minor release for the following packages:
+- /util/*
+- /cmd/clusterctl/client 
+
+The Cluster API maintainers welcome feedback and contributions to improve project's extensibility point, 
+please [open an issue](https://github.com/kubernetes-sigs/cluster-api/issues/new?assignees=&labels=&template=feature_request.md) on the Cluster API repo or add an item to the agenda in the [Cluster API community meeting](https://git.k8s.io/community/sig-cluster-lifecycle/README.md#cluster-api).
+
+</aside>
+
+<aside class="note warning">
+
+<h1>Warning</h1>
+
+Forks of the CLuster API project are not recommended, instead, Cluster API maintainers welcome feedback and contributions 
+to improve project's extensibility point, please [open an issue](https://github.com/kubernetes-sigs/cluster-api/issues/new?assignees=&labels=&template=feature_request.md) on the Cluster API repo or add an item 
+to the agenda in the [Cluster API community meeting](https://git.k8s.io/community/sig-cluster-lifecycle/README.md#cluster-api).
+
+If a user still wants to fork this project, please note that it is up to the user to validate if the fork works
+properly and maintainers will not provide any support or guarantee on these kind of integrations/usage.
+
+</aside>
 
 #### Skip upgrades
 
@@ -270,21 +306,31 @@ In some cases, also Cluster API and/or Cluster API providers are defining additi
 The following table defines the support matrix for the Cluster API core provider.
 See [Cluster API release support](#cluster-api-release-support) and [Kubernetes versions support](#kubernetes-versions-support).
 
-|                  | v1.9, _Maintenance Mode_ | v1.10             | v1.11             |
-|------------------|--------------------------|-------------------|-------------------|
-| Kubernetes v1.24 |                          |                   |                   |
-| Kubernetes v1.25 |                          |                   |                   |
-| Kubernetes v1.26 | ✓ (only workload)        |                   |                   |
-| Kubernetes v1.27 | ✓ (only workload)        | ✓ (only workload) |                   |
-| Kubernetes v1.28 | ✓                        | ✓ (only workload) | ✓ (only workload) |
-| Kubernetes v1.29 | ✓                        | ✓                 | ✓ (only workload) |
-| Kubernetes v1.30 | ✓                        | ✓                 | ✓                 |
-| Kubernetes v1.31 | ✓                        | ✓                 | ✓                 |
-| Kubernetes v1.32 | ✓ >= v1.9.1              | ✓                 | ✓                 |
-| Kubernetes v1.33 |                          | ✓ >= v1.10.1      | ✓                 |
-| Kubernetes v1.34 |                          |                   | ✓ >= v1.11.1      |
+|                  |v1.10, _Maintenance Mode_ | v1.11             | v1.12                        |
+|------------------|--------------------------|-------------------|------------------------------|
+| Kubernetes v1.27 | ✓ (only workload)        |                   |                              |
+| Kubernetes v1.28 | ✓ (only workload)        | ✓ (only workload) |                              |
+| Kubernetes v1.29 | ✓                        | ✓ (only workload) | ✓ (only workload)            |
+| Kubernetes v1.30 | ✓                        | ✓                 | ✓ (only workload)            |
+| Kubernetes v1.31 | ✓                        | ✓                 | ✓                            |
+| Kubernetes v1.32 | ✓                        | ✓                 | ✓                            |
+| Kubernetes v1.33 | ✓ >= v1.10.1             | ✓                 | ✓                            |
+| Kubernetes v1.34 |                          | ✓ >= v1.11.1      | ✓                            | 
+| Kubernetes v1.35 |                          |                   | ✓ >= v1.12.1                 |
+
 
 See also [Kubernetes version specific notes](#kubernetes-version-specific-notes).
+
+<aside class="note warning">
+
+<h1>Warning</h1>
+
+Cluster API is tested with upstream, fully conformant, Kubernetes releases.
+
+It might be possible to use Cluster API also with non conformant Kubernetes releases, but it is up to users
+to validate if this works and the project does not provide any support or guarantees for these kind of deployments.
+
+</aside>
 
 ### Kubeadm Bootstrap provider (`kubeadm-bootstrap-controller`) 
 
@@ -303,9 +349,6 @@ using the [kubeadm API](https://kubernetes.io/docs/setup/production-environment/
 
 |                  | kubeadm API Version                                                                |
 |------------------|------------------------------------------------------------------------------------|
-| Kubernetes v1.24 | [v1beta3](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta3/) |
-| Kubernetes v1.25 | [v1beta3](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta3/) |
-| Kubernetes v1.26 | [v1beta3](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta3/) |
 | Kubernetes v1.27 | [v1beta3](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta3/) |
 | Kubernetes v1.28 | [v1beta3](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta3/) |
 | Kubernetes v1.29 | [v1beta3](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta3/) |
@@ -314,6 +357,7 @@ using the [kubeadm API](https://kubernetes.io/docs/setup/production-environment/
 | Kubernetes v1.32 | [v1beta4](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta4/) |
 | Kubernetes v1.33 | [v1beta4](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta4/) |
 | Kubernetes v1.34 | [v1beta4](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta4/) |
+| Kubernetes v1.35 | [v1beta4](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta4/) |
 
 ### Kubeadm Control Plane provider (`kubeadm-control-plane-controller`)
 
@@ -355,10 +399,11 @@ Notably, the Max CoreDNS version could change also with patch releases.
 | v1.10       | v1.12.1             |
 | >= v1.10.5  | v1.12.3             |
 | v1.10.7     | v1.12.4             |
-| >= v1.10.8   | v1.13.1            |
+| >= v1.10.8  | v1.13.1             |
 | v1.11       | v1.12.3             |
 | v1.11.2     | v1.12.4             |
-| >= v1.11.3   | v1.13.1            |
+| >= v1.11.3  | v1.13.1             |
+| v1.12       | v1.13.1             |
 
 See [corefile-migration](https://github.com/coredns/corefile-migration)
 

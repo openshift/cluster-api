@@ -71,7 +71,7 @@ const (
 
 var (
 	// Defines the default version to be used for the provider CR if no version is specified in the tilt-provider.yaml|json file.
-	defaultProviderVersion = "v1.11.99"
+	defaultProviderVersion = "v1.12.99"
 
 	// This data struct mirrors a subset of info from the providers struct in the tilt file
 	// which is containing "hard-coded" tilt-provider.yaml files for the providers managed in the Cluster API repository.
@@ -947,10 +947,6 @@ func getProviderObj(version *string) func(prefix string, objs []unstructured.Uns
 		}
 
 		provider := &clusterctlv1.Provider{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Provider",
-				APIVersion: clusterctlv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      manifestLabel,
 				Namespace: namespace,

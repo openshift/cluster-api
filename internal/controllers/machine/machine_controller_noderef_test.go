@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/record"
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,7 +40,9 @@ import (
 	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/topology/ownerrefs"
+	capicontrollerutil "sigs.k8s.io/cluster-api/internal/util/controller"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/test/builder"
@@ -59,6 +62,22 @@ func TestReconcileNode(t *testing.T) {
 		},
 	}
 
+	defaultMachineWithTaints := defaultMachine.DeepCopy()
+	defaultMachineWithTaints.Spec.Taints = []clusterv1.MachineTaint{
+		{
+			Key:         "test-always-taint",
+			Value:       "test-value1",
+			Effect:      corev1.TaintEffectNoSchedule,
+			Propagation: clusterv1.MachineTaintPropagationAlways,
+		},
+		{
+			Key:         "test-on-initialization-taint",
+			Value:       "test-value2",
+			Effect:      corev1.TaintEffectNoSchedule,
+			Propagation: clusterv1.MachineTaintPropagationOnInitialization,
+		},
+	}
+
 	defaultCluster := &clusterv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
@@ -67,39 +86,44 @@ func TestReconcileNode(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name               string
-		machine            *clusterv1.Machine
-		node               *corev1.Node
-		nodeGetErr         bool
-		expectResult       ctrl.Result
-		expectError        bool
-		expected           func(g *WithT, m *clusterv1.Machine)
-		expectNodeGetError bool
+		name                            string
+		machine                         *clusterv1.Machine
+		node                            *corev1.Node
+		featureGateMachineTaintsEnabled bool
+		nodeGetErr                      bool
+		expectResult                    ctrl.Result
+		expectError                     bool
+		expected                        func(g *WithT, m *clusterv1.Machine)
+		expectNodeGetError              bool
+		expectedNode                    func(g *WithT, m *corev1.Node)
 	}{
 		{
-			name:         "No op if provider ID is not set",
-			machine:      &clusterv1.Machine{},
-			node:         nil,
-			nodeGetErr:   false,
-			expectResult: ctrl.Result{},
-			expectError:  false,
+			name:                            "No op if provider ID is not set",
+			machine:                         &clusterv1.Machine{},
+			node:                            nil,
+			featureGateMachineTaintsEnabled: false,
+			nodeGetErr:                      false,
+			expectResult:                    ctrl.Result{},
+			expectError:                     false,
 		},
 		{
-			name:               "err reading node (something different than not found), it should return error",
-			machine:            defaultMachine.DeepCopy(),
-			node:               nil,
-			nodeGetErr:         true,
-			expectResult:       ctrl.Result{},
-			expectError:        true,
-			expectNodeGetError: true,
+			name:                            "err reading node (something different than not found), it should return error",
+			machine:                         defaultMachine.DeepCopy(),
+			node:                            nil,
+			featureGateMachineTaintsEnabled: false,
+			nodeGetErr:                      true,
+			expectResult:                    ctrl.Result{},
+			expectError:                     true,
+			expectNodeGetError:              true,
 		},
 		{
-			name:         "waiting for the node to exist, no op",
-			machine:      defaultMachine.DeepCopy(),
-			node:         nil,
-			nodeGetErr:   false,
-			expectResult: ctrl.Result{},
-			expectError:  false,
+			name:                            "waiting for the node to exist, no op",
+			machine:                         defaultMachine.DeepCopy(),
+			node:                            nil,
+			featureGateMachineTaintsEnabled: false,
+			nodeGetErr:                      false,
+			expectResult:                    ctrl.Result{},
+			expectError:                     false,
 		},
 		{
 			name:    "node found, should surface info",
@@ -127,9 +151,10 @@ func TestReconcileNode(t *testing.T) {
 					},
 				},
 			},
-			nodeGetErr:   false,
-			expectResult: ctrl.Result{},
-			expectError:  false,
+			featureGateMachineTaintsEnabled: false,
+			nodeGetErr:                      false,
+			expectResult:                    ctrl.Result{},
+			expectError:                     false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.NodeRef.Name).To(Equal("test-node-1"))
 				g.Expect(m.Status.NodeInfo).ToNot(BeNil())
@@ -155,10 +180,11 @@ func TestReconcileNode(t *testing.T) {
 					},
 				},
 			},
-			node:         nil,
-			nodeGetErr:   false,
-			expectResult: ctrl.Result{},
-			expectError:  true,
+			node:                            nil,
+			featureGateMachineTaintsEnabled: false,
+			nodeGetErr:                      false,
+			expectResult:                    ctrl.Result{},
+			expectError:                     true,
 		},
 		{
 			name: "node not found is tolerated when machine is deleting",
@@ -181,16 +207,94 @@ func TestReconcileNode(t *testing.T) {
 					},
 				},
 			},
-			node:         nil,
-			nodeGetErr:   false,
-			expectResult: ctrl.Result{},
-			expectError:  false,
+			node:                            nil,
+			featureGateMachineTaintsEnabled: false,
+			nodeGetErr:                      false,
+			expectResult:                    ctrl.Result{},
+			expectError:                     false,
+		},
+		{
+			name:    "node found, should propagate taints",
+			machine: defaultMachineWithTaints.DeepCopy(),
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node-1",
+				},
+				Spec: corev1.NodeSpec{
+					ProviderID: "aws://us-east-1/test-node-1",
+				},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{
+						MachineID: "foo",
+					},
+					Addresses: []corev1.NodeAddress{
+						{
+							Type:    corev1.NodeInternalIP,
+							Address: "1.1.1.1",
+						},
+					},
+				},
+			},
+			featureGateMachineTaintsEnabled: true,
+			nodeGetErr:                      false,
+			expectResult:                    ctrl.Result{},
+			expectError:                     false,
+			expectedNode: func(g *WithT, n *corev1.Node) {
+				g.Expect(n.Spec.Taints).To(BeComparableTo([]corev1.Taint{
+					{
+						Key:    "test-always-taint",
+						Value:  "test-value1",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+					{
+						Key:    "test-on-initialization-taint",
+						Value:  "test-value2",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				}))
+				g.Expect(n.Annotations[clusterv1.TaintsFromMachineAnnotation]).To(Equal("test-always-taint:NoSchedule"))
+			},
+		},
+		{
+			name:    "node found, should not add taints annotation if taints feature gate is disabled",
+			machine: defaultMachineWithTaints.DeepCopy(),
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node-1",
+				},
+				Spec: corev1.NodeSpec{
+					ProviderID: "aws://us-east-1/test-node-1",
+				},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{
+						MachineID: "foo",
+					},
+					Addresses: []corev1.NodeAddress{
+						{
+							Type:    corev1.NodeInternalIP,
+							Address: "1.1.1.1",
+						},
+					},
+				},
+			},
+			featureGateMachineTaintsEnabled: false,
+			nodeGetErr:                      false,
+			expectResult:                    ctrl.Result{},
+			expectError:                     false,
+			expectedNode: func(g *WithT, n *corev1.Node) {
+				g.Expect(n.Spec.Taints).To(BeEmpty())
+				g.Expect(n.Annotations).ToNot(HaveKey(clusterv1.TaintsFromMachineAnnotation))
+			},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
+
+			if tc.featureGateMachineTaintsEnabled {
+				utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
+			}
 
 			c := fake.NewClientBuilder().WithObjects(tc.machine).WithIndex(&corev1.Node{}, "spec.providerID", index.NodeByProviderID).Build()
 			if tc.nodeGetErr {
@@ -221,6 +325,12 @@ func TestReconcileNode(t *testing.T) {
 			}
 
 			g.Expect(s.nodeGetError != nil).To(Equal(tc.expectNodeGetError))
+
+			if tc.expectedNode != nil {
+				node := &corev1.Node{}
+				g.Expect(c.Get(ctx, client.ObjectKeyFromObject(tc.node), node)).To(Succeed())
+				tc.expectedNode(g, node)
+			}
 		})
 	}
 }
@@ -349,7 +459,8 @@ func TestGetNode(t *testing.T) {
 		Client:       env,
 	}
 
-	w, err := ctrl.NewControllerManagedBy(env.Manager).For(&corev1.Node{}).Build(r)
+	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "node")
+	w, err := capicontrollerutil.NewControllerManagedBy(env.Manager, predicateLog).For(&corev1.Node{}).Build(r)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	// Retry because the ClusterCache might not have immediately created the clusterAccessor.
@@ -1199,7 +1310,7 @@ func TestPatchNode(t *testing.T) {
 				_ = env.CleanupAndWait(ctx, oldNode, machine, ms, md)
 			})
 
-			err := r.patchNode(ctx, env, oldNode, tc.newLabels, tc.newAnnotations, tc.machine)
+			err := r.patchNode(ctx, env, oldNode, tc.newLabels, tc.newAnnotations, tc.machine, ms, md)
 			g.Expect(err).ToNot(HaveOccurred())
 
 			g.Eventually(func(g Gomega) {
@@ -1304,7 +1415,7 @@ func TestMultiplePatchNode(t *testing.T) {
 				_ = env.CleanupAndWait(ctx, oldNode, machine)
 			})
 
-			err := r.patchNode(ctx, env, oldNode, labels, tc.newAnnotations, machine)
+			err := r.patchNode(ctx, env, oldNode, labels, tc.newAnnotations, machine, nil, nil)
 			g.Expect(err).ToNot(HaveOccurred())
 
 			newNode := &corev1.Node{}
@@ -1318,7 +1429,7 @@ func TestMultiplePatchNode(t *testing.T) {
 			}, 10*time.Second).Should(Succeed())
 
 			// Re-reconcile with the same metadata
-			err = r.patchNode(ctx, env, newNode, labels, tc.newAnnotations, machine)
+			err = r.patchNode(ctx, env, newNode, labels, tc.newAnnotations, machine, nil, nil)
 			g.Expect(err).ToNot(HaveOccurred())
 
 			g.Eventually(func(g Gomega) {
@@ -1391,7 +1502,6 @@ func newFakeMachineDeployment(namespace, clusterName string) *clusterv1.MachineD
 
 func Test_shouldNodeHaveOutdatedTaint(t *testing.T) {
 	namespaceName := "test"
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespaceName}}
 
 	testMachineDeployment := builder.MachineDeployment(namespaceName, "my-md").
 		WithAnnotations(map[string]string{clusterv1.RevisionAnnotation: "1"}).
@@ -1400,82 +1510,49 @@ func Test_shouldNodeHaveOutdatedTaint(t *testing.T) {
 	testMachineDeploymentNew.Annotations = map[string]string{clusterv1.RevisionAnnotation: "2"}
 
 	testMachineSet := builder.MachineSet(namespaceName, "my-ms").
-		WithOwnerReferences([]metav1.OwnerReference{*ownerrefs.OwnerReferenceTo(testMachineDeployment, testMachineDeployment.GroupVersionKind())}).
+		WithOwnerReferences([]metav1.OwnerReference{*ownerrefs.OwnerReferenceTo(testMachineDeployment, clusterv1.GroupVersion.WithKind("MachineDeployment"))}).
 		Build()
 	testMachineSet.Annotations = map[string]string{clusterv1.RevisionAnnotation: "1"}
 
-	labels := map[string]string{
-		clusterv1.MachineDeploymentNameLabel: "my-md",
-	}
-	testMachine := builder.Machine(namespaceName, "my-machine").WithLabels(labels).Build()
-	testMachine.SetOwnerReferences([]metav1.OwnerReference{*ownerrefs.OwnerReferenceTo(testMachineSet, testMachineSet.GroupVersionKind())})
-
 	tests := []struct {
-		name         string
-		machine      *clusterv1.Machine
-		objects      []client.Object
-		wantOutdated bool
-		wantNotFound bool
-		wantErr      bool
+		name              string
+		machineSet        *clusterv1.MachineSet
+		machineDeployment *clusterv1.MachineDeployment
+		wantOutdated      bool
+		wantErr           bool
 	}{
 		{
-			name:         "Machineset not outdated",
-			machine:      testMachine,
-			objects:      []client.Object{testMachineSet, testMachineDeployment},
-			wantOutdated: false,
-			wantNotFound: false,
-			wantErr:      false,
+			name:              "Machineset not outdated",
+			machineSet:        testMachineSet,
+			machineDeployment: testMachineDeployment,
+			wantOutdated:      false,
+			wantErr:           false,
 		},
 		{
-			name:         "Machineset outdated",
-			machine:      testMachine,
-			objects:      []client.Object{testMachineSet, testMachineDeploymentNew},
-			wantOutdated: true,
-			wantNotFound: false,
-			wantErr:      false,
+			name:              "Machineset outdated",
+			machineSet:        testMachineSet,
+			machineDeployment: testMachineDeploymentNew,
+			wantOutdated:      true,
+			wantErr:           false,
 		},
 		{
-			name:         "Machine without MachineDeployment label",
-			machine:      builder.Machine(namespaceName, "no-deploy").Build(),
-			objects:      nil,
-			wantOutdated: false,
-			wantNotFound: false,
-			wantErr:      false,
+			name:              "Stand-alone machine",
+			machineSet:        nil,
+			machineDeployment: nil,
+			wantOutdated:      false,
+			wantErr:           false,
 		},
 		{
-			name:         "Machine without OwnerReference",
-			machine:      builder.Machine(namespaceName, "no-ownerref").WithLabels(labels).Build(),
-			objects:      nil,
-			wantOutdated: false,
-			wantNotFound: true,
-			wantErr:      false,
-		},
-		{
-			name:         "Machine without existing MachineSet",
-			machine:      testMachine,
-			objects:      nil,
-			wantOutdated: false,
-			wantNotFound: true,
-			wantErr:      false,
-		},
-		{
-			name:         "Machine without existing MachineDeployment",
-			machine:      testMachine,
-			objects:      []client.Object{testMachineSet},
-			wantOutdated: false,
-			wantNotFound: true,
-			wantErr:      false,
+			name:              "Stand-alone machine set",
+			machineSet:        testMachineSet,
+			machineDeployment: nil,
+			wantOutdated:      false,
+			wantErr:           false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			objects := []client.Object{namespace}
-			objects = append(objects, tt.machine)
-			objects = append(objects, tt.objects...)
-			c := fake.NewClientBuilder().
-				WithObjects(objects...).Build()
-
-			gotOutdated, gotNotFound, err := shouldNodeHaveOutdatedTaint(ctx, c, tt.machine)
+			gotOutdated, err := shouldNodeHaveOutdatedTaint(tt.machineSet, tt.machineDeployment)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("shouldNodeHaveOutdatedTaint() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -1483,9 +1560,225 @@ func Test_shouldNodeHaveOutdatedTaint(t *testing.T) {
 			if gotOutdated != tt.wantOutdated {
 				t.Errorf("shouldNodeHaveOutdatedTaint() = %v, want %v", gotOutdated, tt.wantOutdated)
 			}
-			if gotNotFound != tt.wantNotFound {
-				t.Errorf("shouldNodeHaveOutdatedTaint() = %v, want %v", gotNotFound, tt.wantNotFound)
-			}
+		})
+	}
+}
+
+func Test_propagateMachineTaintsToNode(t *testing.T) {
+	alwaysTaint := clusterv1.MachineTaint{
+		Key:         "added-always",
+		Value:       "always-value",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+	onInitializationTaint := clusterv1.MachineTaint{
+		Key:         "added-on-initialization",
+		Value:       "on-initialization-value",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationOnInitialization,
+	}
+
+	existingAlwaysTaint := clusterv1.MachineTaint{
+		Key:         "existing-always",
+		Value:       "existing-always-value",
+		Effect:      corev1.TaintEffectNoExecute,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	transitionAlways := clusterv1.MachineTaint{
+		Key:         "transition-taint",
+		Value:       "transition-value",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	transitionOnInitialization := transitionAlways
+	transitionOnInitialization.Propagation = clusterv1.MachineTaintPropagationOnInitialization
+
+	transitionExistingAlwaysNewValue := existingAlwaysTaint
+	transitionExistingAlwaysNewValue.Value = "transition-value-new"
+
+	transitionExistingAlwaysNewEffect := existingAlwaysTaint
+	transitionExistingAlwaysNewEffect.Effect = corev1.TaintEffectNoSchedule
+
+	externalNodeTaint := corev1.Taint{Key: "external-taint", Value: "external-value", Effect: corev1.TaintEffectNoExecute}
+
+	tests := []struct {
+		name               string
+		node               *corev1.Node
+		machineTaints      []clusterv1.MachineTaint
+		expectedTaints     []corev1.Taint
+		expectedAnnotation string
+		expectChanged      bool
+	}{
+		{
+			name:               "no taints set, no taints to set, adds empty annotation",
+			node:               builder.Node("").Build(),
+			machineTaints:      []clusterv1.MachineTaint{},
+			expectedTaints:     nil,
+			expectedAnnotation: "",
+			expectChanged:      true,
+		},
+		{
+			name:               "no taints set, no taints to set, keeps empty annotation",
+			node:               builder.Node("").WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: ""}).Build(),
+			machineTaints:      []clusterv1.MachineTaint{},
+			expectedTaints:     nil,
+			expectedAnnotation: "",
+			expectChanged:      false,
+		},
+		{
+			name:               "no taints set, no taints to set, cleans up empty annotation",
+			node:               builder.Node("").WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: "does-not-exist:NoSchedule"}).Build(),
+			machineTaints:      []clusterv1.MachineTaint{},
+			expectedTaints:     []corev1.Taint{}, // The taints utility initializes an empty slice on no-op removal.
+			expectedAnnotation: "",
+			expectChanged:      true,
+		},
+		// Basic Always taint operations:
+		{
+			name:               "Add missing Always taint, no tracking annotation, no other taints",
+			node:               builder.Node("").Build(),
+			machineTaints:      []clusterv1.MachineTaint{alwaysTaint},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(alwaysTaint)},
+			expectedAnnotation: "added-always:NoSchedule",
+			expectChanged:      true,
+		},
+		{
+			name: "Add missing Always taint, tracking annotation, no other taints",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: ""}).Build(),
+			machineTaints:      []clusterv1.MachineTaint{alwaysTaint},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(alwaysTaint)},
+			expectedAnnotation: "added-always:NoSchedule",
+			expectChanged:      true,
+		},
+		{
+			name: "Add missing but tracked Always taint, tracking annotation, no other taints",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: "existing-always:NoExecute"}).Build(),
+			machineTaints:      []clusterv1.MachineTaint{existingAlwaysTaint},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(existingAlwaysTaint)},
+			expectedAnnotation: "existing-always:NoExecute",
+			expectChanged:      true,
+		},
+		{
+			name: "Delete Always taint, tracking annotation, no other taints",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: "existing-always:NoExecute"}).
+				WithTaints(convertMachineTaintToCoreV1Taint(existingAlwaysTaint)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{},
+			expectedTaints:     []corev1.Taint{},
+			expectedAnnotation: "",
+			expectChanged:      true,
+		},
+		// Basic OnInitialization taint operations:
+		{
+			name:               "Add missing OnInitialization taint, no tracking annotation, no other taints",
+			node:               builder.Node("").Build(),
+			machineTaints:      []clusterv1.MachineTaint{onInitializationTaint},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(onInitializationTaint)},
+			expectedAnnotation: "",
+			expectChanged:      true,
+		},
+		{
+			name: "Don't add missing OnInitialization taint, tracking annotation, no other taints",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: ""}).Build(),
+			machineTaints:      []clusterv1.MachineTaint{onInitializationTaint},
+			expectedTaints:     nil,
+			expectedAnnotation: "",
+			expectChanged:      false,
+		},
+		{
+			name: "Don't delete OnInitialization taint, tracking annotation, no other taints",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: ""}).
+				WithTaints(convertMachineTaintToCoreV1Taint(onInitializationTaint)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(onInitializationTaint)},
+			expectedAnnotation: "",
+			expectChanged:      false,
+		},
+		// Transitions
+		{
+			name: "Transition Always to OnInitialization should remove from annotation but be kept on the node",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: "transition-taint:NoSchedule"}).
+				WithTaints(convertMachineTaintToCoreV1Taint(transitionAlways)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{transitionOnInitialization},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(transitionAlways)},
+			expectedAnnotation: "",
+			expectChanged:      true,
+		},
+		{
+			name: "Transition OnInitialization to Always should add to annotation and be kept on the node",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: ""}).
+				WithTaints(convertMachineTaintToCoreV1Taint(transitionOnInitialization)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{transitionAlways},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(transitionOnInitialization)},
+			expectedAnnotation: "transition-taint:NoSchedule",
+			expectChanged:      true,
+		},
+		{
+			name: "Transition Always taint to have a new value should change the value also on the node",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: "existing-always:NoExecute"}).
+				WithTaints(convertMachineTaintToCoreV1Taint(existingAlwaysTaint)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{transitionExistingAlwaysNewValue},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(transitionExistingAlwaysNewValue)},
+			expectedAnnotation: "existing-always:NoExecute",
+			expectChanged:      true,
+		},
+		{
+			name: "Transition Always taint to have a new effect should change the effect also on the node",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: "existing-always:NoExecute"}).
+				WithTaints(convertMachineTaintToCoreV1Taint(existingAlwaysTaint)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{transitionExistingAlwaysNewEffect},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(transitionExistingAlwaysNewEffect)},
+			expectedAnnotation: "existing-always:NoSchedule",
+			expectChanged:      true,
+		},
+		{
+			name: "Add missing taints, no tracking annotation, preserve other taints",
+			node: builder.Node("").
+				WithTaints(externalNodeTaint).Build(),
+			machineTaints:      []clusterv1.MachineTaint{alwaysTaint, onInitializationTaint},
+			expectedTaints:     []corev1.Taint{externalNodeTaint, convertMachineTaintToCoreV1Taint(alwaysTaint), convertMachineTaintToCoreV1Taint(onInitializationTaint)},
+			expectedAnnotation: "added-always:NoSchedule",
+			expectChanged:      true,
+		},
+		{
+			name: "Adopt existing taint, no tracking annotation",
+			node: builder.Node("").
+				WithTaints(convertMachineTaintToCoreV1Taint(existingAlwaysTaint)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{existingAlwaysTaint},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(existingAlwaysTaint)},
+			expectedAnnotation: "existing-always:NoExecute",
+			expectChanged:      true,
+		},
+		{
+			name: "Recover from broken tracking annotation",
+			node: builder.Node("").
+				WithAnnotations(map[string]string{clusterv1.TaintsFromMachineAnnotation: "existing-always:NoExecute,"}).
+				WithTaints(convertMachineTaintToCoreV1Taint(existingAlwaysTaint)).Build(),
+			machineTaints:      []clusterv1.MachineTaint{existingAlwaysTaint},
+			expectedTaints:     []corev1.Taint{convertMachineTaintToCoreV1Taint(existingAlwaysTaint)},
+			expectedAnnotation: "existing-always:NoExecute",
+			expectChanged:      true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			changed, err := propagateMachineTaintsToNode(tt.node, tt.machineTaints)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(changed).To(Equal(tt.expectChanged))
+			g.Expect(tt.node.Spec.Taints).To(Equal(tt.expectedTaints))
+			g.Expect(tt.node.Annotations).To(HaveKey(clusterv1.TaintsFromMachineAnnotation))
+			g.Expect(tt.node.Annotations[clusterv1.TaintsFromMachineAnnotation]).To(Equal(tt.expectedAnnotation))
 		})
 	}
 }
