@@ -1,0 +1,24 @@
+# Set the failurePolicy to Ignore for the validating webhooks handling IPAM resources.
+# 
+# During bootstrap, the bootstrap node's Kube API Server receives IPAM create requests but is unable
+# to reach the webhooks in the Cluster API namespace.
+# 
+# This is because the bootstrap node doesn't have a route to the pods as it doesn't have access to the pod networks.
+# If failurePolicy is set to Fail, the KAS cannot reach the webhook endpoints and the request fails, preventing creation of IPAddress and IPAddressClaim resources.
+# 
+# This causes a chicken-and-egg problem as it prevents IPAM provisioning
+# for the workers which won't start without their IP addresses being allocated.
+# 
+# Setting failurePolicy to Ignore allows the resources to be created even when the webhooks are
+# unreachable during bootstrap, matching what Machine API also does.
+# 
+# More context: https://redhat-internal.slack.com/archives/C0A2M43S199/p1765540108488539
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: capi-validating-webhook-configuration
+webhooks:
+  - name: validation.ipaddress.ipam.cluster.x-k8s.io
+    failurePolicy: Ignore
+  - name: validation.ipaddressclaim.ipam.cluster.x-k8s.io
+    failurePolicy: Ignore
