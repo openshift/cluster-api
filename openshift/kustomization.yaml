@@ -4,6 +4,6 @@ kind: Kustomization
 resources:
 - ../config/default
 
-patchesStrategicMerge:
-- ./patches/enable-metadata-syncing.yaml
-
+patches:
+- path: ./patches/enable-metadata-syncing.yaml
+- path: ./patches/failure-policy-ignore-ipam-webhooks.yaml
