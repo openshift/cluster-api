@@ -16,7 +16,7 @@ github.com/containerd/stargz-snapshotter/estargz/errorutil
 # github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 ## explicit
 github.com/davecgh/go-spew/spew
-# github.com/docker/cli v29.0.3+incompatible
+# github.com/docker/cli v29.2.0+incompatible
 ## explicit
 github.com/docker/cli/cli/config
 github.com/docker/cli/cli/config/configfile
@@ -145,10 +145,10 @@ github.com/opencontainers/image-spec/specs-go/v1
 # github.com/openshift/api v0.0.0-20260105114749-aae5635a71a7
 ## explicit; go 1.24.0
 github.com/openshift/api/config/v1
-# github.com/openshift/cluster-capi-operator v0.0.0-00010101000000-000000000000 => github.com/openshift-cloud-team/cluster-capi-operator v0.0.0-20260123165427-cea5afd6ecb4
+# github.com/openshift/cluster-capi-operator v0.0.0-00010101000000-000000000000 => github.com/openshift-cloud-team/cluster-capi-operator v0.0.0-20260203192520-8f1aad32df53
 ## explicit; go 1.24.0
 github.com/openshift/cluster-capi-operator/pkg/providerimages
-# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20251217175905-c68e5901d0d2 => github.com/openshift-cloud-team/cluster-capi-operator/manifests-gen v0.0.0-20260123165427-cea5afd6ecb4
+# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20251217175905-c68e5901d0d2 => github.com/openshift-cloud-team/cluster-capi-operator/manifests-gen v0.0.0-20260203192520-8f1aad32df53
 ## explicit; go 1.24.0
 github.com/openshift/cluster-capi-operator/manifests-gen
 # github.com/pkg/errors v0.9.1
@@ -571,5 +571,5 @@ sigs.k8s.io/structured-merge-diff/v6/value
 # sigs.k8s.io/yaml v1.6.0
 ## explicit; go 1.22
 sigs.k8s.io/yaml
-# github.com/openshift/cluster-capi-operator => github.com/openshift-cloud-team/cluster-capi-operator v0.0.0-20260123165427-cea5afd6ecb4
-# github.com/openshift/cluster-capi-operator/manifests-gen => github.com/openshift-cloud-team/cluster-capi-operator/manifests-gen v0.0.0-20260123165427-cea5afd6ecb4
+# github.com/openshift/cluster-capi-operator => github.com/openshift-cloud-team/cluster-capi-operator v0.0.0-20260203192520-8f1aad32df53
+# github.com/openshift/cluster-capi-operator/manifests-gen => github.com/openshift-cloud-team/cluster-capi-operator/manifests-gen v0.0.0-20260203192520-8f1aad32df53
