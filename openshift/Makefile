@@ -1,5 +1,7 @@
 TOOLS_DIR := tools
 
+include provider-version.mk
+
 $(RELEASE_DIR):
 	mkdir -p $(RELEASE_DIR)/
 
@@ -9,11 +11,13 @@ KUSTOMIZE := $(TOOLS_DIR)/bin/kustomize
 $(TOOLS_DIR)/bin/%:
 	$(MAKE) -C $(TOOLS_DIR) bin/$*
 
-.PHONY: check-env
-check-env:
-ifndef PROVIDER_VERSION
-	$(error PROVIDER_VERSION is undefined)
-endif
+.PHONY: verify
+verify: verify-ocp-manifests
+
+.PHONY: verify-%
+verify-%: ## Ensure no diff after running some other target
+	$(MAKE) $*
+	./verify-diff.sh
 
 .PHONY: update-manifests-gen
 update-manifests-gen:
@@ -33,7 +37,7 @@ ipam-manifests: $(KUSTOMIZE)
 
 # Rebasebot runs ocp-manifests, so we make it generate ipam-manifests too
 .PHONY: ocp-manifests
-ocp-manifests: ipam-manifests $(MANIFESTS_GEN) check-env | $(RELEASE_DIR) ## Builds openshift specific manifests
+ocp-manifests: ipam-manifests $(MANIFESTS_GEN) | $(RELEASE_DIR) ## Builds openshift specific manifests
 	# Generate provider manifests.
 	# TODO: load the provider-version dynamically at rebase time when this is invoked by the Rebase Bot during one of its lifecycle hooks.
 	$(MANIFESTS_GEN) --provider-name "cluster-api" --provider-type "CoreProvider" --provider-version "${PROVIDER_VERSION}" --base-path "../" --manifests-path "./manifests" --kustomize-dir="openshift"
