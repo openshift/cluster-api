@@ -7,3 +7,15 @@ resources:
 patches:
 - path: ./patches/enable-metadata-syncing.yaml
 - path: ./patches/failure-policy-ignore-ipam-webhooks.yaml
+- path: ./patches/ipam-crd-storage-version.yaml
+  target:
+    group: apiextensions.k8s.io
+    version: v1
+    kind: CustomResourceDefinition
+    name: ipaddresses.ipam.cluster.x-k8s.io
+- path: ./patches/ipam-crd-storage-version.yaml
+  target:
+    group: apiextensions.k8s.io
+    version: v1
+    kind: CustomResourceDefinition
+    name: ipaddressclaims.ipam.cluster.x-k8s.io
