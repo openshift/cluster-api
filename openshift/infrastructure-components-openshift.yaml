@@ -23039,7 +23039,7 @@ spec:
             type: object
         type: object
     served: true
-    storage: false
+    storage: true
     subresources: {}
   - additionalPrinterColumns:
     - description: Address
@@ -23158,7 +23158,7 @@ spec:
         - spec
         type: object
     served: true
-    storage: true
+    storage: false
     subresources: {}
 status:
   acceptedNames:
@@ -23551,7 +23551,7 @@ spec:
             type: object
         type: object
     served: true
-    storage: false
+    storage: true
     subresources:
       status: {}
   - additionalPrinterColumns:
@@ -23787,7 +23787,7 @@ spec:
         - spec
         type: object
     served: true
-    storage: true
+    storage: false
     subresources:
       status: {}
 status:
