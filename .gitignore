@@ -82,3 +82,6 @@ _releasenotes
 
 # Helm
 .helm
+
+# For konflux
+!vendor/github.com/go-errors/errors/cover.out
