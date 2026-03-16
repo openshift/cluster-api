@@ -80,6 +80,11 @@ version::get_version_vars() {
 version::ldflags() {
     version::get_version_vars
 
+    # When describe output does not match the semver regex (e.g. shallow clone without
+    # tags), GIT_MAJOR/GIT_MINOR are never set; still required under nounset for ldflags.
+    GIT_MAJOR=${GIT_MAJOR-}
+    GIT_MINOR=${GIT_MINOR-}
+
     local -a ldflags
     function add_ldflag() {
         local key=${1}
