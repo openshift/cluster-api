@@ -17,6 +17,8 @@ limitations under the License.
 package cluster
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"strings"
 
@@ -27,16 +29,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
-	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
+	"sigs.k8s.io/cluster-api/controllers/external"
 	secretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
 const clusterTopologyNameKey = "cluster.spec.topology.class"
+const clusterTopologyNamespaceKey = "cluster.spec.topology.classNamespace"
+const clusterResourceSetBindingClusterNameKey = "clusterresourcesetbinding.spec.clustername"
 
 type empty struct{}
 
@@ -72,6 +81,9 @@ type node struct {
 	// When this flag is true the object should not be deleted from the source cluster.
 	isGlobalHierarchy bool
 
+	// shouldNotDelete marks object and direct its descendants to not be deleted
+	shouldNotDelete bool
+
 	// virtual records if this node was discovered indirectly, e.g. by processing an OwnerRef, but not yet observed as a concrete object.
 	virtual bool
 
@@ -82,7 +94,7 @@ type node struct {
 	// the node is linked to a object indirectly in the OwnerReference chain.
 	tenant map[*node]empty
 
-	// restoreObject holds the object that is referenced when creating a node during restore from file.
+	// restoreObject holds the object that is referenced when creating a node during fromDirectory from file.
 	// the object can then be referenced latter when restoring objects to a target management cluster
 	restoreObject *unstructured.Unstructured
 
@@ -90,6 +102,10 @@ type node struct {
 	// E.g. for the cluster object we capture information to see if the cluster uses a manged topology
 	// and the cluster class used.
 	additionalInfo map[string]interface{}
+
+	// blockingMove is true when the object should prevent a move operation from proceeding as indicated by
+	// the presence of the block-move annotation.
+	blockingMove bool
 }
 
 type discoveryTypeInfo struct {
@@ -138,14 +154,26 @@ func (n *node) captureAdditionalInformation(obj *unstructured.Unstructured) erro
 		if err := localScheme.Convert(obj, cluster, nil); err != nil {
 			return errors.Wrapf(err, "failed to convert object %s to Cluster", n.identityStr())
 		}
-		if cluster.Spec.Topology != nil {
+		if cluster.Spec.Topology.IsDefined() {
 			if n.additionalInfo == nil {
 				n.additionalInfo = map[string]interface{}{}
 			}
-			n.additionalInfo[clusterTopologyNameKey] = cluster.Spec.Topology.Class
+			n.additionalInfo[clusterTopologyNameKey] = cluster.GetClassKey().Name
+			n.additionalInfo[clusterTopologyNamespaceKey] = cluster.GetClassKey().Namespace
 		}
 	}
 
+	// If the node is a ClusterResourceSetBinding capture the name of the cluster it is referencing to.
+	if n.identity.GroupVersionKind().GroupKind() == addonsv1.GroupVersion.WithKind("ClusterResourceSetBinding").GroupKind() {
+		binding := &addonsv1.ClusterResourceSetBinding{}
+		if err := localScheme.Convert(obj, binding, nil); err != nil {
+			return errors.Wrapf(err, "failed to convert object %s to ClusterResourceSetBinding", n.identityStr())
+		}
+		if n.additionalInfo == nil {
+			n.additionalInfo = map[string]interface{}{}
+		}
+		n.additionalInfo[clusterResourceSetBindingClusterNameKey] = binding.Spec.ClusterName
+	}
 	return nil
 }
 
@@ -179,8 +207,8 @@ func (o *objectGraph) addObj(obj *unstructured.Unstructured) error {
 	return nil
 }
 
-// addRestoredObj adds a Kubernetes object to the object graph from file that is generated during a restore
-// Populates the restoredObject field to be referenced during restore
+// addRestoredObj adds a Kubernetes object to the object graph from file that is generated during a fromDirectory
+// Populates the restoredObject field to be referenced during fromDirectory
 // During add, OwnerReferences are processed in order to create the dependency graph.
 func (o *objectGraph) addRestoredObj(obj *unstructured.Unstructured) error {
 	// Add object to graph
@@ -286,10 +314,10 @@ func (o *objectGraph) objInfoToNode(obj *unstructured.Unstructured, n *node) err
 
 func (o *objectGraph) objMetaToNode(obj *unstructured.Unstructured, n *node) {
 	n.identity.Namespace = obj.GetNamespace()
-	if _, ok := obj.GetLabels()[clusterctlv1.ClusterctlMoveLabelName]; ok {
+	if _, ok := obj.GetLabels()[clusterctlv1.ClusterctlMoveLabel]; ok {
 		n.forceMove = true
 	}
-	if _, ok := obj.GetLabels()[clusterctlv1.ClusterctlMoveHierarchyLabelName]; ok {
+	if _, ok := obj.GetLabels()[clusterctlv1.ClusterctlMoveHierarchyLabel]; ok {
 		n.forceMoveHierarchy = true
 	}
 
@@ -307,15 +335,17 @@ func (o *objectGraph) objMetaToNode(obj *unstructured.Unstructured, n *node) {
 			n.isGlobal = true
 		}
 	}
+
+	_, n.blockingMove = obj.GetAnnotations()[clusterctlv1.BlockMoveAnnotation]
 }
 
-// getDiscoveryTypes returns the list of TypeMeta to be considered for the the move discovery phase.
+// getDiscoveryTypes returns the list of TypeMeta to be considered for the move discovery phase.
 // This list includes all the types defines by the CRDs installed by clusterctl and the ConfigMap/Secret core types.
-func (o *objectGraph) getDiscoveryTypes() error {
+func (o *objectGraph) getDiscoveryTypes(ctx context.Context) error {
 	crdList := &apiextensionsv1.CustomResourceDefinitionList{}
 	getDiscoveryTypesBackoff := newReadBackoff()
-	if err := retryWithExponentialBackoff(getDiscoveryTypesBackoff, func() error {
-		return getCRDList(o.proxy, crdList)
+	if err := retryWithExponentialBackoff(ctx, getDiscoveryTypesBackoff, func(ctx context.Context) error {
+		return getCRDList(ctx, o.proxy, crdList)
 	}); err != nil {
 		return err
 	}
@@ -341,14 +371,14 @@ func (o *objectGraph) getDiscoveryTypes() error {
 			if crd.Spec.Group == addonsv1.GroupVersion.Group && crd.Spec.Names.Kind == "ClusterResourceSet" {
 				forceMoveHierarchy = true
 			}
-			if _, ok := crd.Labels[clusterctlv1.ClusterctlMoveHierarchyLabelName]; ok {
+			if _, ok := crd.Labels[clusterctlv1.ClusterctlMoveHierarchyLabel]; ok {
 				forceMoveHierarchy = true
 			}
 
 			// If a CRD is with as force move, keep track of this so all the objects of this type could be moved.
 			// NOTE: if a kind is set for force move-hierarchy, it is also automatically force moved.
 			forceMove := forceMoveHierarchy
-			if _, ok := crd.Labels[clusterctlv1.ClusterctlMoveLabelName]; ok {
+			if _, ok := crd.Labels[clusterctlv1.ClusterctlMoveLabel]; ok {
 				forceMove = true
 			}
 
@@ -385,13 +415,13 @@ func getKindAPIString(typeMeta metav1.TypeMeta) string {
 	return fmt.Sprintf("%ss.%s", strings.ToLower(typeMeta.Kind), api)
 }
 
-func getCRDList(proxy Proxy, crdList *apiextensionsv1.CustomResourceDefinitionList) error {
-	c, err := proxy.NewClient()
+func getCRDList(ctx context.Context, proxy Proxy, crdList *apiextensionsv1.CustomResourceDefinitionList) error {
+	c, err := proxy.NewClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	if err := c.List(ctx, crdList, client.HasLabels{clusterctlv1.ClusterctlLabelName}); err != nil {
+	if err := c.List(ctx, crdList, client.HasLabels{clusterctlv1.ClusterctlLabel}); err != nil {
 		return errors.Wrap(err, "failed to get the list of CRDs required for the move discovery phase")
 	}
 	return nil
@@ -399,7 +429,7 @@ func getCRDList(proxy Proxy, crdList *apiextensionsv1.CustomResourceDefinitionLi
 
 // Discovery reads all the Kubernetes objects existing in a namespace (or in all namespaces if empty) for the types received in input, and then adds
 // everything to the objects graph.
-func (o *objectGraph) Discovery(namespace string) error {
+func (o *objectGraph) Discovery(ctx context.Context, namespace string) error {
 	log := logf.Log
 	log.Info("Discovering Cluster API objects")
 
@@ -413,15 +443,15 @@ func (o *objectGraph) Discovery(namespace string) error {
 		typeMeta := discoveryType.typeMeta
 		objList := new(unstructured.UnstructuredList)
 
-		if err := retryWithExponentialBackoff(discoveryBackoff, func() error {
-			return getObjList(o.proxy, typeMeta, selectors, objList)
+		if err := retryWithExponentialBackoff(ctx, discoveryBackoff, func(ctx context.Context) error {
+			return getObjList(ctx, o.proxy, &typeMeta, selectors, objList)
 		}); err != nil {
 			return err
 		}
 
 		// if we are discovering Secrets, also secrets from the providers namespace should be included.
-		if discoveryType.typeMeta.GetObjectKind().GroupVersionKind().GroupKind() == corev1.SchemeGroupVersion.WithKind("SecretList").GroupKind() {
-			providers, err := o.providerInventory.List()
+		if discoveryType.typeMeta.GetObjectKind().GroupVersionKind().GroupKind() == corev1.SchemeGroupVersion.WithKind("Secret").GroupKind() {
+			providers, err := o.providerInventory.List(ctx)
 			if err != nil {
 				return err
 			}
@@ -429,8 +459,8 @@ func (o *objectGraph) Discovery(namespace string) error {
 				if p.Type == string(clusterctlv1.InfrastructureProviderType) {
 					providerNamespaceSelector := []client.ListOption{client.InNamespace(p.Namespace)}
 					providerNamespaceSecretList := new(unstructured.UnstructuredList)
-					if err := retryWithExponentialBackoff(discoveryBackoff, func() error {
-						return getObjList(o.proxy, typeMeta, providerNamespaceSelector, providerNamespaceSecretList)
+					if err := retryWithExponentialBackoff(ctx, discoveryBackoff, func(ctx context.Context) error {
+						return getObjList(ctx, o.proxy, &typeMeta, providerNamespaceSelector, providerNamespaceSecretList)
 					}); err != nil {
 						return err
 					}
@@ -443,7 +473,7 @@ func (o *objectGraph) Discovery(namespace string) error {
 			continue
 		}
 
-		log.V(5).Info(typeMeta.Kind, "Count", len(objList.Items))
+		log.V(5).Info(typeMeta.Kind, "count", len(objList.Items))
 		for i := range objList.Items {
 			obj := objList.Items[i]
 			if err := o.addObj(&obj); err != nil {
@@ -452,7 +482,75 @@ func (o *objectGraph) Discovery(namespace string) error {
 		}
 	}
 
-	log.V(1).Info("Total objects", "Count", len(o.uidToNode))
+	// On top of the object in the namespace being moved (secrets from the providers namespace),
+	// it is also required to discover ClusterClasses in other namespaces referenced by clusters in the namespace being moved.
+	discoveredExternalCC := sets.Set[string]{}
+	for _, cluster := range o.getClusters() {
+		className, hasName := cluster.additionalInfo[clusterTopologyNameKey]
+		classNamespace, hasNamespace := cluster.additionalInfo[clusterTopologyNamespaceKey]
+		// If the cluster doesn't have a reference to a ClusterClass, no-op.
+		if !hasName || !hasNamespace {
+			continue
+		}
+
+		// If the cluster reference a ClusterClass in the namespace being moved, no-op (it has been already discovered).
+		if classNamespace == namespace {
+			continue
+		}
+
+		// If the referenced ClusterClass has been already discovered, no-op.
+		externalCCKey := klog.KRef(classNamespace.(string), className.(string))
+		if discoveredExternalCC.Has(externalCCKey.String()) {
+			continue
+		}
+
+		// Get the CC and referenced templates.
+		ccUnstructured, err := o.fetchRef(ctx, discoveryBackoff, &corev1.ObjectReference{
+			Kind:       "ClusterClass",
+			Namespace:  externalCCKey.Namespace,
+			Name:       externalCCKey.Name,
+			APIVersion: clusterv1.GroupVersion.String(),
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get ClusterClass")
+		}
+
+		cc := &clusterv1.ClusterClass{}
+		if err := localScheme.Convert(ccUnstructured, cc, nil); err != nil {
+			return errors.Wrap(err, "failed to convert Unstructured to ClusterClass")
+		}
+
+		errs := []error{}
+		_, err = o.fetchRef(ctx, discoveryBackoff, cc.Spec.Infrastructure.TemplateRef.ToObjectReference(cc.Namespace))
+		errs = append(errs, err)
+		_, err = o.fetchRef(ctx, discoveryBackoff, cc.Spec.ControlPlane.TemplateRef.ToObjectReference(cc.Namespace))
+		errs = append(errs, err)
+
+		_, err = o.fetchRef(ctx, discoveryBackoff, cc.Spec.ControlPlane.MachineInfrastructure.TemplateRef.ToObjectReference(cc.Namespace))
+		errs = append(errs, err)
+
+		for _, mdClass := range cc.Spec.Workers.MachineDeployments {
+			_, err = o.fetchRef(ctx, discoveryBackoff, mdClass.Infrastructure.TemplateRef.ToObjectReference(cc.Namespace))
+			errs = append(errs, err)
+			_, err = o.fetchRef(ctx, discoveryBackoff, mdClass.Bootstrap.TemplateRef.ToObjectReference(cc.Namespace))
+			errs = append(errs, err)
+		}
+
+		for _, mpClass := range cc.Spec.Workers.MachinePools {
+			_, err = o.fetchRef(ctx, discoveryBackoff, mpClass.Infrastructure.TemplateRef.ToObjectReference(cc.Namespace))
+			errs = append(errs, err)
+			_, err = o.fetchRef(ctx, discoveryBackoff, mpClass.Bootstrap.TemplateRef.ToObjectReference(cc.Namespace))
+			errs = append(errs, err)
+		}
+
+		if err := kerrors.NewAggregate(errs); err != nil {
+			return errors.Wrap(err, "failed to fetch ClusterClass references")
+		}
+
+		discoveredExternalCC.Insert(externalCCKey.String())
+	}
+
+	log.V(1).Info("Total objects", "count", len(o.uidToNode))
 
 	// Completes the graph by searching for soft ownership relations such as secrets linked to the cluster
 	// by a naming convention (without any explicit OwnerReference).
@@ -461,23 +559,52 @@ func (o *objectGraph) Discovery(namespace string) error {
 	// Completes the graph by setting for each node the list of tenants the node belongs to.
 	o.setTenants()
 
-	return nil
+	// Ensure objects which are referenced across namespaces are not deleted.
+	return o.setShouldNotDelete(ctx, namespace)
 }
 
-func getObjList(proxy Proxy, typeMeta metav1.TypeMeta, selectors []client.ListOption, objList *unstructured.UnstructuredList) error {
-	c, err := proxy.NewClient()
+// fetchRef collects specified reference and adds to moved objects.
+func (o *objectGraph) fetchRef(ctx context.Context, opts wait.Backoff, ref *corev1.ObjectReference) (*unstructured.Unstructured, error) {
+	if ref == nil {
+		return nil, nil
+	}
+
+	var obj *unstructured.Unstructured
+
+	if err := retryWithExponentialBackoff(ctx, opts, func(ctx context.Context) error {
+		c, err := o.proxy.NewClient(ctx)
+		if err != nil {
+			return err
+		}
+
+		obj, err = external.Get(ctx, c, ref)
+		return err
+	}); err != nil {
+		return nil, errors.Wrapf(err, "failed to get referenced %q resource", ref.String())
+	}
+
+	if err := o.addObj(obj); err != nil {
+		return nil, errors.Wrapf(err, "failed to add obj (Kind=%s, Name=%s) to graph", obj.GetKind(), obj.GetName())
+	}
+
+	return obj, nil
+}
+
+func getObjList(ctx context.Context, proxy Proxy, typeMeta *metav1.TypeMeta, selectors []client.ListOption, objList client.ObjectList) error {
+	c, err := proxy.NewClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	objList.SetAPIVersion(typeMeta.APIVersion)
-	objList.SetKind(typeMeta.Kind)
+	if typeMeta != nil {
+		objList.GetObjectKind().SetGroupVersionKind(typeMeta.GroupVersionKind())
+	}
 
 	if err := c.List(ctx, objList, selectors...); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return errors.Wrapf(err, "failed to list %q resources", objList.GroupVersionKind())
+		return errors.Wrapf(err, "failed to list %q resources", objList.GetObjectKind().GroupVersionKind())
 	}
 	return nil
 }
@@ -502,6 +629,17 @@ func (o *objectGraph) getClusterClasses() []*node {
 		}
 	}
 	return clusterClasses
+}
+
+// getClusterResourceSetBinding returns the list of ClusterResourceSetBinding existing in the object graph.
+func (o *objectGraph) getClusterResourceSetBinding() []*node {
+	crs := []*node{}
+	for _, node := range o.uidToNode {
+		if node.identity.GroupVersionKind().GroupKind() == addonsv1.GroupVersion.WithKind("ClusterResourceSetBinding").GroupKind() {
+			crs = append(crs, node)
+		}
+	}
+	return crs
 }
 
 // getClusters returns the list of Secrets existing in the object graph.
@@ -585,15 +723,35 @@ func (o *objectGraph) setSoftOwnership() {
 	}
 
 	clusterClasses := o.getClusterClasses()
+
 	// Cluster that uses a ClusterClass are soft owned by that ClusterClass.
 	for _, clusterClass := range clusterClasses {
 		for _, cluster := range clusters {
-			// if the cluster uses a managed topoloy and uses the clusterclass
+			// if the cluster uses a managed topology and uses the clusterclass
 			// set the clusterclass as a soft owner of the cluster.
-			if className, ok := cluster.additionalInfo[clusterTopologyNameKey]; ok {
-				if className == clusterClass.identity.Name && clusterClass.identity.Namespace == cluster.identity.Namespace {
-					cluster.addSoftOwner(clusterClass)
-				}
+			className, hasName := cluster.additionalInfo[clusterTopologyNameKey]
+			classNamespace, hasNamespace := cluster.additionalInfo[clusterTopologyNamespaceKey]
+			if namespace, ok := classNamespace.(string); !hasNamespace || !ok {
+				classNamespace = cmp.Or(namespace, cluster.identity.Namespace)
+			}
+
+			if hasName && className == clusterClass.identity.Name && clusterClass.identity.Namespace == classNamespace {
+				cluster.addSoftOwner(clusterClass)
+			}
+		}
+	}
+
+	crsBindings := o.getClusterResourceSetBinding()
+	// ClusterResourceSetBinding that refers to a Cluster are soft owned by that Cluster.
+	for _, binding := range crsBindings {
+		clusterName, ok := binding.additionalInfo[clusterResourceSetBindingClusterNameKey]
+		if !ok {
+			continue
+		}
+
+		for _, cluster := range clusters {
+			if clusterName == cluster.identity.Name && binding.identity.Namespace == cluster.identity.Namespace {
+				binding.addSoftOwner(cluster)
 			}
 		}
 	}
@@ -604,18 +762,18 @@ func (o *objectGraph) setSoftOwnership() {
 func (o *objectGraph) setTenants() {
 	for _, node := range o.getNodes() {
 		if node.forceMoveHierarchy {
-			o.setTenant(node, node, node.isGlobal)
+			o.setTenantHierarchy(node, node, node.isGlobal)
 		}
 	}
 }
 
-// setTenant sets a tenant for a node and for its own dependents/sofDependents.
-func (o *objectGraph) setTenant(node, tenant *node, isGlobalHierarchy bool) {
+// setTenantHierarchy sets a tenant for a node and for its own dependents/softDependents.
+func (o *objectGraph) setTenantHierarchy(node, tenant *node, isGlobalHierarchy bool) {
 	node.tenant[tenant] = empty{}
 	node.isGlobalHierarchy = node.isGlobalHierarchy || isGlobalHierarchy
 	for _, other := range o.getNodes() {
 		if other.isOwnedBy(node) || other.isSoftOwnedBy(node) {
-			o.setTenant(other, tenant, isGlobalHierarchy)
+			o.setTenantHierarchy(other, tenant, isGlobalHierarchy)
 		}
 	}
 }
@@ -626,6 +784,71 @@ func (o *objectGraph) checkVirtualNode() {
 	for _, node := range o.uidToNode {
 		if node.virtual {
 			log.V(5).Info("Object won't be moved because it's not included in GVK considered for move", "kind", node.identity.Kind, "name", node.identity.Name)
+		}
+	}
+}
+
+// Ensure objects which are referenced across namespaces are not deleted.
+func (o *objectGraph) setShouldNotDelete(ctx context.Context, namespace string) error {
+	if namespace == "" {
+		return nil
+	}
+
+	// If there are ClusterClasses outside of the namespace being moved, those CC should not be deleted (we are moving a namespace).
+	for _, class := range o.getClusterClasses() {
+		if class.identity.Namespace != namespace {
+			class.shouldNotDelete = true
+			// Ensure that also the templates referenced by the CC won't be deleted.
+			o.setShouldNotDeleteHierarchy(class)
+		}
+	}
+
+	// If there are clusters outside of the namespace being moved and referencing one of ClusterClass in the namespace being moved,
+	// ensure those ClusterClass are not deleted.
+	discoveryBackoff := newReadBackoff()
+	allClusters := &clusterv1.ClusterList{}
+	if err := retryWithExponentialBackoff(ctx, discoveryBackoff, func(ctx context.Context) error {
+		return getObjList(ctx, o.proxy, nil, []client.ListOption{}, allClusters)
+	}); err != nil {
+		return err
+	}
+
+	for _, cluster := range allClusters.Items {
+		// ignore cluster in the namespace being moved.
+		if cluster.Namespace == namespace {
+			continue
+		}
+
+		// ignore cluster not using a CC.
+		if !cluster.Spec.Topology.IsDefined() {
+			continue
+		}
+
+		// ignore cluster not referencing a CC in the namespace being moved.
+		if cluster.Spec.Topology.ClassRef.Namespace != namespace {
+			continue
+		}
+
+		// Otherwise mark the referenced CC as should not be deleted.
+		for _, class := range o.getClusterClasses() {
+			if class.identity.Namespace == cluster.Spec.Topology.ClassRef.Namespace && class.identity.Name == cluster.Spec.Topology.ClassRef.Name {
+				class.shouldNotDelete = true
+				// Ensure that also the templates referenced by the CC won't be deleted.
+				o.setShouldNotDeleteHierarchy(class)
+			}
+		}
+	}
+
+	return nil
+}
+
+// setShouldNotDeleteHierarchy sets should not delete for a node and for its own dependents/softDependents.
+func (o *objectGraph) setShouldNotDeleteHierarchy(node *node) {
+	node.shouldNotDelete = true
+	for _, other := range o.getNodes() {
+		// Skip removal only for direct owners from the object namespace
+		if other.isOwnedBy(node) {
+			o.setShouldNotDeleteHierarchy(other)
 		}
 	}
 }
