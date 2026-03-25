@@ -1,15 +1,38 @@
-![cobra logo](https://cloud.githubusercontent.com/assets/173412/10886352/ad566232-814f-11e5-9cd0-aa101788c117.png)
-
-Cobra is both a library for creating powerful modern CLI applications as well as a program to generate applications and command files.
+<div align="center">
+<a href="https://cobra.dev">
+<img width="512" height="535" alt="cobra-logo" src="https://github.com/user-attachments/assets/c8bf9aad-b5ae-41d3-8899-d83baec10af8" />
+</a>
+</div>
 
 Cobra is used in many Go projects such as [Kubernetes](http://kubernetes.io/),
 [Hugo](https://gohugo.io), and [Github CLI](https://github.com/cli/cli) to
 name a few. [This list](./projects_using_cobra.md) contains a more extensive list of projects using Cobra.
 
-[![](https://img.shields.io/github/workflow/status/spf13/cobra/Test?longCache=tru&label=Test&logo=github%20actions&logoColor=fff)](https://github.com/spf13/cobra/actions?query=workflow%3ATest)
-[![GoDoc](https://godoc.org/github.com/spf13/cobra?status.svg)](https://godoc.org/github.com/spf13/cobra)
+<a href="https://cobra.dev">Visit Cobra.dev for extensive documentation</a> 
+
+
+Cobra is used in many Go projects such as [Kubernetes](https://kubernetes.io/),
+[Hugo](https://gohugo.io), and [GitHub CLI](https://github.com/cli/cli) to
+name a few. [This list](site/content/projects_using_cobra.md) contains a more extensive list of projects using Cobra.
+
+[![](https://img.shields.io/github/actions/workflow/status/spf13/cobra/test.yml?branch=main&longCache=true&label=Test&logo=github%20actions&logoColor=fff)](https://github.com/spf13/cobra/actions?query=workflow%3ATest)
+[![Go Reference](https://pkg.go.dev/badge/github.com/spf13/cobra.svg)](https://pkg.go.dev/github.com/spf13/cobra)
 [![Go Report Card](https://goreportcard.com/badge/github.com/spf13/cobra)](https://goreportcard.com/report/github.com/spf13/cobra)
 [![Slack](https://img.shields.io/badge/Slack-cobra-brightgreen)](https://gophers.slack.com/archives/CD3LP1199)
+<hr>
+<div align="center" markdown="1">
+   <sup>Supported by:</sup>
+   <br>
+   <br>
+   <a href="https://www.warp.dev/cobra">
+      <img alt="Warp sponsorship" width="400" src="https://github.com/user-attachments/assets/ab8dd143-b0fd-4904-bdc5-dd7ecac94eae">
+   </a>
+
+### [Warp, the AI terminal for devs](https://www.warp.dev/cobra)
+[Try Cobra in Warp today](https://www.warp.dev/cobra)<br>
+
+</div>
+<hr>
 
 # Table of Contents
 
