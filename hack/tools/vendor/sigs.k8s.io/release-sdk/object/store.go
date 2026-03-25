@@ -17,9 +17,13 @@ limitations under the License.
 package object
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -generate
+//go:generate /usr/bin/env bash -c "cat ../scripts/boilerplate/boilerplate.generatego.txt objectfakes/fake_store.go > objectfakes/_fake_store.go && mv objectfakes/_fake_store.go objectfakes/fake_store.go"
 
-//counterfeiter:generate . Store
 // Store is an interface modeling supported filestore operations
+//
+// Store is an interface modeling supported filestore operations
+//
+//counterfeiter:generate . Store
 type Store interface {
 	// Configure options
 	SetOptions(opts ...OptFn)
@@ -39,7 +43,7 @@ type Store interface {
 
 	// TODO: Overly specific. We should only care these methods during a release.
 	GetReleasePath(bucket, gcsRoot, version string, fast bool) (string, error)
-	GetMarkerPath(bucket, gcsRoot string) (string, error)
+	GetMarkerPath(bucket, gcsRoot string, fast bool) (string, error)
 }
 
 type OptFn func(Store)
