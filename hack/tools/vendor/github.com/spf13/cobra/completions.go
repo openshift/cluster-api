@@ -93,6 +93,34 @@ type CompletionOptions struct {
 	// DisableDescriptions turns off all completion descriptions for shells
 	// that support them
 	DisableDescriptions bool
+	// HiddenDefaultCmd makes the default 'completion' command hidden
+	HiddenDefaultCmd bool
+	// DefaultShellCompDirective sets the ShellCompDirective that is returned
+	// if no special directive can be determined
+	DefaultShellCompDirective *ShellCompDirective
+}
+
+func (receiver *CompletionOptions) SetDefaultShellCompDirective(directive ShellCompDirective) {
+	receiver.DefaultShellCompDirective = &directive
+}
+
+// Completion is a string that can be used for completions
+//
+// two formats are supported:
+//   - the completion choice
+//   - the completion choice with a textual description (separated by a TAB).
+//
+// [CompletionWithDesc] can be used to create a completion string with a textual description.
+//
+// Note: Go type alias is used to provide a more descriptive name in the documentation, but any string can be used.
+type Completion = string
+
+// CompletionFunc is a function that provides completion results.
+type CompletionFunc = func(cmd *Command, args []string, toComplete string) ([]Completion, ShellCompDirective)
+
+// CompletionWithDesc returns a [Completion] with a description by using the TAB delimited format.
+func CompletionWithDesc(choice string, description string) Completion {
+	return choice + "\t" + description
 }
 
 // NoFileCompletions can be used to disable file completion for commands that should
@@ -261,8 +289,8 @@ func (c *Command) getCompletions(args []string) (*Command, []string, ShellCompDi
 	// Error while attempting to parse flags
 	if flagErr != nil {
 		// If error type is flagCompError and we don't want flagCompletion we should ignore the error
-		if _, ok := flagErr.(*flagCompError); !(ok && !flagCompletion) {
-			return finalCmd, []string{}, ShellCompDirectiveDefault, flagErr
+		if _, ok := flagErr.(*flagCompError); !ok || flagCompletion {
+			return finalCmd, []Completion{}, ShellCompDirectiveDefault, flagErr
 		}
 	}
 
@@ -331,11 +359,36 @@ func (c *Command) getCompletions(args []string) (*Command, []string, ShellCompDi
 		return finalCmd, completions, directive, nil
 	}
 
-	// We only remove the flags from the arguments if DisableFlagParsing is not set.
-	// This is important for commands which have requested to do their own flag completion.
-	if !finalCmd.DisableFlagParsing {
-		finalArgs = finalCmd.Flags().Args()
-	}
+		if !finalCmd.DisableFlagParsing {
+			// If DisableFlagParsing==false, we have completed the flags as known by Cobra;
+			// we can return what we found.
+			// If DisableFlagParsing==true, Cobra may not be aware of all flags, so we
+			// let the logic continue to see if ValidArgsFunction needs to be called.
+			return finalCmd, completions, directive, nil
+		}
+	} else {
+		directive = ShellCompDirectiveDefault
+		// check current and parent commands for a custom DefaultShellCompDirective
+		for cmd := finalCmd; cmd != nil; cmd = cmd.parent {
+			if cmd.CompletionOptions.DefaultShellCompDirective != nil {
+				directive = *cmd.CompletionOptions.DefaultShellCompDirective
+				break
+			}
+		}
+
+		if flag == nil {
+			foundLocalNonPersistentFlag := false
+			// If TraverseChildren is true on the root command we don't check for
+			// local flags because we can use a local flag on a parent command
+			if !finalCmd.Root().TraverseChildren {
+				// Check if there are any local, non-persistent flags on the command-line
+				localNonPersistentFlags := finalCmd.LocalNonPersistentFlags()
+				finalCmd.NonInheritedFlags().VisitAll(func(flag *pflag.Flag) {
+					if localNonPersistentFlags.Lookup(flag.Name) != nil && flag.Changed {
+						foundLocalNonPersistentFlag = true
+					}
+				})
+			}
 
 	var completions []string
 	directive := ShellCompDirectiveDefault
@@ -598,6 +651,22 @@ See each sub-command's help for details on how to use the generated script.
 		ValidArgsFunction: NoFileCompletions,
 	}
 	c.AddCommand(completionCmd)
+
+	if !hasSubCommands {
+		// If the 'completion' command will be the only sub-command,
+		// we only create it if it is actually being called.
+		// This avoids breaking programs that would suddenly find themselves with
+		// a subcommand, which would prevent them from accepting arguments.
+		// We also create the 'completion' command if the user is triggering
+		// shell completion for it (prog __complete completion '')
+		subCmd, cmdArgs, err := c.Find(args)
+		if err != nil || subCmd.Name() != compCmdName &&
+			(subCmd.Name() != ShellCompRequestCmd || len(cmdArgs) <= 1 || cmdArgs[0] != compCmdName) {
+			// The completion command is not being called or being completed so we remove it.
+			c.RemoveCommand(completionCmd)
+			return
+		}
+	}
 
 	out := c.OutOrStdout()
 	noDesc := c.CompletionOptions.DisableDescriptions
