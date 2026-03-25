@@ -70,7 +70,7 @@ func TestControlPlane(t *testing.T) {
 		g.Expect(got).ToNot(BeNil())
 		g.Expect(*got).To(BeTrue())
 
-		g.Expect(ControlPlane().Initialized("v1beta1").Path()).To(Equal(Path{"status", "ready"}))
+		g.Expect(ControlPlane().Initialized("v1beta1").Path()).To(Equal(Path{"status", "initialized"}))
 
 		objV1beta1 := &unstructured.Unstructured{Object: map[string]interface{}{}}
 		err = ControlPlane().Initialized("v1beta1").Set(objV1beta1, true)
@@ -485,6 +485,169 @@ func TestControlPlane(t *testing.T) {
 		g.Expect(got).ToNot(BeNil())
 		g.Expect(got).To(BeComparableTo(readinessGates))
 	})
+}
+
+func TestControlPlaneEndpoints(t *testing.T) {
+	tests := []struct {
+		name         string
+		controlPlane *unstructured.Unstructured
+		want         []Path
+		expectErr    bool
+	}{
+		{
+			name: "No ignore paths when controlPlaneEndpoint is not set",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"server": "1.2.3.4",
+					},
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "No ignore paths when controlPlaneEndpoint is nil",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": nil,
+					},
+				},
+			},
+
+			want: nil,
+		},
+		{
+			name: "No ignore paths when controlPlaneEndpoint is an empty object",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{},
+					},
+				},
+			},
+
+			want: nil,
+		},
+		{
+			name: "Don't ignore host when controlPlaneEndpoint.host is set",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{
+							"host": "example.com",
+						},
+					},
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "Ignore host when controlPlaneEndpoint.host is set to its zero value",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{
+							"host": "",
+						},
+					},
+				},
+			},
+			want: []Path{
+				{"spec", "controlPlaneEndpoint", "host"},
+			},
+		},
+		{
+			name: "Don't ignore port when controlPlaneEndpoint.port is set",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{
+							"port": int64(6443),
+						},
+					},
+				},
+			},
+
+			want: nil,
+		},
+		{
+			name: "Ignore port when controlPlaneEndpoint.port is set to its zero value",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{
+							"port": int64(0),
+						},
+					},
+				},
+			},
+			want: []Path{
+				{"spec", "controlPlaneEndpoint", "port"},
+			},
+		},
+		{
+			name: "Ignore host and port when controlPlaneEndpoint host and port are set to their zero values",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{
+							"host": "",
+							"port": int64(0),
+						},
+					},
+				},
+			},
+			want: []Path{
+				{"spec", "controlPlaneEndpoint", "host"},
+				{"spec", "controlPlaneEndpoint", "port"},
+			},
+		},
+		{
+			name: "Ignore host when controlPlaneEndpoint host is to its zero values, even if port is set",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{
+							"host": "",
+							"port": int64(6443),
+						},
+					},
+				},
+			},
+			want: []Path{
+				{"spec", "controlPlaneEndpoint", "host"},
+			},
+		},
+		{
+			name: "Ignore port when controlPlaneEndpoint port is to its zero values, even if host is set",
+			controlPlane: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"controlPlaneEndpoint": map[string]interface{}{
+							"host": "example.com",
+							"port": int64(0),
+						},
+					},
+				},
+			},
+			want: []Path{
+				{"spec", "controlPlaneEndpoint", "port"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			got, err := InfrastructureCluster().IgnorePaths(tt.controlPlane)
+			if tt.expectErr {
+				g.Expect(err).To(HaveOccurred())
+				return
+			}
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(got).To(Equal(tt.want))
+		})
+	}
 }
 
 func TestControlPlaneIsUpgrading(t *testing.T) {

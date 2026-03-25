@@ -279,7 +279,7 @@ well with practices like unit testing and generally makes the entire system more
 
 ### Error messages
 
-RuntimeExtension authors should be aware that error messages are surfaced as a conditions in Kubernetes resources
+RuntimeExtension authors should be aware that error messages are surfaced as conditions in Kubernetes resources
 and recorded in Cluster API controller's logs. As a consequence:
 
 - Error message must not contain any sensitive information.
@@ -304,7 +304,7 @@ created, the extension will detect the associated service and discover the assoc
 check the status of the ExtensionConfig. Below is an example of `ExtensionConfig` -
 
 ```yaml
-apiVersion: runtime.cluster.x-k8s.io/v1alpha1
+apiVersion: runtime.cluster.x-k8s.io/v1beta2
 kind: ExtensionConfig
 metadata:
   annotations:

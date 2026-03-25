@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
 	"sigs.k8s.io/cluster-api/feature"
@@ -232,6 +233,7 @@ func TestClusterClassValidation(t *testing.T) {
 						WithBootstrapTemplate(
 							builder.BootstrapTemplate(metav1.NamespaceDefault, "bootstrap1").Build()).
 						Build()).
+				WithVersions("v1.31.0", "v1.32.0").
 				Build(),
 			expectErr: false,
 		},
@@ -699,6 +701,13 @@ func TestClusterClassValidation(t *testing.T) {
 								TimeoutSeconds: ptr.To(int32(5 * 60)),
 							},
 						},
+						UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+							{
+								Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+								Status:         metav1.ConditionUnknown,
+								TimeoutSeconds: ptr.To(int32(5 * 60)),
+							},
+						},
 						NodeStartupTimeoutSeconds: ptr.To(int32(60)),
 					},
 				}).
@@ -763,6 +772,13 @@ func TestClusterClassValidation(t *testing.T) {
 										TimeoutSeconds: ptr.To(int32(5 * 60)),
 									},
 								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status:         metav1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
 								NodeStartupTimeoutSeconds: ptr.To(int32(60)),
 							},
 						}).
@@ -793,6 +809,13 @@ func TestClusterClassValidation(t *testing.T) {
 									},
 								},
 								// nodeStartupTimeout is too short here.
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status:         metav1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
 								NodeStartupTimeoutSeconds: ptr.To(int32(10)),
 							},
 						}).
@@ -1686,6 +1709,113 @@ func TestClusterClassValidation(t *testing.T) {
 				Build(),
 			expectErr: false,
 		},
+
+		// Versions tests
+		{
+			name: "fails with invalid versions",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithVersions("foo").
+				Build(),
+			expectErr: true,
+		},
+		{
+			name: "fails with versions in the wrong order",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithVersions("v1.32.0", "v1.31.0").
+				Build(),
+			expectErr: true,
+		},
+		{
+			name: "fails when version skip minors",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithVersions("v1.31.0", "v1.33.0").
+				Build(),
+			expectErr: true,
+		},
+		{
+			name: "pass with pre-release version",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithVersions("v1.31.0-alpha.0", "v1.32.0-alpha.0").
+				Build(),
+			expectErr: false,
+		},
+		{
+			name: "fails with pre-release version in the wrong order",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithVersions("v1.31.0-alpha.1", "v1.31.0-alpha.0").
+				Build(),
+			expectErr: true,
+		},
+		{
+			name: "pass with build metadata version",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithVersions("v1.31.0+foo.1-bar.1", "v1.32.0+foo.1-bar.1").
+				Build(),
+			expectErr: false,
+		},
+		{
+			name: "pass with pre-release version in the wrong order (build metadata cannot be sorted!)",
+			in: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "infra1").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").
+						Build()).
+				WithControlPlaneInfrastructureMachineTemplate(
+					builder.InfrastructureMachineTemplate(metav1.NamespaceDefault, "cpInfra1").
+						Build()).
+				WithVersions("v1.31.0+foo.2-bar.1", "v1.31.0+foo.1-bar.1").
+				Build(),
+			expectErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2105,6 +2235,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 								TimeoutSeconds: ptr.To(int32(5 * 60)),
 							},
 						},
+						UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+							{
+								Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+								Status:         metav1.ConditionUnknown,
+								TimeoutSeconds: ptr.To(int32(5 * 60)),
+							},
+						},
 					},
 				}).
 				Build(),
@@ -2141,6 +2278,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 								TimeoutSeconds: ptr.To(int32(5 * 60)),
 							},
 						},
+						UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+							{
+								Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+								Status:         metav1.ConditionUnknown,
+								TimeoutSeconds: ptr.To(int32(5 * 60)),
+							},
+						},
 					},
 				}).
 				Build(),
@@ -2169,6 +2313,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 										TimeoutSeconds: ptr.To(int32(5 * 60)),
 									},
 								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status:         metav1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
 							},
 						}).
 						Build()).
@@ -2186,6 +2337,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 							{
 								Type:           corev1.NodeReady,
 								Status:         corev1.ConditionUnknown,
+								TimeoutSeconds: ptr.To(int32(5 * 60)),
+							},
+						},
+						UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+							{
+								Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+								Status:         metav1.ConditionUnknown,
 								TimeoutSeconds: ptr.To(int32(5 * 60)),
 							},
 						},
@@ -2234,6 +2392,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 									{
 										Type:           corev1.NodeReady,
 										Status:         corev1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status:         metav1.ConditionUnknown,
 										TimeoutSeconds: ptr.To(int32(5 * 60)),
 									},
 								},
@@ -2292,6 +2457,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 										TimeoutSeconds: ptr.To(int32(5 * 60)),
 									},
 								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status:         metav1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
 							},
 						}).
 						Build(),
@@ -2332,6 +2504,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 											TimeoutSeconds: ptr.To(int32(5 * 60)),
 										},
 									},
+									UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+										{
+											Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+											Status:         metav1.ConditionUnknown,
+											TimeoutSeconds: ptr.To(int32(5 * 60)),
+										},
+									},
 								},
 							}).
 							Build()).
@@ -2359,6 +2538,13 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 										TimeoutSeconds: ptr.To(int32(5 * 60)),
 									},
 								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status:         metav1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
 							},
 						}).
 						Build(),
@@ -2380,6 +2566,102 @@ func TestClusterClassValidationWithClusterAwareChecks(t *testing.T) {
 				).
 				Build(),
 			expectErr: false,
+		},
+		{
+			name: "pass if ClusterClass does not contain any kubernetes version",
+			clusters: []client.Object{
+				builder.Cluster(metav1.NamespaceDefault, "cluster1").
+					WithLabels(map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""}).
+					WithTopology(
+						builder.ClusterTopology().
+							WithClass("class1").
+							WithVersion("v1.33.0").
+							Build()).
+					Build(),
+			},
+			oldClusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "inf").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").Build()).
+				Build(),
+			newClusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "inf").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").Build()).
+				Build(),
+			expectErr: false,
+		},
+		{
+			name: "pass if ClusterClass contains cluster's kubernetes version",
+			clusters: []client.Object{
+				builder.Cluster(metav1.NamespaceDefault, "cluster1").
+					WithLabels(map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""}).
+					WithTopology(
+						builder.ClusterTopology().
+							WithClass("class1").
+							WithVersion("v1.33.0").
+							Build()).
+					Build(),
+				builder.Cluster(metav1.NamespaceDefault, "cluster2").
+					WithLabels(map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""}).
+					WithTopology(
+						builder.ClusterTopology().
+							WithClass("class1").
+							WithVersion("v1.34.0").
+							Build()).
+					Build(),
+			},
+			oldClusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "inf").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").Build()).
+				Build(),
+			newClusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "inf").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").Build()).
+				WithVersions("v1.32.0", "v1.33.0", "v1.34.0").
+				Build(),
+			expectErr: false,
+		},
+		{
+			name: "fail if ClusterClass does not contains all of cluster's kubernetes version",
+			clusters: []client.Object{
+				builder.Cluster(metav1.NamespaceDefault, "cluster1").
+					WithLabels(map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""}).
+					WithTopology(
+						builder.ClusterTopology().
+							WithClass("class1").
+							WithVersion("v1.33.0").
+							Build()).
+					Build(),
+				builder.Cluster(metav1.NamespaceDefault, "cluster2").
+					WithLabels(map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""}).
+					WithTopology(
+						builder.ClusterTopology().
+							WithClass("class1").
+							WithVersion("v1.34.0").
+							Build()).
+					Build(),
+			},
+			oldClusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "inf").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").Build()).
+				Build(),
+			newClusterClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(
+					builder.InfrastructureClusterTemplate(metav1.NamespaceDefault, "inf").Build()).
+				WithControlPlaneTemplate(
+					builder.ControlPlaneTemplate(metav1.NamespaceDefault, "cp1").Build()).
+				WithVersions("v1.32.0", "v1.33.0").
+				Build(),
+			expectErr: true,
 		},
 	}
 

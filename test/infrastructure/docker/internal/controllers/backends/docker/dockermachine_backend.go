@@ -36,7 +36,6 @@ import (
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
-	utilexp "sigs.k8s.io/cluster-api/exp/util"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
 	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/docker"
@@ -85,7 +84,7 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 	var version string
 
 	if labels.IsMachinePoolOwned(dockerMachine) {
-		machinePool, err := utilexp.GetMachinePoolByLabels(ctx, r.Client, dockerMachine.GetNamespace(), dockerMachine.Labels)
+		machinePool, err := util.GetMachinePoolByLabels(ctx, r.Client, dockerMachine.GetNamespace(), dockerMachine.Labels)
 		if err != nil {
 			return ctrl.Result{}, errors.Wrapf(err, "failed to get machine pool for DockerMachine %s/%s", dockerMachine.GetNamespace(), dockerMachine.GetName())
 		}
@@ -300,6 +299,17 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 					}
 				}
 			}()
+
+			if err := externalMachine.WaitForMultiUserTarget(timeoutCtx, r.ContainerRuntime); err != nil {
+				v1beta1conditions.MarkFalse(dockerMachine, infrav1.BootstrapExecSucceededV1Beta1Condition, infrav1.BootstrapFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "Waiting for multi-user target: %s", err.Error())
+				conditions.Set(dockerMachine, metav1.Condition{
+					Type:    infrav1.DevMachineDockerContainerBootstrapExecSucceededCondition,
+					Status:  metav1.ConditionFalse,
+					Reason:  infrav1.DevMachineDockerContainerBootstrapExecWaitingForMultiUserTargetReason,
+					Message: fmt.Sprintf("Waiting for multi-user target: %s", err.Error()),
+				})
+				return ctrl.Result{}, errors.Wrap(err, "waiting for multi-user target")
+			}
 
 			// Run the bootstrap script. Simulates cloud-init/Ignition.
 			if err := externalMachine.ExecBootstrap(timeoutCtx, bootstrapData, format, version, dockerMachine.Spec.Backend.Docker.CustomImage); err != nil {

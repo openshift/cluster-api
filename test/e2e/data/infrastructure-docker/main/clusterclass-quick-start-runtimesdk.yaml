@@ -57,6 +57,9 @@ spec:
       generatePatchesExtension: generate-patches.${EXTENSION_CONFIG_NAME:-k8s-upgrade-with-runtimesdk}
       validateTopologyExtension: validate-topology.${EXTENSION_CONFIG_NAME:-k8s-upgrade-with-runtimesdk}
       discoverVariablesExtension: discover-variables.${EXTENSION_CONFIG_NAME:-k8s-upgrade-with-runtimesdk}
+  upgrade:
+    external:
+      generateUpgradePlanExtension: generate-upgrade-plan.${EXTENSION_CONFIG_NAME:-k8s-upgrade-with-runtimesdk}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: DockerClusterTemplate
@@ -99,6 +102,7 @@ spec:
           apiServer:
             # host.docker.internal is required by kubetest when running on MacOS because of the way ports are proxied.
             certSANs: [localhost, 127.0.0.1, 0.0.0.0, host.docker.internal]
+          encryptionAlgorithm: "RSA-4096"
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: DockerMachineTemplate

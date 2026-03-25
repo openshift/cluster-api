@@ -31,12 +31,15 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/desiredstate"
 	"sigs.k8s.io/cluster-api/feature"
+	capicontrollerutil "sigs.k8s.io/cluster-api/internal/util/controller"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
 )
@@ -88,7 +91,7 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 	g.Expect(env.GetAPIReader().List(ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
 	g.Expect(machineList.Items).To(HaveLen(1))
 
-	res, err := collections.GetFilteredMachinesForCluster(ctx, env.GetAPIReader(), cluster, collections.OwnedMachines(kcp))
+	res, err := collections.GetFilteredMachinesForCluster(ctx, env.GetAPIReader(), cluster, collections.OwnedMachines(kcp, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane").GroupKind()))
 	g.Expect(res).To(HaveLen(1))
 	g.Expect(err).ToNot(HaveOccurred())
 
@@ -106,7 +109,7 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 	kubeadmConfig := &bootstrapv1.KubeadmConfig{}
 	bootstrapRef := machineList.Items[0].Spec.Bootstrap.ConfigRef
 	g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: machineList.Items[0].Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
-	g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{internal.ControlPlaneKubeletLocalMode: true}))
+	g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{desiredstate.ControlPlaneKubeletLocalMode: true}))
 }
 
 func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
@@ -174,7 +177,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		kubeadmConfig := &bootstrapv1.KubeadmConfig{}
 		bootstrapRef := controlPlaneMachines.Items[0].Spec.Bootstrap.ConfigRef
 		g.Expect(env.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: controlPlaneMachines.Items[0].Namespace, Name: bootstrapRef.Name}, kubeadmConfig)).To(Succeed())
-		g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{internal.ControlPlaneKubeletLocalMode: true}))
+		g.Expect(kubeadmConfig.Spec.ClusterConfiguration.FeatureGates).To(BeComparableTo(map[string]bool{desiredstate.ControlPlaneKubeletLocalMode: true}))
 	})
 	t.Run("does not create a control plane Machine if preflight checks fail", func(t *testing.T) {
 		setup := func(t *testing.T, g *WithT) *corev1.Namespace {
@@ -217,9 +220,12 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 			Workload: &fakeWorkloadCluster{},
 		}
 
+		fc := capicontrollerutil.NewFakeController()
+
 		r := &KubeadmControlPlaneReconciler{
 			Client:                    env,
 			SecretCachingClient:       secretCachingClient,
+			controller:                fc,
 			managementCluster:         fmc,
 			managementClusterUncached: fmc,
 			recorder:                  record.NewFakeRecorder(32),
@@ -232,6 +238,10 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		result, err := r.scaleUpControlPlane(context.Background(), controlPlane)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(result).To(BeComparableTo(ctrl.Result{RequeueAfter: preflightFailedRequeueAfter}))
+		g.Expect(fc.Deferrals).To(HaveKeyWithValue(
+			reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kcp)},
+			BeTemporally("~", time.Now().Add(5*time.Second), 1*time.Second)),
+		)
 
 		// scaleUpControlPlane is never called due to health check failure and new machine is not created to scale up.
 		controlPlaneMachines := &clusterv1.MachineList{}
@@ -283,7 +293,9 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 		}
 		controlPlane.InjectTestManagementCluster(r.managementCluster)
 
-		result, err := r.scaleDownControlPlane(context.Background(), controlPlane, controlPlane.Machines)
+		machineToDelete, err := selectMachineForInPlaceUpdateOrScaleDown(ctx, controlPlane, controlPlane.Machines)
+		g.Expect(err).ToNot(HaveOccurred())
+		result, err := r.scaleDownControlPlane(context.Background(), controlPlane, machineToDelete)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(result).To(BeComparableTo(ctrl.Result{Requeue: true}))
 
@@ -325,7 +337,9 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 		}
 		controlPlane.InjectTestManagementCluster(r.managementCluster)
 
-		result, err := r.scaleDownControlPlane(context.Background(), controlPlane, controlPlane.Machines)
+		machineToDelete, err := selectMachineForInPlaceUpdateOrScaleDown(ctx, controlPlane, controlPlane.Machines)
+		g.Expect(err).ToNot(HaveOccurred())
+		result, err := r.scaleDownControlPlane(context.Background(), controlPlane, machineToDelete)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(result).To(BeComparableTo(ctrl.Result{Requeue: true}))
 
@@ -345,10 +359,13 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 		setMachineHealthy(machines["three"])
 		fakeClient := newFakeClient(machines["one"], machines["two"], machines["three"])
 
+		fc := capicontrollerutil.NewFakeController()
+
 		r := &KubeadmControlPlaneReconciler{
 			recorder:            record.NewFakeRecorder(32),
 			Client:              fakeClient,
 			SecretCachingClient: fakeClient,
+			controller:          fc,
 			managementCluster: &fakeManagementCluster{
 				Workload: &fakeWorkloadCluster{},
 			},
@@ -363,9 +380,15 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 		}
 		controlPlane.InjectTestManagementCluster(r.managementCluster)
 
-		result, err := r.scaleDownControlPlane(context.Background(), controlPlane, controlPlane.Machines)
+		machineToDelete, err := selectMachineForInPlaceUpdateOrScaleDown(ctx, controlPlane, controlPlane.Machines)
+		g.Expect(err).ToNot(HaveOccurred())
+		result, err := r.scaleDownControlPlane(context.Background(), controlPlane, machineToDelete)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(result).To(BeComparableTo(ctrl.Result{RequeueAfter: preflightFailedRequeueAfter}))
+		g.Expect(fc.Deferrals).To(HaveKeyWithValue(
+			reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kcp)},
+			BeTemporally("~", time.Now().Add(5*time.Second), 1*time.Second)),
+		)
 
 		controlPlaneMachines := clusterv1.MachineList{}
 		g.Expect(fakeClient.List(context.Background(), &controlPlaneMachines)).To(Succeed())
@@ -373,7 +396,7 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 	})
 }
 
-func TestSelectMachineForScaleDown(t *testing.T) {
+func TestSelectMachineForInPlaceUpdateOrScaleDown(t *testing.T) {
 	kcp := controlplanev1.KubeadmControlPlane{
 		Spec: controlplanev1.KubeadmControlPlaneSpec{},
 	}
@@ -502,7 +525,7 @@ func TestSelectMachineForScaleDown(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			selectedMachine, err := selectMachineForScaleDown(ctx, tc.cp, tc.outDatedMachines)
+			selectedMachine, err := selectMachineForInPlaceUpdateOrScaleDown(ctx, tc.cp, tc.outDatedMachines)
 
 			if tc.expectErr {
 				g.Expect(err).To(HaveOccurred())
@@ -518,12 +541,13 @@ func TestSelectMachineForScaleDown(t *testing.T) {
 func TestPreflightChecks(t *testing.T) {
 	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 	testCases := []struct {
-		name            string
-		cluster         *clusterv1.Cluster
-		kcp             *controlplanev1.KubeadmControlPlane
-		machines        []*clusterv1.Machine
-		expectResult    ctrl.Result
-		expectPreflight internal.PreflightCheckResults
+		name                     string
+		cluster                  *clusterv1.Cluster
+		kcp                      *controlplanev1.KubeadmControlPlane
+		machines                 []*clusterv1.Machine
+		expectResult             ctrl.Result
+		expectPreflight          internal.PreflightCheckResults
+		expectDeferNextReconcile time.Duration
 	}{
 		{
 			name:         "control plane without machines (not initialized) should pass",
@@ -561,6 +585,39 @@ func TestPreflightChecks(t *testing.T) {
 				EtcdClusterNotHealthy:            false,
 				TopologyVersionMismatch:          true,
 			},
+			expectDeferNextReconcile: 5 * time.Second,
+		},
+		{
+			name: "control plane with a pending upgrade, but not yet at the current step of the upgrade plan, should requeue",
+			cluster: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						clusterv1.ClusterTopologyUpgradeStepAnnotation: "v1.32.0",
+					},
+				},
+				Spec: clusterv1.ClusterSpec{
+					Topology: clusterv1.Topology{
+						Version: "v1.33.0",
+					},
+				},
+			},
+			kcp: &controlplanev1.KubeadmControlPlane{
+				Spec: controlplanev1.KubeadmControlPlaneSpec{
+					Version: "v1.31.0",
+				},
+			},
+			machines: []*clusterv1.Machine{
+				{},
+			},
+
+			expectResult: ctrl.Result{RequeueAfter: preflightFailedRequeueAfter},
+			expectPreflight: internal.PreflightCheckResults{
+				HasDeletingMachine:               false,
+				ControlPlaneComponentsNotHealthy: false,
+				EtcdClusterNotHealthy:            false,
+				TopologyVersionMismatch:          true,
+			},
+			expectDeferNextReconcile: 5 * time.Second,
 		},
 		{
 			name: "control plane with a deleting machine should requeue",
@@ -579,6 +636,7 @@ func TestPreflightChecks(t *testing.T) {
 				EtcdClusterNotHealthy:            false,
 				TopologyVersionMismatch:          false,
 			},
+			expectDeferNextReconcile: 5 * time.Second,
 		},
 		{
 			name: "control plane without a nodeRef should requeue",
@@ -598,6 +656,7 @@ func TestPreflightChecks(t *testing.T) {
 				EtcdClusterNotHealthy:            true,
 				TopologyVersionMismatch:          false,
 			},
+			expectDeferNextReconcile: 5 * time.Second,
 		},
 		{
 			name: "control plane with an unhealthy machine condition should requeue",
@@ -625,6 +684,7 @@ func TestPreflightChecks(t *testing.T) {
 				EtcdClusterNotHealthy:            false,
 				TopologyVersionMismatch:          false,
 			},
+			expectDeferNextReconcile: 5 * time.Second,
 		},
 		{
 			name: "control plane with an unhealthy machine condition should requeue",
@@ -652,6 +712,7 @@ func TestPreflightChecks(t *testing.T) {
 				EtcdClusterNotHealthy:            true,
 				TopologyVersionMismatch:          false,
 			},
+			expectDeferNextReconcile: 5 * time.Second,
 		},
 		{
 			name: "control plane with an healthy machine and an healthy kcp condition should pass",
@@ -687,14 +748,66 @@ func TestPreflightChecks(t *testing.T) {
 				TopologyVersionMismatch:          false,
 			},
 		},
+		{
+			name: "control plane with a pending upgrade, but already at the current step of the upgrade plan, should pass",
+			cluster: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						clusterv1.ClusterTopologyUpgradeStepAnnotation: "v1.32.0",
+					},
+				},
+				Spec: clusterv1.ClusterSpec{
+					Topology: clusterv1.Topology{
+						Version: "v1.33.0",
+					},
+				},
+			},
+			kcp: &controlplanev1.KubeadmControlPlane{
+				Spec: controlplanev1.KubeadmControlPlaneSpec{
+					Version: "v1.32.0",
+				}, Status: controlplanev1.KubeadmControlPlaneStatus{
+					Conditions: []metav1.Condition{
+						{Type: controlplanev1.KubeadmControlPlaneControlPlaneComponentsHealthyCondition, Status: metav1.ConditionTrue},
+						{Type: controlplanev1.KubeadmControlPlaneEtcdClusterHealthyCondition, Status: metav1.ConditionTrue},
+					},
+				},
+			},
+			machines: []*clusterv1.Machine{
+				{
+					Status: clusterv1.MachineStatus{
+						NodeRef: clusterv1.MachineNodeReference{
+							Name: "node-1",
+						},
+						Conditions: []metav1.Condition{
+							{Type: controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition, Status: metav1.ConditionTrue},
+							{Type: controlplanev1.KubeadmControlPlaneMachineEtcdMemberHealthyCondition, Status: metav1.ConditionTrue},
+						},
+					},
+				},
+			},
+
+			expectResult: ctrl.Result{},
+			expectPreflight: internal.PreflightCheckResults{
+				HasDeletingMachine:               false,
+				ControlPlaneComponentsNotHealthy: false,
+				EtcdClusterNotHealthy:            false,
+				TopologyVersionMismatch:          false,
+			},
+		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
+			fc := capicontrollerutil.NewFakeController()
+
 			r := &KubeadmControlPlaneReconciler{
-				recorder: record.NewFakeRecorder(32),
+				controller: fc,
+				recorder:   record.NewFakeRecorder(32),
 			}
 			cluster := &clusterv1.Cluster{}
 			if tt.cluster != nil {
@@ -705,10 +818,17 @@ func TestPreflightChecks(t *testing.T) {
 				KCP:      tt.kcp,
 				Machines: collections.FromMachines(tt.machines...),
 			}
-			result, err := r.preflightChecks(context.TODO(), controlPlane)
-			g.Expect(err).ToNot(HaveOccurred())
+			result := r.preflightChecks(context.TODO(), controlPlane)
 			g.Expect(result).To(BeComparableTo(tt.expectResult))
 			g.Expect(controlPlane.PreflightCheckResults).To(Equal(tt.expectPreflight))
+			if tt.expectDeferNextReconcile == 0 {
+				g.Expect(fc.Deferrals).To(BeEmpty())
+			} else {
+				g.Expect(fc.Deferrals).To(HaveKeyWithValue(
+					reconcile.Request{NamespacedName: client.ObjectKeyFromObject(tt.kcp)},
+					BeTemporally("~", time.Now().Add(tt.expectDeferNextReconcile), 1*time.Second)),
+				)
+			}
 		})
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -47,6 +48,7 @@ import (
 type FakeCluster struct {
 	namespace              string
 	name                   string
+	paused                 bool
 	controlPlane           *FakeControlPlane
 	machinePools           []*FakeMachinePool
 	machineDeployments     []*FakeMachineDeployment
@@ -116,6 +118,11 @@ func (f *FakeCluster) WithTopologyClassNamespace(namespace string) *FakeCluster 
 	return f
 }
 
+func (f *FakeCluster) WithPaused() *FakeCluster {
+	f.paused = true
+	return f
+}
+
 func (f *FakeCluster) Objs() []client.Object {
 	clusterInfrastructure := &fakeinfrastructure.GenericInfrastructureCluster{
 		TypeMeta: metav1.TypeMeta{
@@ -158,6 +165,10 @@ func (f *FakeCluster) Objs() []client.Object {
 		if f.topologyClassNamespace != nil {
 			cluster.Spec.Topology.ClassRef.Namespace = *f.topologyClassNamespace
 		}
+	}
+
+	if f.paused {
+		cluster.Spec.Paused = ptr.To(true)
 	}
 
 	// Ensure the cluster gets a UID to be used by dependant objects for creating OwnerReferences.
@@ -358,11 +369,12 @@ func (f *FakeControlPlane) Objs(cluster *clusterv1.Cluster) []client.Object {
 		},
 		Spec: fakecontrolplane.GenericControlPlaneSpec{
 			MachineTemplate: fakecontrolplane.GenericMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: controlPlaneInfrastructure.APIVersion,
-					Kind:       controlPlaneInfrastructure.Kind,
-					Namespace:  controlPlaneInfrastructure.Namespace,
-					Name:       controlPlaneInfrastructure.Name,
+				Spec: fakecontrolplane.GenericMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: fakeinfrastructure.GroupVersion.Group,
+						Kind:     controlPlaneInfrastructure.Kind,
+						Name:     controlPlaneInfrastructure.Name,
+					},
 				},
 			},
 		},
@@ -1484,6 +1496,7 @@ func FakeCRDList() []*apiextensionsv1.CustomResourceDefinition {
 type FakeClusterClass struct {
 	namespace                                 string
 	name                                      string
+	paused                                    bool
 	infrastructureClusterTemplate             *unstructured.Unstructured
 	controlPlaneTemplate                      *unstructured.Unstructured
 	controlPlaneInfrastructureMachineTemplate *unstructured.Unstructured
@@ -1517,6 +1530,11 @@ func (f *FakeClusterClass) WithWorkerMachineDeploymentClasses(classes []*FakeMac
 	return f
 }
 
+func (f *FakeClusterClass) WithPaused() *FakeClusterClass {
+	f.paused = true
+	return f
+}
+
 func (f *FakeClusterClass) Objs() []client.Object {
 	// objMap map where the key is the object to which the owner reference to the cluster class should be added
 	// and the value dictates if the onwner ref needs to be added.
@@ -1544,6 +1562,10 @@ func (f *FakeClusterClass) Objs() []client.Object {
 		objMap[f.controlPlaneInfrastructureMachineTemplate] = true
 	}
 
+	if f.paused {
+		clusterClassBuilder.WithAnnotations(map[string]string{clusterv1.PausedAnnotation: "true"})
+	}
+
 	if len(f.workerMachineDeploymentClasses) > 0 {
 		mdClasses := []clusterv1.MachineDeploymentClass{}
 		for _, fakeMDClass := range f.workerMachineDeploymentClasses {
@@ -1555,11 +1577,15 @@ func (f *FakeClusterClass) Objs() []client.Object {
 	}
 
 	clusterClass := clusterClassBuilder.Build()
+	clusterClass.SetGroupVersionKind(clusterv1.GroupVersion.WithKind("ClusterClass"))
 	objMap[clusterClass] = false
 
 	for o := range objMap {
 		setUID(o)
 	}
+	// GVK should be only set for setUID to avoid the wrong assumption that GVK is set on a
+	// ClusterClass in other parts of the code.
+	clusterClass.SetGroupVersionKind(schema.GroupVersionKind{})
 
 	for o, setOwnerReference := range objMap {
 		if setOwnerReference {

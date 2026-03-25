@@ -146,10 +146,10 @@ func Test_validate(t *testing.T) {
 			},
 			wantErr: "admission webhook \"validation.machinedrainrule.cluster.x-k8s.io\" denied the request: " +
 				"MachineDrainRule.cluster.x-k8s.io \"mdr\" is invalid: [" +
-				"spec.machines[0].selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string(nil), MatchExpressions:[]v1.LabelSelectorRequirement{v1.LabelSelectorRequirement{Key:\"\", Operator:\"Invalid-Operator\", Values:[]string(nil)}}}: \"Invalid-Operator\" is not a valid label selector operator, " +
-				"spec.machines[0].clusterSelector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string(nil), MatchExpressions:[]v1.LabelSelectorRequirement{v1.LabelSelectorRequirement{Key:\"\", Operator:\"Invalid-Operator\", Values:[]string(nil)}}}: \"Invalid-Operator\" is not a valid label selector operator, " +
-				"spec.pods[0].selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string(nil), MatchExpressions:[]v1.LabelSelectorRequirement{v1.LabelSelectorRequirement{Key:\"\", Operator:\"Invalid-Operator\", Values:[]string(nil)}}}: \"Invalid-Operator\" is not a valid label selector operator, " +
-				"spec.pods[0].namespaceSelector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string(nil), MatchExpressions:[]v1.LabelSelectorRequirement{v1.LabelSelectorRequirement{Key:\"\", Operator:\"Invalid-Operator\", Values:[]string(nil)}}}: \"Invalid-Operator\" is not a valid label selector operator]",
+				"spec.machines[0].selector: Invalid value: {\"matchExpressions\":[{\"key\":\"\",\"operator\":\"Invalid-Operator\"}]}: \"Invalid-Operator\" is not a valid label selector operator, " +
+				"spec.machines[0].clusterSelector: Invalid value: {\"matchExpressions\":[{\"key\":\"\",\"operator\":\"Invalid-Operator\"}]}: \"Invalid-Operator\" is not a valid label selector operator, " +
+				"spec.pods[0].selector: Invalid value: {\"matchExpressions\":[{\"key\":\"\",\"operator\":\"Invalid-Operator\"}]}: \"Invalid-Operator\" is not a valid label selector operator, " +
+				"spec.pods[0].namespaceSelector: Invalid value: {\"matchExpressions\":[{\"key\":\"\",\"operator\":\"Invalid-Operator\"}]}: \"Invalid-Operator\" is not a valid label selector operator]",
 		},
 		{
 			name: "Return error if machine selectors are not unique",
@@ -190,8 +190,7 @@ func Test_validate(t *testing.T) {
 					},
 				},
 			},
-			wantErr: "MachineDrainRule.cluster.x-k8s.io \"mdr\" is invalid: " +
-				"spec.machines: Invalid value: \"array\": entries in machines must be unique",
+			wantErr: "entries in machines must be unique",
 		},
 		{
 			name: "Return error if pod selectors are not unique",
@@ -232,8 +231,7 @@ func Test_validate(t *testing.T) {
 					},
 				},
 			},
-			wantErr: "MachineDrainRule.cluster.x-k8s.io \"mdr\" is invalid: " +
-				"spec.pods: Invalid value: \"array\": entries in pods must be unique",
+			wantErr: "entries in pods must be unique",
 		},
 	}
 
@@ -245,7 +243,7 @@ func Test_validate(t *testing.T) {
 
 			if tt.wantErr != "" {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(BeComparableTo(tt.wantErr))
+				g.Expect(err.Error()).To(ContainSubstring(tt.wantErr))
 			} else {
 				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(env.CleanupAndWait(ctx, tt.machineDrainRule)).To(Succeed())

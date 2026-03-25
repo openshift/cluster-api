@@ -416,6 +416,9 @@ func TestApply(t *testing.T) {
 			},
 			externalPatchResponses: map[string]runtimehooksv1.ResponseObject{
 				"patch-infrastructureCluster": &runtimehooksv1.GeneratePatchesResponse{
+					CommonResponse: runtimehooksv1.CommonResponse{
+						Status: runtimehooksv1.ResponseStatusSuccess,
+					},
 					Items: []runtimehooksv1.GeneratePatchesResponseItem{
 						{
 							UID:       "1",
@@ -453,6 +456,9 @@ func TestApply(t *testing.T) {
 			},
 			externalPatchResponses: map[string]runtimehooksv1.ResponseObject{
 				"patch-infrastructureCluster": &runtimehooksv1.GeneratePatchesResponse{
+					CommonResponse: runtimehooksv1.CommonResponse{
+						Status: runtimehooksv1.ResponseStatusSuccess,
+					},
 					Items: []runtimehooksv1.GeneratePatchesResponseItem{
 						{
 							UID:       "1",
@@ -493,6 +499,9 @@ func TestApply(t *testing.T) {
 
 			externalPatchResponses: map[string]runtimehooksv1.ResponseObject{
 				"patch-infrastructureCluster": &runtimehooksv1.GeneratePatchesResponse{
+					CommonResponse: runtimehooksv1.CommonResponse{
+						Status: runtimehooksv1.ResponseStatusSuccess,
+					},
 					Items: []runtimehooksv1.GeneratePatchesResponseItem{
 						{
 							UID:       "1",
@@ -515,6 +524,9 @@ func TestApply(t *testing.T) {
 					},
 				},
 				"patch-controlPlane": &runtimehooksv1.GeneratePatchesResponse{
+					CommonResponse: runtimehooksv1.CommonResponse{
+						Status: runtimehooksv1.ResponseStatusSuccess,
+					},
 					Items: []runtimehooksv1.GeneratePatchesResponseItem{
 						{
 							UID:       "2",
@@ -965,7 +977,7 @@ func TestApply(t *testing.T) {
 					}
 					runtimeClient = fakeruntimeclient.NewRuntimeClientBuilder().
 						WithCallExtensionResponses(tt.externalPatchResponses).
-						WithCallExtensionValidations(func(req runtimehooksv1.RequestObject) error {
+						WithCallExtensionValidations(func(_ string, req runtimehooksv1.RequestObject) error {
 							switch req := req.(type) {
 							case *runtimehooksv1.GeneratePatchesRequest:
 								for _, item := range req.Items {
@@ -1108,10 +1120,6 @@ func setupTestObjects() (*scope.ClusterBlueprint, *scope.ClusterState) {
 	// Note: we depend on TypeMeta being set to calculate HolderReferences correctly.
 	// We also set TypeMeta explicitly in the topology/cluster/cluster_controller.go.
 	cluster := &clusterv1.Cluster{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: clusterv1.GroupVersion.String(),
-			Kind:       "Cluster",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "cluster1",
 			Namespace:   metav1.NamespaceDefault,

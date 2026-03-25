@@ -26,6 +26,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 )
@@ -149,6 +150,88 @@ func Test_setReplicas(t *testing.T) {
 				ReadyReplicas:     ptr.To[int32](1),
 				AvailableReplicas: ptr.To[int32](1),
 				UpToDateReplicas:  ptr.To[int32](1),
+			},
+		},
+		{
+			name: "In-place updating machines should not be counted",
+			machines: []*clusterv1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							clusterv1.UpdateInProgressAnnotation: "",
+						},
+					},
+					Status: clusterv1.MachineStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   clusterv1.MachineReadyCondition,
+								Status: metav1.ConditionTrue,
+							},
+							{
+								Type:   clusterv1.MachineAvailableCondition,
+								Status: metav1.ConditionTrue,
+							},
+							{
+								Type:   clusterv1.MachineUpToDateCondition,
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							clusterv1.UpdateInProgressAnnotation: "",
+							runtimev1.PendingHooksAnnotation:     "UpdateMachine",
+						},
+					},
+					Status: clusterv1.MachineStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   clusterv1.MachineReadyCondition,
+								Status: metav1.ConditionTrue,
+							},
+							{
+								Type:   clusterv1.MachineAvailableCondition,
+								Status: metav1.ConditionTrue,
+							},
+							{
+								Type:   clusterv1.MachineUpToDateCondition,
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							runtimev1.PendingHooksAnnotation: "UpdateMachine",
+						},
+					},
+					Status: clusterv1.MachineStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   clusterv1.MachineReadyCondition,
+								Status: metav1.ConditionTrue,
+							},
+							{
+								Type:   clusterv1.MachineAvailableCondition,
+								Status: metav1.ConditionTrue,
+							},
+							{
+								Type:   clusterv1.MachineUpToDateCondition,
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				},
+			},
+			getAndAdoptMachinesForMachineSetSucceeded: true,
+			expectedStatus: clusterv1.MachineSetStatus{
+				Replicas:          ptr.To[int32](3),
+				ReadyReplicas:     ptr.To[int32](0),
+				AvailableReplicas: ptr.To[int32](0),
+				UpToDateReplicas:  ptr.To[int32](0),
 			},
 		},
 	}
@@ -1140,9 +1223,28 @@ func fakeMachine(name string, options ...fakeMachinesOption) *clusterv1.Machine 
 	return p
 }
 
+func withOwnerMachineSet(msName string) fakeMachinesOption {
+	return func(m *clusterv1.Machine) {
+		m.OwnerReferences = []metav1.OwnerReference{
+			{
+				APIVersion: clusterv1.GroupVersion.String(),
+				Kind:       "MachineSet",
+				Name:       msName,
+				Controller: ptr.To(true),
+			},
+		}
+	}
+}
+
 func withCreationTimestamp(t time.Time) fakeMachinesOption {
 	return func(m *clusterv1.Machine) {
 		m.CreationTimestamp = metav1.Time{Time: t}
+	}
+}
+
+func withMachineFinalizer() fakeMachinesOption {
+	return func(m *clusterv1.Machine) {
+		m.Finalizers = []string{clusterv1.MachineFinalizer}
 	}
 }
 
@@ -1158,6 +1260,18 @@ func withStaleDeletionTimestamp() fakeMachinesOption {
 	}
 }
 
+func withMachineLabels(labels map[string]string) fakeMachinesOption {
+	return func(m *clusterv1.Machine) {
+		m.Labels = labels
+	}
+}
+
+func withMachineAnnotations(annotations map[string]string) fakeMachinesOption {
+	return func(m *clusterv1.Machine) {
+		m.Annotations = annotations
+	}
+}
+
 func withStaleDrain() fakeMachinesOption {
 	return func(m *clusterv1.Machine) {
 		if m.Status.Deletion == nil {
@@ -1170,5 +1284,20 @@ func withStaleDrain() fakeMachinesOption {
 func withCondition(c metav1.Condition) fakeMachinesOption {
 	return func(m *clusterv1.Machine) {
 		conditions.Set(m, c)
+	}
+}
+
+func withHealthyNode() fakeMachinesOption {
+	// Note: This is what is required by delete priority functions to consider the machine healthy.
+	return func(m *clusterv1.Machine) {
+		m.Status = clusterv1.MachineStatus{
+			NodeRef: clusterv1.MachineNodeReference{Name: "some-node"},
+			Conditions: []metav1.Condition{
+				{
+					Type:   clusterv1.MachineNodeHealthyCondition,
+					Status: metav1.ConditionTrue,
+				},
+			},
+		}
 	}
 }

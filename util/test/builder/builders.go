@@ -342,6 +342,7 @@ func (m *MachinePoolTopologyBuilder) Build() clusterv1.MachinePoolTopology {
 type ClusterClassBuilder struct {
 	namespace                                 string
 	name                                      string
+	annotations                               map[string]string
 	infrastructureClusterTemplate             *unstructured.Unstructured
 	controlPlaneMetadata                      *clusterv1.ObjectMeta
 	controlPlaneReadinessGates                []clusterv1.MachineReadinessGate
@@ -359,6 +360,7 @@ type ClusterClassBuilder struct {
 	statusVariables                           []clusterv1.ClusterClassStatusVariable
 	patches                                   []clusterv1.ClusterClassPatch
 	conditions                                []metav1.Condition
+	versions                                  []string
 }
 
 // ClusterClass returns a ClusterClassBuilder with the given name and namespace.
@@ -367,6 +369,12 @@ func ClusterClass(namespace, name string) *ClusterClassBuilder {
 		namespace: namespace,
 		name:      name,
 	}
+}
+
+// WithAnnotations adds the passed annotations to the ClusterClassBuilder.
+func (c *ClusterClassBuilder) WithAnnotations(annotations map[string]string) *ClusterClassBuilder {
+	c.annotations = annotations
+	return c
 }
 
 // WithInfrastructureClusterTemplate adds the passed InfrastructureClusterTemplate to the ClusterClassBuilder.
@@ -480,13 +488,15 @@ func (c *ClusterClassBuilder) WithWorkerMachinePoolClasses(mpcs ...clusterv1.Mac
 	return c
 }
 
+// WithVersions sets versions in the ClusterClass.
+func (c *ClusterClassBuilder) WithVersions(versions ...string) *ClusterClassBuilder {
+	c.versions = versions
+	return c
+}
+
 // Build takes the objects and variables in the ClusterClass builder and uses them to create a ClusterClass object.
 func (c *ClusterClassBuilder) Build() *clusterv1.ClusterClass {
 	obj := &clusterv1.ClusterClass{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ClusterClass",
-			APIVersion: clusterv1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      c.name,
 			Namespace: c.namespace,
@@ -498,6 +508,9 @@ func (c *ClusterClassBuilder) Build() *clusterv1.ClusterClass {
 		Status: clusterv1.ClusterClassStatus{
 			Variables: c.statusVariables,
 		},
+	}
+	if c.annotations != nil {
+		obj.Annotations = c.annotations
 	}
 	if c.conditions != nil {
 		obj.Status.Conditions = c.conditions
@@ -538,6 +551,7 @@ func (c *ClusterClassBuilder) Build() *clusterv1.ClusterClass {
 
 	obj.Spec.Workers.MachineDeployments = c.machineDeploymentClasses
 	obj.Spec.Workers.MachinePools = c.machinePoolClasses
+	obj.Spec.KubernetesVersions = c.versions
 	return obj
 }
 
@@ -1428,6 +1442,18 @@ func ControlPlane(namespace, name string) *ControlPlaneBuilder {
 	}
 }
 
+// WithLabels adds the passed labels to the ControlPlaneBuilder.
+func (c *ControlPlaneBuilder) WithLabels(labels map[string]string) *ControlPlaneBuilder {
+	c.obj.SetLabels(labels)
+	return c
+}
+
+// WithAnnotations adds the passed annotations to the ControlPlaneBuilder.
+func (c *ControlPlaneBuilder) WithAnnotations(annotations map[string]string) *ControlPlaneBuilder {
+	c.obj.SetAnnotations(annotations)
+	return c
+}
+
 // WithInfrastructureMachineTemplate adds the given unstructured object to the ControlPlaneBuilder as its InfrastructureMachineTemplate.
 func (c *ControlPlaneBuilder) WithInfrastructureMachineTemplate(t *unstructured.Unstructured, contractVersion string) *ControlPlaneBuilder {
 	if contractVersion == "v1beta1" {
@@ -1550,18 +1576,6 @@ func (c *TestControlPlaneBuilder) WithVersion(version string) *TestControlPlaneB
 	return c
 }
 
-// WithLabels adds the passed labels to the ControlPlaneBuilder.
-func (c *ControlPlaneBuilder) WithLabels(labels map[string]string) *ControlPlaneBuilder {
-	c.obj.SetLabels(labels)
-	return c
-}
-
-// WithAnnotations adds the passed annotations to the ControlPlaneBuilder.
-func (c *ControlPlaneBuilder) WithAnnotations(annotations map[string]string) *ControlPlaneBuilder {
-	c.obj.SetAnnotations(annotations)
-	return c
-}
-
 // WithSpecFields sets a map of spec fields on the unstructured object. The keys in the map represent the path and the value corresponds
 // to the value of the spec field.
 //
@@ -1595,8 +1609,10 @@ func (c *TestControlPlaneBuilder) Build() *unstructured.Unstructured {
 
 // NodeBuilder holds the variables required to build a Node.
 type NodeBuilder struct {
-	name   string
-	status corev1.NodeStatus
+	name        string
+	annotations map[string]string
+	taints      []corev1.Taint
+	status      corev1.NodeStatus
 }
 
 // Node returns a NodeBuilder.
@@ -1604,6 +1620,18 @@ func Node(name string) *NodeBuilder {
 	return &NodeBuilder{
 		name: name,
 	}
+}
+
+// WithAnnotations adds the given annotations to the NodeBuilder.
+func (n *NodeBuilder) WithAnnotations(annotations map[string]string) *NodeBuilder {
+	n.annotations = annotations
+	return n
+}
+
+// WithTaints adds the given taints to the NodeBuilder.
+func (n *NodeBuilder) WithTaints(taints ...corev1.Taint) *NodeBuilder {
+	n.taints = taints
+	return n
 }
 
 // WithStatus adds Status to the NodeBuilder.
@@ -1616,7 +1644,11 @@ func (n *NodeBuilder) WithStatus(status corev1.NodeStatus) *NodeBuilder {
 func (n *NodeBuilder) Build() *corev1.Node {
 	obj := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: n.name,
+			Name:        n.name,
+			Annotations: n.annotations,
+		},
+		Spec: corev1.NodeSpec{
+			Taints: n.taints,
 		},
 		Status: n.status,
 	}
@@ -1703,10 +1735,6 @@ func (m *MachinePoolBuilder) WithMinReadySeconds(minReadySeconds int32) *Machine
 // Build creates a new MachinePool with the variables and objects passed to the MachinePoolBuilder.
 func (m *MachinePoolBuilder) Build() *clusterv1.MachinePool {
 	obj := &clusterv1.MachinePool{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "MachinePool",
-			APIVersion: clusterv1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        m.name,
 			Namespace:   m.namespace,
@@ -1754,6 +1782,7 @@ type MachineDeploymentBuilder struct {
 	annotations            map[string]string
 	status                 *clusterv1.MachineDeploymentStatus
 	minReadySeconds        *int32
+	taints                 []clusterv1.MachineTaint
 }
 
 // MachineDeployment creates a MachineDeploymentBuilder with the given name and namespace.
@@ -1830,13 +1859,15 @@ func (m *MachineDeploymentBuilder) WithMinReadySeconds(minReadySeconds int32) *M
 	return m
 }
 
+// WithTaints adds the given taints to the MachineDeploymentBuilder.
+func (m *MachineDeploymentBuilder) WithTaints(taints ...clusterv1.MachineTaint) *MachineDeploymentBuilder {
+	m.taints = taints
+	return m
+}
+
 // Build creates a new MachineDeployment with the variables and objects passed to the MachineDeploymentBuilder.
 func (m *MachineDeploymentBuilder) Build() *clusterv1.MachineDeployment {
 	obj := &clusterv1.MachineDeployment{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "MachineDeployment",
-			APIVersion: clusterv1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        m.name,
 			Namespace:   m.namespace,
@@ -1877,6 +1908,9 @@ func (m *MachineDeploymentBuilder) Build() *clusterv1.MachineDeployment {
 	if m.minReadySeconds != nil {
 		obj.Spec.Template.Spec.MinReadySeconds = m.minReadySeconds
 	}
+	if m.taints != nil {
+		obj.Spec.Template.Spec.Taints = m.taints
+	}
 
 	return obj
 }
@@ -1891,6 +1925,7 @@ type MachineSetBuilder struct {
 	labels                 map[string]string
 	clusterName            string
 	ownerRefs              []metav1.OwnerReference
+	taints                 []clusterv1.MachineTaint
 }
 
 // MachineSet creates a MachineSetBuilder with the given name and namespace.
@@ -1937,13 +1972,15 @@ func (m *MachineSetBuilder) WithOwnerReferences(ownerRefs []metav1.OwnerReferenc
 	return m
 }
 
+// WithTaints adds the given taints to the MachineSetBuilder.
+func (m *MachineSetBuilder) WithTaints(taints ...clusterv1.MachineTaint) *MachineSetBuilder {
+	m.taints = taints
+	return m
+}
+
 // Build creates a new MachineSet with the variables and objects passed to the MachineSetBuilder.
 func (m *MachineSetBuilder) Build() *clusterv1.MachineSet {
 	obj := &clusterv1.MachineSet{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "MachineSet",
-			APIVersion: clusterv1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            m.name,
 			Namespace:       m.namespace,
@@ -1960,6 +1997,9 @@ func (m *MachineSetBuilder) Build() *clusterv1.MachineSet {
 	if m.infrastructureTemplate != nil {
 		obj.Spec.Template.Spec.InfrastructureRef = objToRef(m.infrastructureTemplate)
 	}
+	if m.taints != nil {
+		obj.Spec.Template.Spec.Taints = m.taints
+	}
 	return obj
 }
 
@@ -1972,6 +2012,7 @@ type MachineBuilder struct {
 	bootstrap    *unstructured.Unstructured
 	infraMachine *unstructured.Unstructured
 	labels       map[string]string
+	taints       []clusterv1.MachineTaint
 }
 
 // Machine returns a MachineBuilder.
@@ -2012,13 +2053,15 @@ func (m *MachineBuilder) WithLabels(labels map[string]string) *MachineBuilder {
 	return m
 }
 
+// WithTaints adds the given taints to the MachineBuilder.
+func (m *MachineBuilder) WithTaints(taints ...clusterv1.MachineTaint) *MachineBuilder {
+	m.taints = taints
+	return m
+}
+
 // Build produces a Machine object from the information passed to the MachineBuilder.
 func (m *MachineBuilder) Build() *clusterv1.Machine {
 	machine := &clusterv1.Machine{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Machine",
-			APIVersion: clusterv1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: m.namespace,
 			Name:      m.name,
@@ -2040,6 +2083,9 @@ func (m *MachineBuilder) Build() *clusterv1.Machine {
 			machine.Labels = map[string]string{}
 		}
 		machine.Labels[clusterv1.ClusterNameLabel] = m.clusterName
+	}
+	if m.taints != nil {
+		machine.Spec.Taints = m.taints
 	}
 	return machine
 }
@@ -2099,13 +2145,14 @@ func setStatusFields(obj *unstructured.Unstructured, fields map[string]interface
 
 // MachineHealthCheckBuilder holds fields for creating a MachineHealthCheck.
 type MachineHealthCheckBuilder struct {
-	name                    string
-	namespace               string
-	ownerRefs               []metav1.OwnerReference
-	selector                metav1.LabelSelector
-	clusterName             string
-	unhealthyNodeConditions []clusterv1.UnhealthyNodeCondition
-	maxUnhealthy            *intstr.IntOrString
+	name                       string
+	namespace                  string
+	ownerRefs                  []metav1.OwnerReference
+	selector                   metav1.LabelSelector
+	clusterName                string
+	unhealthyNodeConditions    []clusterv1.UnhealthyNodeCondition
+	unhealthyMachineConditions []clusterv1.UnhealthyMachineCondition
+	maxUnhealthy               *intstr.IntOrString
 }
 
 // MachineHealthCheck returns a MachineHealthCheckBuilder with the given name and namespace.
@@ -2134,6 +2181,12 @@ func (m *MachineHealthCheckBuilder) WithUnhealthyNodeConditions(conditions []clu
 	return m
 }
 
+// WithUnhealthyMachineConditions adds the spec used to build the parameters of the MachineHealthCheck.
+func (m *MachineHealthCheckBuilder) WithUnhealthyMachineConditions(conditions []clusterv1.UnhealthyMachineCondition) *MachineHealthCheckBuilder {
+	m.unhealthyMachineConditions = conditions
+	return m
+}
+
 // WithOwnerReferences adds ownerreferences for the MachineHealthCheck.
 func (m *MachineHealthCheckBuilder) WithOwnerReferences(ownerRefs []metav1.OwnerReference) *MachineHealthCheckBuilder {
 	m.ownerRefs = ownerRefs
@@ -2150,10 +2203,6 @@ func (m *MachineHealthCheckBuilder) WithMaxUnhealthy(maxUnhealthy *intstr.IntOrS
 func (m *MachineHealthCheckBuilder) Build() *clusterv1.MachineHealthCheck {
 	// create a MachineHealthCheck with the spec given in the ClusterClass
 	mhc := &clusterv1.MachineHealthCheck{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "MachineHealthCheck",
-			APIVersion: clusterv1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            m.name,
 			Namespace:       m.namespace,
@@ -2163,7 +2212,8 @@ func (m *MachineHealthCheckBuilder) Build() *clusterv1.MachineHealthCheck {
 			ClusterName: m.clusterName,
 			Selector:    m.selector,
 			Checks: clusterv1.MachineHealthCheckChecks{
-				UnhealthyNodeConditions: m.unhealthyNodeConditions,
+				UnhealthyNodeConditions:    m.unhealthyNodeConditions,
+				UnhealthyMachineConditions: m.unhealthyMachineConditions,
 			},
 			Remediation: clusterv1.MachineHealthCheckRemediation{
 				TriggerIf: clusterv1.MachineHealthCheckRemediationTriggerIf{
