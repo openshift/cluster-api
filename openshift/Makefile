@@ -39,5 +39,10 @@ ipam-manifests: $(KUSTOMIZE)
 .PHONY: ocp-manifests
 ocp-manifests: ipam-manifests $(MANIFESTS_GEN) | $(RELEASE_DIR) ## Builds openshift specific manifests
 	# Generate provider manifests.
-	# TODO: load the provider-version dynamically at rebase time when this is invoked by the Rebase Bot during one of its lifecycle hooks.
-	$(MANIFESTS_GEN) --provider-name "cluster-api" --provider-type "CoreProvider" --provider-version "${PROVIDER_VERSION}" --base-path "../" --manifests-path "./manifests" --kustomize-dir="openshift"
+	$(MANIFESTS_GEN) -manifests-path "./capi-operator-manifests" -kustomize-dir="../openshift" \
+		-name "cluster-api" \
+		-attribute type="core" \
+		-install-order=10 \
+		-attribute version="${PROVIDER_VERSION}" \
+		-self-image-ref registry.ci.openshift.org/openshift:cluster-capi-controllers \
+		-protect-cluster-resource cluster
