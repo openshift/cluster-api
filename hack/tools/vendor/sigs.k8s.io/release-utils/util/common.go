@@ -18,6 +18,7 @@ package util
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,8 +28,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/blang/semver"
-	"github.com/pkg/errors"
+	"github.com/blang/semver/v4"
 	"github.com/sirupsen/logrus"
 
 	"sigs.k8s.io/release-utils/command"
@@ -39,10 +39,10 @@ const (
 )
 
 var (
-	regexpCRLF       *regexp.Regexp = regexp.MustCompile(`\015$`)
-	regexpCtrlChar   *regexp.Regexp = regexp.MustCompile(`\x1B[\[(]([0-9]{1,2}(;[0-9]{1,2})?)?[mKB]`)
-	regexpOauthToken *regexp.Regexp = regexp.MustCompile(`[a-f0-9]{40}:x-oauth-basic`)
-	regexpGitToken   *regexp.Regexp = regexp.MustCompile(`git:[a-f0-9]{35,40}@github.com`)
+	regexpCRLF       = regexp.MustCompile(`\015$`)
+	regexpCtrlChar   = regexp.MustCompile(`\x1B[\[(](\d{1,2}(;\d{1,2})?)?[mKB]`)
+	regexpOauthToken = regexp.MustCompile(`[a-f0-9]{40}:x-oauth-basic`)
+	regexpGitToken   = regexp.MustCompile(`git:[a-f0-9]{35,40}@github\.com`)
 )
 
 // UserInputError a custom error to handle more user input info
@@ -120,7 +120,7 @@ func PackagesAvailable(packages ...string) (bool, error) {
 			logrus.Debugf("Skipping not available package manager %s", mgr)
 		}
 		if packageManager == "" {
-			return false, errors.Errorf(
+			return false, fmt.Errorf(
 				"unable to find working package manager for verifier `%s`",
 				x.verifierCmd,
 			)
@@ -205,7 +205,7 @@ common::askyorn () {
 // return an error crafted with UserInputError. This error can be queried
 // to find out if the user canceled the input using its method IsCtrlC:
 //
-//     if err.(util.UserInputError).IsCtrlC() {}
+//	if err.(util.UserInputError).IsCtrlC() {}
 //
 // Note that in case of cancelling input, the user will still have to press
 // enter to finish the scan.
@@ -244,19 +244,19 @@ func readInput(question string) (string, error) {
 // To specify the valid responses, either pass a string or craft a series
 // of answers using the following format:
 //
-//      "|successAnswers|nonSuccessAnswers|defaultAnswer"
+//	"|successAnswers|nonSuccessAnswers|defaultAnswer"
 //
 // The successAnswers and nonSuccessAnswers can be either a string or a
 // series os responses like:
 //
-//       "|opt1a:opt1b|opt2a:opt2b|defaultAnswer"
+//	"|opt1a:opt1b|opt2a:opt2b|defaultAnswer"
 //
 // This example will accept opt1a and opt1b as successful answers, opt2a and
 // opt2b as unsuccessful answers and in case of an empty answer, it will
 // return "defaultAnswer" as success.
 //
 // To consider the default as a success, simply list them with the rest of the
-// non successfule answers.
+// non successful answers.
 func Ask(question, expectedResponse string, retries int) (answer string, success bool, err error) {
 	attempts := 1
 
@@ -283,7 +283,7 @@ func Ask(question, expectedResponse string, retries int) (answer string, success
 		if strings.Contains(expectedResponse, parts[0]) {
 			successAnswers = strings.Split(parts[0], optsSeparator)
 		}
-		// If there is a seconf part, its non success, but expected responses
+		// If there is a second part, its non success, but expected responses
 		if len(parts) >= 2 {
 			if strings.Contains(parts[1], optsSeparator) {
 				nonSuccessAnswers = strings.Split(parts[1], optsSeparator)
@@ -390,9 +390,7 @@ func CopyFileLocal(src, dst string, required bool) error {
 	logrus.Infof("Trying to copy file %s to %s (required: %v)", src, dst, required)
 	srcStat, err := os.Stat(src)
 	if err != nil && required {
-		return errors.Wrapf(
-			err, "source %s is required but does not exist", src,
-		)
+		return fmt.Errorf("source %s is required but does not exist: %w", src, err)
 	}
 	if os.IsNotExist(err) && !required {
 		logrus.Infof(
@@ -410,17 +408,17 @@ func CopyFileLocal(src, dst string, required bool) error {
 
 	source, err := os.Open(src)
 	if err != nil {
-		return errors.Wrapf(err, "open source file %s", src)
+		return fmt.Errorf("open source file %s: %w", src, err)
 	}
 	defer source.Close()
 
 	destination, err := os.Create(dst)
 	if err != nil {
-		return errors.Wrapf(err, "create destination file %s", dst)
+		return fmt.Errorf("create destination file %s: %w", dst, err)
 	}
 	defer destination.Close()
 	if _, err := io.Copy(destination, source); err != nil {
-		return errors.Wrapf(err, "copy source %s to destination %s", src, dst)
+		return fmt.Errorf("copy source %s to destination %s: %w", src, dst, err)
 	}
 	logrus.Infof("Copied %s", filepath.Base(dst))
 	return nil
@@ -433,12 +431,12 @@ func CopyDirContentsLocal(src, dst string) error {
 	// If initial destination does not exist create it.
 	if _, err := os.Stat(dst); err != nil {
 		if err := os.MkdirAll(dst, os.FileMode(0o755)); err != nil {
-			return errors.Wrapf(err, "create destination directory %s", dst)
+			return fmt.Errorf("create destination directory %s: %w", dst, err)
 		}
 	}
 	files, err := os.ReadDir(src)
 	if err != nil {
-		return errors.Wrapf(err, "reading source dir %s", src)
+		return fmt.Errorf("reading source dir %s: %w", src, err)
 	}
 	for _, file := range files {
 		srcPath := filepath.Join(src, file.Name())
@@ -446,22 +444,22 @@ func CopyDirContentsLocal(src, dst string) error {
 
 		fileInfo, err := os.Stat(srcPath)
 		if err != nil {
-			return errors.Wrapf(err, "stat source path %s", srcPath)
+			return fmt.Errorf("stat source path %s: %w", srcPath, err)
 		}
 
 		switch fileInfo.Mode() & os.ModeType {
 		case os.ModeDir:
 			if !Exists(dstPath) {
 				if err := os.MkdirAll(dstPath, os.FileMode(0o755)); err != nil {
-					return errors.Wrapf(err, "creating destination dir %s", dstPath)
+					return fmt.Errorf("creating destination dir %s: %w", dstPath, err)
 				}
 			}
 			if err := CopyDirContentsLocal(srcPath, dstPath); err != nil {
-				return errors.Wrapf(err, "copy %s to %s", srcPath, dstPath)
+				return fmt.Errorf("copy %s to %s: %w", srcPath, dstPath, err)
 			}
 		default:
 			if err := CopyFileLocal(srcPath, dstPath, false); err != nil {
-				return errors.Wrapf(err, "copy %s to %s", srcPath, dstPath)
+				return fmt.Errorf("copy %s to %s: %w", srcPath, dstPath, err)
 			}
 		}
 	}
@@ -472,11 +470,11 @@ func CopyDirContentsLocal(src, dst string) error {
 func RemoveAndReplaceDir(path string) error {
 	logrus.Infof("Removing %s", path)
 	if err := os.RemoveAll(path); err != nil {
-		return errors.Wrapf(err, "remove %s", path)
+		return fmt.Errorf("remove %s: %w", path, err)
 	}
 	logrus.Infof("Creating %s", path)
 	if err := os.MkdirAll(path, os.FileMode(0o755)); err != nil {
-		return errors.Wrapf(err, "create %s", path)
+		return fmt.Errorf("create %s: %w", path, err)
 	}
 	return nil
 }
@@ -533,7 +531,7 @@ func CleanLogFile(logPath string) (err error) {
 	// Open a tempfile to write sanitized log
 	tempFile, err := os.CreateTemp("", "temp-release-log-")
 	if err != nil {
-		return errors.Wrap(err, "creating temp file for sanitizing log")
+		return fmt.Errorf("creating temp file for sanitizing log: %w", err)
 	}
 	defer func() {
 		err = tempFile.Close()
@@ -543,7 +541,7 @@ func CleanLogFile(logPath string) (err error) {
 	// Open the new logfile for reading
 	logFile, err := os.Open(logPath)
 	if err != nil {
-		return errors.Wrapf(err, "while opening %s ", logPath)
+		return fmt.Errorf("while opening %s : %w", logPath, err)
 	}
 	// Scan the log and pass it through the cleaning funcs
 	scanner := bufio.NewScanner(logFile)
@@ -555,15 +553,15 @@ func CleanLogFile(logPath string) (err error) {
 		chunk = append(chunk, []byte{10}...)
 		_, err := tempFile.Write(chunk)
 		if err != nil {
-			return errors.Wrap(err, "while writing buffer to file")
+			return fmt.Errorf("while writing buffer to file: %w", err)
 		}
 	}
 	if err := logFile.Close(); err != nil {
-		return errors.Wrap(err, "closing log file")
+		return fmt.Errorf("closing log file: %w", err)
 	}
 
 	if err := CopyFileLocal(tempFile.Name(), logPath, true); err != nil {
-		return errors.Wrap(err, "writing clean logfile")
+		return fmt.Errorf("writing clean logfile: %w", err)
 	}
 
 	return err

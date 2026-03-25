@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 )
 
@@ -33,9 +33,20 @@ var (
 	KubeSemverTolerant = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-0-9a-zA-Z_\.+]*)?$`)
 )
 
+// MajorMinorPatch returns a version that only has Major / Minor / Patch fields set.
+func MajorMinorPatch(version semver.Version) semver.Version {
+	return semver.Version{
+		Major: version.Major,
+		Minor: version.Minor,
+		Patch: version.Patch,
+	}
+}
+
 // ParseMajorMinorPatch returns a semver.Version from the string provided
 // by looking only at major.minor.patch and stripping everything else out.
 // It requires the version to have a "v" prefix.
+//
+// Deprecated: This function is deprecated and will be removed in an upcoming release of Cluster API. Please use semver.Parse instead.
 func ParseMajorMinorPatch(version string) (semver.Version, error) {
 	return parseMajorMinorPatch(version, false)
 }
@@ -43,8 +54,16 @@ func ParseMajorMinorPatch(version string) (semver.Version, error) {
 // ParseMajorMinorPatchTolerant returns a semver.Version from the string provided
 // by looking only at major.minor.patch and stripping everything else out.
 // It does not require the version to have a "v" prefix.
+//
+// Deprecated: This function is deprecated and will be removed in an upcoming release of Cluster API. Please use semver.ParseTolerant instead.
 func ParseMajorMinorPatchTolerant(version string) (semver.Version, error) {
 	return parseMajorMinorPatch(version, true)
+}
+
+// ParseTolerantImageTag replaces all _ with + in version and then parses the version with semver.ParseTolerant.
+// This allows to parse image tags which cannot contain +, so they use _ instead of +.
+func ParseTolerantImageTag(version string) (semver.Version, error) {
+	return semver.ParseTolerant(strings.ReplaceAll(version, "_", "+"))
 }
 
 // parseMajorMinorPatch returns a semver.Version from the string provided
@@ -104,21 +123,20 @@ func newBuildIdentifiers(ids []string) buildIdentifiers {
 func (v buildIdentifiers) compare(o buildIdentifiers) int {
 	i := 0
 	for ; i < len(v) && i < len(o); i++ {
-		if comp := v[i].compare(o[i]); comp == 0 {
-			continue
-		} else {
+		comp := v[i].compare(o[i])
+		if comp != 0 {
 			return comp
 		}
 	}
 
 	// if everything is equal till now the longer is greater
-	if i == len(v) && i == len(o) { //nolint: gocritic
+	if i == len(v) && i == len(o) {
 		return 0
 	} else if i == len(v) && i < len(o) {
 		return -1
-	} else {
-		return 1
 	}
+
+	return 1
 }
 
 type buildIdentifier struct {
@@ -173,24 +191,9 @@ func (v buildIdentifier) compare(o buildIdentifier) int {
 	}
 }
 
-// CompareWithBuildIdentifiers compares two versions a and b.
-// Perfoms a standard version compare between a and b. If the versions
-// are equal, build identifiers will be used to compare further.
-//   -1 == a is less than b.
-//   0 == a is equal to b.
-//   1 == a is greater than b.
-// Deprecated: Use Compare(a, b, WithBuildTags()) instead.
-func CompareWithBuildIdentifiers(a semver.Version, b semver.Version) int {
-	if comp := a.Compare(b); comp != 0 {
-		return comp
-	}
-	biA := newBuildIdentifiers(a.Build)
-	biB := newBuildIdentifiers(b.Build)
-	return biA.compare(biB)
-}
-
 type comparer struct {
-	buildTags bool
+	buildTags          bool
+	withoutPreReleases bool
 }
 
 // CompareOption is a configuration option for Compare.
@@ -207,13 +210,22 @@ type CompareOption func(*comparer)
 // - Identifiers with letters or hyphens are compared only for equality, otherwise, 2 is returned given
 // that it is not possible to identify if lower or greater (non-numeric identifiers could be random build
 // identifiers).
-//   -1 == a is less than b.
-//   0 == a is equal to b.
-//   1 == a is greater than b.
-//   2 == v is different than o (it is not possible to identify if lower or greater).
+//
+//	-1 == a is less than b.
+//	0 == a is equal to b.
+//	1 == a is greater than b.
+//	2 == v is different than o (it is not possible to identify if lower or greater).
 func WithBuildTags() CompareOption {
 	return func(c *comparer) {
 		c.buildTags = true
+	}
+}
+
+// WithoutPreReleases modifies the version comparison to not consider pre-releases
+// when comparing versions.
+func WithoutPreReleases() CompareOption {
+	return func(c *comparer) {
+		c.withoutPreReleases = true
 	}
 }
 
@@ -228,8 +240,18 @@ func Compare(a, b semver.Version, options ...CompareOption) int {
 		o(c)
 	}
 
+	if c.withoutPreReleases {
+		a.Pre = nil
+		b.Pre = nil
+	}
+
 	if c.buildTags {
-		return CompareWithBuildIdentifiers(a, b)
+		if comp := a.Compare(b); comp != 0 {
+			return comp
+		}
+		biA := newBuildIdentifiers(a.Build)
+		biB := newBuildIdentifiers(b.Build)
+		return biA.compare(biB)
 	}
 	return a.Compare(b)
 }

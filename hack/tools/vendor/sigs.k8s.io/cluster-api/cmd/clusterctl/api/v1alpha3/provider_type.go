@@ -31,25 +31,29 @@ import (
 
 // Provider defines an entry in the provider inventory.
 type Provider struct {
-	metav1.TypeMeta   `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard object's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
+	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// ProviderName indicates the name of the provider.
+	// providerName indicates the name of the provider.
 	// +optional
 	ProviderName string `json:"providerName,omitempty"`
 
-	// Type indicates the type of the provider.
+	// type indicates the type of the provider.
 	// See ProviderType for a list of supported values
 	// +optional
 	Type string `json:"type,omitempty"`
 
-	// Version indicates the component version.
+	// version indicates the component version.
 	// +optional
 	Version string `json:"version,omitempty"`
 
-	// WatchedNamespace indicates the namespace where the provider controller is is watching.
-	// if empty the provider controller is watching for objects in all namespaces.
-	// Deprecated: in clusterctl v1alpha4 all the providers watch all the namespaces; this field will be removed in a future version of this API
+	// watchedNamespace indicates the namespace where the provider controller is watching.
+	// If empty the provider controller is watching for objects in all namespaces.
+	//
+	// Deprecated: providers complying with the Cluster API v1alpha4 contract or above must watch all namespaces; this field will be removed in a future version of this API
 	// +optional
 	WatchedNamespace string `json:"watchedNamespace,omitempty"`
 }
@@ -92,7 +96,10 @@ func (p *Provider) GetProviderType() ProviderType {
 		CoreProviderType,
 		BootstrapProviderType,
 		InfrastructureProviderType,
-		ControlPlaneProviderType:
+		ControlPlaneProviderType,
+		IPAMProviderType,
+		RuntimeExtensionProviderType,
+		AddonProviderType:
 		return t
 	default:
 		return ProviderTypeUnknown
@@ -118,6 +125,18 @@ const (
 	// control-plane capabilities.
 	ControlPlaneProviderType = ProviderType("ControlPlaneProvider")
 
+	// IPAMProviderType is the type associated with codebases that provide
+	// IPAM capabilities.
+	IPAMProviderType = ProviderType("IPAMProvider")
+
+	// RuntimeExtensionProviderType is the type associated with codebases that provide
+	// runtime extensions.
+	RuntimeExtensionProviderType = ProviderType("RuntimeExtensionProvider")
+
+	// AddonProviderType is the type associated with codebases that provide
+	// add-on capabilities.
+	AddonProviderType = ProviderType("AddonProvider")
+
 	// ProviderTypeUnknown is used when the type is unknown.
 	ProviderTypeUnknown = ProviderType("")
 )
@@ -133,8 +152,14 @@ func (p ProviderType) Order() int {
 		return 2
 	case InfrastructureProviderType:
 		return 3
-	default:
+	case IPAMProviderType:
 		return 4
+	case RuntimeExtensionProviderType:
+		return 5
+	case AddonProviderType:
+		return 6
+	default:
+		return 99
 	}
 }
 
@@ -143,8 +168,12 @@ func (p ProviderType) Order() int {
 // ProviderList contains a list of Provider.
 type ProviderList struct {
 	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard list's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#lists-and-simple-kinds
+	// +optional
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Provider `json:"items"`
+	// items is the list of Providers.
+	Items []Provider `json:"items"`
 }
 
 // FilterByNamespace returns a new list of providers that reside in the namespace provided.
@@ -158,6 +187,13 @@ func (l *ProviderList) FilterByNamespace(namespace string) []Provider {
 func (l *ProviderList) FilterByProviderNameAndType(provider string, providerType ProviderType) []Provider {
 	return l.filterBy(func(p Provider) bool {
 		return p.ProviderName == provider && p.Type == string(providerType)
+	})
+}
+
+// FilterByProviderNameNamespaceTypeVersion returns a new list of provider that match the name, namespace, type and version.
+func (l *ProviderList) FilterByProviderNameNamespaceTypeVersion(provider, namespace string, providerType ProviderType, version string) []Provider {
+	return l.filterBy(func(p Provider) bool {
+		return p.ProviderName == provider && p.Namespace == namespace && p.Type == string(providerType) && p.Version == version
 	})
 }
 
@@ -193,5 +229,5 @@ func (l *ProviderList) filterBy(predicate func(p Provider) bool) []Provider {
 }
 
 func init() {
-	SchemeBuilder.Register(&Provider{}, &ProviderList{})
+	objectTypes = append(objectTypes, &Provider{}, &ProviderList{})
 }

@@ -22,16 +22,20 @@ import (
 
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/storage/names"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/internal/contract"
 )
 
 // Get uses the client and reference to get an external, unstructured object.
-func Get(ctx context.Context, c client.Client, ref *corev1.ObjectReference, namespace string) (*unstructured.Unstructured, error) {
+func Get(ctx context.Context, c client.Reader, ref *corev1.ObjectReference) (*unstructured.Unstructured, error) {
 	if ref == nil {
 		return nil, errors.Errorf("cannot get object - object reference not set")
 	}
@@ -39,28 +43,59 @@ func Get(ctx context.Context, c client.Client, ref *corev1.ObjectReference, name
 	obj.SetAPIVersion(ref.APIVersion)
 	obj.SetKind(ref.Kind)
 	obj.SetName(ref.Name)
-	key := client.ObjectKey{Name: obj.GetName(), Namespace: namespace}
-	if err := c.Get(ctx, key, obj); err != nil {
-		return nil, errors.Wrapf(err, "failed to retrieve %s external object %q/%q", obj.GetKind(), key.Namespace, key.Name)
+	obj.SetNamespace(ref.Namespace)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		return nil, errors.Wrapf(err, "failed to retrieve %s %s", obj.GetKind(), klog.KRef(ref.Namespace, ref.Name))
+	}
+	return obj, nil
+}
+
+// GetObjectFromContractVersionedRef uses the client and reference to get an external, unstructured object.
+func GetObjectFromContractVersionedRef(ctx context.Context, c client.Reader, ref clusterv1.ContractVersionedObjectReference, namespace string) (*unstructured.Unstructured, error) {
+	if !ref.IsDefined() {
+		return nil, errors.Errorf("cannot get object - object reference not set")
+	}
+
+	metadata, err := contract.GetGKMetadata(ctx, c, schema.GroupKind{Group: ref.APIGroup, Kind: ref.Kind})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// We want to surface the NotFound error only for the referenced object, so we use a generic error in case CRD is not found.
+			return nil, errors.Errorf("failed to get object from ref: %v", err.Error())
+		}
+		return nil, errors.Wrapf(err, "failed to get object from ref")
+	}
+
+	_, latestAPIVersion, err := contract.GetLatestContractAndAPIVersionFromContract(metadata, contract.Version)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get object from ref")
+	}
+
+	obj := new(unstructured.Unstructured)
+	obj.SetAPIVersion(schema.GroupVersion{Group: ref.APIGroup, Version: latestAPIVersion}.String())
+	obj.SetKind(ref.Kind)
+	obj.SetName(ref.Name)
+	obj.SetNamespace(namespace)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		return nil, errors.Wrapf(err, "failed to retrieve %s %s", obj.GetKind(), klog.KRef(namespace, ref.Name))
 	}
 	return obj, nil
 }
 
 // Delete uses the client and reference to delete an external, unstructured object.
-func Delete(ctx context.Context, c client.Client, ref *corev1.ObjectReference) error {
+func Delete(ctx context.Context, c client.Writer, ref *corev1.ObjectReference) error {
 	obj := new(unstructured.Unstructured)
 	obj.SetAPIVersion(ref.APIVersion)
 	obj.SetKind(ref.Kind)
 	obj.SetName(ref.Name)
 	obj.SetNamespace(ref.Namespace)
 	if err := c.Delete(ctx, obj); err != nil {
-		return errors.Wrapf(err, "failed to delete %s external object %q/%q", obj.GetKind(), obj.GetNamespace(), obj.GetName())
+		return errors.Wrapf(err, "failed to delete %s %s", obj.GetKind(), klog.KRef(ref.Namespace, ref.Name))
 	}
 	return nil
 }
 
-// CloneTemplateInput is the input to CloneTemplate.
-type CloneTemplateInput struct {
+// CreateFromTemplateInput is the input to CreateFromTemplate.
+type CreateFromTemplateInput struct {
 	// Client is the controller runtime client.
 	Client client.Client
 
@@ -69,6 +104,10 @@ type CloneTemplateInput struct {
 
 	// Namespace is the Kubernetes namespace the cloned object should be created into.
 	Namespace string
+
+	// Name is used as the name of the generated object, if set.
+	// If it isn't set the template name will be used as prefix to generate a name instead.
+	Name string
 
 	// ClusterName is the cluster this object is linked to.
 	ClusterName string
@@ -86,16 +125,17 @@ type CloneTemplateInput struct {
 	Annotations map[string]string
 }
 
-// CloneTemplate uses the client and the reference to create a new object from the template.
-func CloneTemplate(ctx context.Context, in *CloneTemplateInput) (*corev1.ObjectReference, error) {
-	from, err := Get(ctx, in.Client, in.TemplateRef, in.Namespace)
+// CreateFromTemplate uses the client and the reference to create a new object from the template.
+func CreateFromTemplate(ctx context.Context, in *CreateFromTemplateInput) (*unstructured.Unstructured, clusterv1.ContractVersionedObjectReference, error) {
+	from, err := Get(ctx, in.Client, in.TemplateRef)
 	if err != nil {
-		return nil, err
+		return nil, clusterv1.ContractVersionedObjectReference{}, err
 	}
 	generateTemplateInput := &GenerateTemplateInput{
 		Template:    from,
 		TemplateRef: in.TemplateRef,
 		Namespace:   in.Namespace,
+		Name:        in.Name,
 		ClusterName: in.ClusterName,
 		OwnerRef:    in.OwnerRef,
 		Labels:      in.Labels,
@@ -103,15 +143,19 @@ func CloneTemplate(ctx context.Context, in *CloneTemplateInput) (*corev1.ObjectR
 	}
 	to, err := GenerateTemplate(generateTemplateInput)
 	if err != nil {
-		return nil, err
+		return nil, clusterv1.ContractVersionedObjectReference{}, err
 	}
 
 	// Create the external clone.
 	if err := in.Client.Create(ctx, to); err != nil {
-		return nil, err
+		return nil, clusterv1.ContractVersionedObjectReference{}, err
 	}
 
-	return GetObjectReference(to), nil
+	return to, clusterv1.ContractVersionedObjectReference{
+		APIGroup: to.GroupVersionKind().Group,
+		Kind:     to.GetKind(),
+		Name:     to.GetName(),
+	}, nil
 }
 
 // GenerateTemplateInput is the input needed to generate a new template.
@@ -124,6 +168,10 @@ type GenerateTemplateInput struct {
 
 	// Namespace is the Kubernetes namespace the cloned object should be created into.
 	Namespace string
+
+	// Name is used as the name of the generated object, if set.
+	// If it isn't set the template name will be used as prefix to generate a name instead.
+	Name string
 
 	// ClusterName is the cluster this object is linked to.
 	ClusterName string
@@ -145,7 +193,9 @@ type GenerateTemplateInput struct {
 func GenerateTemplate(in *GenerateTemplateInput) (*unstructured.Unstructured, error) {
 	template, found, err := unstructured.NestedMap(in.Template.Object, "spec", "template")
 	if !found {
-		return nil, errors.Errorf("missing Spec.Template on %v %q", in.Template.GroupVersionKind(), in.Template.GetName())
+		// Tolerate template objects without `spec.template`.
+		// Intentionally using an empty template as replacement.
+		template = nil
 	} else if err != nil {
 		return nil, errors.Wrapf(err, "failed to retrieve Spec.Template map on %v %q", in.Template.GroupVersionKind(), in.Template.GetName())
 	}
@@ -156,7 +206,10 @@ func GenerateTemplate(in *GenerateTemplateInput) (*unstructured.Unstructured, er
 	to.SetFinalizers(nil)
 	to.SetUID("")
 	to.SetSelfLink("")
-	to.SetName(names.SimpleNameGenerator.GenerateName(in.Template.GetName() + "-"))
+	to.SetName(in.Name)
+	if to.GetName() == "" {
+		to.SetName(names.SimpleNameGenerator.GenerateName(in.Template.GetName() + "-"))
+	}
 	to.SetNamespace(in.Namespace)
 
 	// Set annotations.
@@ -179,7 +232,7 @@ func GenerateTemplate(in *GenerateTemplateInput) (*unstructured.Unstructured, er
 	for key, value := range in.Labels {
 		labels[key] = value
 	}
-	labels[clusterv1.ClusterLabelName] = in.ClusterName
+	labels[clusterv1.ClusterNameLabel] = in.ClusterName
 	to.SetLabels(labels)
 
 	// Set the owner reference.
@@ -197,17 +250,6 @@ func GenerateTemplate(in *GenerateTemplateInput) (*unstructured.Unstructured, er
 		to.SetKind(strings.TrimSuffix(in.Template.GetKind(), clusterv1.TemplateSuffix))
 	}
 	return to, nil
-}
-
-// GetObjectReference converts an unstructured into object reference.
-func GetObjectReference(obj *unstructured.Unstructured) *corev1.ObjectReference {
-	return &corev1.ObjectReference{
-		APIVersion: obj.GetAPIVersion(),
-		Kind:       obj.GetKind(),
-		Name:       obj.GetName(),
-		Namespace:  obj.GetNamespace(),
-		UID:        obj.GetUID(),
-	}
 }
 
 // FailuresFrom returns the FailureReason and FailureMessage fields from the external object status.
@@ -233,14 +275,4 @@ func IsReady(obj *unstructured.Unstructured) (bool, error) {
 			obj.GroupVersionKind(), obj.GetName())
 	}
 	return ready && found, nil
-}
-
-// IsInitialized returns true if the Status.Initialized field on an external object is true.
-func IsInitialized(obj *unstructured.Unstructured) (bool, error) {
-	initialized, found, err := unstructured.NestedBool(obj.Object, "status", "initialized")
-	if err != nil {
-		return false, errors.Wrapf(err, "failed to determine %v %q initialized",
-			obj.GroupVersionKind(), obj.GetName())
-	}
-	return initialized && found, nil
 }

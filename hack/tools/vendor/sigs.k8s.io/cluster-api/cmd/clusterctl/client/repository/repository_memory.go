@@ -17,13 +17,14 @@ limitations under the License.
 package repository
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/scheme"
 )
@@ -73,13 +74,13 @@ func (f *MemoryRepository) ComponentsPath() string {
 
 // GetFile returns a file for a given provider version.
 // NOTE: If the provided version is missing, the default version is used.
-func (f *MemoryRepository) GetFile(version string, path string) ([]byte, error) {
+func (f *MemoryRepository) GetFile(ctx context.Context, version string, path string) ([]byte, error) {
 	if version == "" {
 		version = f.DefaultVersion()
 	}
 	if version == latestVersionTag {
 		var err error
-		version, err = latestContractRelease(f, clusterv1.GroupVersion.Version)
+		version, err = latestContractRelease(ctx, f, clusterv1.GroupVersion.Version)
 		if err != nil {
 			return nil, err
 		}
@@ -97,7 +98,7 @@ func (f *MemoryRepository) GetFile(version string, path string) ([]byte, error) 
 }
 
 // GetVersions returns the list of versions that are available.
-func (f *MemoryRepository) GetVersions() ([]string, error) {
+func (f *MemoryRepository) GetVersions(_ context.Context) ([]string, error) {
 	v := make([]string, 0, len(f.versions))
 	for k := range f.versions {
 		v = append(v, k)

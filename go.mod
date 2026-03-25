@@ -1,6 +1,6 @@
 module sigs.k8s.io/cluster-api
 
-go 1.22
+go 1.24.0
 
 require (
 	github.com/MakeNowJust/heredoc v1.0.0
@@ -32,23 +32,29 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/valyala/fastjson v1.6.4
-	go.etcd.io/etcd/api/v3 v3.5.9
-	go.etcd.io/etcd/client/v3 v3.5.9
-	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/oauth2 v0.10.0
-	google.golang.org/grpc v1.55.0
-	k8s.io/api v0.27.2
-	k8s.io/apiextensions-apiserver v0.27.2
-	k8s.io/apimachinery v0.27.2
-	k8s.io/apiserver v0.27.2
-	k8s.io/client-go v0.27.2
-	k8s.io/cluster-bootstrap v0.27.2
-	k8s.io/component-base v0.27.2
-	k8s.io/klog/v2 v2.90.1
-	k8s.io/kubectl v0.27.2
-	k8s.io/utils v0.0.0-20230209194617-a36077c30491
-	sigs.k8s.io/controller-runtime v0.15.1
-	sigs.k8s.io/yaml v1.3.0
+	go.etcd.io/etcd/api/v3 v3.6.6
+	go.etcd.io/etcd/client/pkg/v3 v3.6.6
+	go.etcd.io/etcd/client/v3 v3.6.6
+	go.uber.org/zap v1.27.1
+	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
+	golang.org/x/oauth2 v0.34.0
+	golang.org/x/text v0.33.0
+	gomodules.xyz/jsonpatch/v2 v2.5.0
+	google.golang.org/grpc v1.78.0
+	k8s.io/api v0.34.3
+	k8s.io/apiextensions-apiserver v0.34.3
+	k8s.io/apimachinery v0.34.3
+	k8s.io/apiserver v0.34.3
+	k8s.io/client-go v0.34.3
+	k8s.io/cluster-bootstrap v0.34.2
+	k8s.io/component-base v0.34.3
+	k8s.io/klog/v2 v2.130.1
+	k8s.io/kube-openapi v0.0.0-20250710124328-f3f2b991d03b
+	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
+	sigs.k8s.io/controller-runtime v0.22.5
+	sigs.k8s.io/randfill v1.0.0
+	sigs.k8s.io/structured-merge-diff/v6 v6.3.2-0.20260122202528-d9cc6641c482
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
