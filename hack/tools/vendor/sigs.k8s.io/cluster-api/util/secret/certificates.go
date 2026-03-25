@@ -18,14 +18,14 @@ package secret
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"math/big"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 
@@ -34,10 +34,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/cert"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/certs"
 )
 
@@ -46,6 +47,9 @@ const (
 
 	// DefaultCertificatesDir is the default directory where Kubernetes stores its PKI information.
 	DefaultCertificatesDir = "/etc/kubernetes/pki"
+
+	// DefaultCACertificatesExpiryDays is the default expiry for CA certificates (10 years).
+	DefaultCACertificatesExpiryDays = 3650
 )
 
 var (
@@ -64,49 +68,67 @@ type Certificates []*Certificate
 
 // NewCertificatesForInitialControlPlane returns a list of certificates configured for a control plane node.
 func NewCertificatesForInitialControlPlane(config *bootstrapv1.ClusterConfiguration) Certificates {
+	var validityPeriodDays int32
+	var keyEncryptionAlgorithm bootstrapv1.EncryptionAlgorithmType
 	certificatesDir := DefaultCertificatesDir
-	if config != nil && config.CertificatesDir != "" {
-		certificatesDir = config.CertificatesDir
+	if config != nil {
+		if config.CertificatesDir != "" {
+			certificatesDir = config.CertificatesDir
+		}
+		if config.CACertificateValidityPeriodDays != 0 {
+			validityPeriodDays = config.CACertificateValidityPeriodDays
+		}
+		if config.EncryptionAlgorithm != "" {
+			keyEncryptionAlgorithm = config.EncryptionAlgorithm
+		}
 	}
 
 	certificates := Certificates{
 		&Certificate{
-			Purpose:  ClusterCA,
-			CertFile: filepath.Join(certificatesDir, "ca.crt"),
-			KeyFile:  filepath.Join(certificatesDir, "ca.key"),
+			Purpose:                ClusterCA,
+			CertFile:               path.Join(certificatesDir, "ca.crt"),
+			KeyFile:                path.Join(certificatesDir, "ca.key"),
+			ValidityPeriodDays:     validityPeriodDays,
+			KeyEncryptionAlgorithm: keyEncryptionAlgorithm,
 		},
 		&Certificate{
-			Purpose:  ServiceAccount,
-			CertFile: filepath.Join(certificatesDir, "sa.pub"),
-			KeyFile:  filepath.Join(certificatesDir, "sa.key"),
+			Purpose:                ServiceAccount,
+			CertFile:               path.Join(certificatesDir, "sa.pub"),
+			KeyFile:                path.Join(certificatesDir, "sa.key"),
+			ValidityPeriodDays:     validityPeriodDays,
+			KeyEncryptionAlgorithm: keyEncryptionAlgorithm,
 		},
 		&Certificate{
-			Purpose:  FrontProxyCA,
-			CertFile: filepath.Join(certificatesDir, "front-proxy-ca.crt"),
-			KeyFile:  filepath.Join(certificatesDir, "front-proxy-ca.key"),
+			Purpose:                FrontProxyCA,
+			CertFile:               path.Join(certificatesDir, "front-proxy-ca.crt"),
+			KeyFile:                path.Join(certificatesDir, "front-proxy-ca.key"),
+			ValidityPeriodDays:     validityPeriodDays,
+			KeyEncryptionAlgorithm: keyEncryptionAlgorithm,
 		},
 	}
 
 	etcdCert := &Certificate{
-		Purpose:  EtcdCA,
-		CertFile: filepath.Join(certificatesDir, "etcd", "ca.crt"),
-		KeyFile:  filepath.Join(certificatesDir, "etcd", "ca.key"),
+		Purpose:                EtcdCA,
+		CertFile:               path.Join(certificatesDir, "etcd", "ca.crt"),
+		KeyFile:                path.Join(certificatesDir, "etcd", "ca.key"),
+		ValidityPeriodDays:     validityPeriodDays,
+		KeyEncryptionAlgorithm: keyEncryptionAlgorithm,
 	}
 
 	// TODO make sure all the fields are actually defined and return an error if not
-	if config != nil && config.Etcd.External != nil {
+	if config != nil && config.Etcd.External.IsDefined() {
 		etcdCert = &Certificate{
 			Purpose:  EtcdCA,
 			CertFile: config.Etcd.External.CAFile,
 			External: true,
 		}
-		apiserverEtcdClientCert := &Certificate{
+		apiServerEtcdClientCert := &Certificate{
 			Purpose:  APIServerEtcdClient,
 			CertFile: config.Etcd.External.CertFile,
 			KeyFile:  config.Etcd.External.KeyFile,
 			External: true,
 		}
-		certificates = append(certificates, apiserverEtcdClientCert)
+		certificates = append(certificates, apiServerEtcdClientCert)
 	}
 
 	certificates = append(certificates, etcdCert)
@@ -123,28 +145,28 @@ func NewControlPlaneJoinCerts(config *bootstrapv1.ClusterConfiguration) Certific
 	certificates := Certificates{
 		&Certificate{
 			Purpose:  ClusterCA,
-			CertFile: filepath.Join(certificatesDir, "ca.crt"),
-			KeyFile:  filepath.Join(certificatesDir, "ca.key"),
+			CertFile: path.Join(certificatesDir, "ca.crt"),
+			KeyFile:  path.Join(certificatesDir, "ca.key"),
 		},
 		&Certificate{
 			Purpose:  ServiceAccount,
-			CertFile: filepath.Join(certificatesDir, "sa.pub"),
-			KeyFile:  filepath.Join(certificatesDir, "sa.key"),
+			CertFile: path.Join(certificatesDir, "sa.pub"),
+			KeyFile:  path.Join(certificatesDir, "sa.key"),
 		},
 		&Certificate{
 			Purpose:  FrontProxyCA,
-			CertFile: filepath.Join(certificatesDir, "front-proxy-ca.crt"),
-			KeyFile:  filepath.Join(certificatesDir, "front-proxy-ca.key"),
+			CertFile: path.Join(certificatesDir, "front-proxy-ca.crt"),
+			KeyFile:  path.Join(certificatesDir, "front-proxy-ca.key"),
 		},
 	}
 	etcdCert := &Certificate{
 		Purpose:  EtcdCA,
-		CertFile: filepath.Join(certificatesDir, "etcd", "ca.crt"),
-		KeyFile:  filepath.Join(certificatesDir, "etcd", "ca.key"),
+		CertFile: path.Join(certificatesDir, "etcd", "ca.crt"),
+		KeyFile:  path.Join(certificatesDir, "etcd", "ca.key"),
 	}
 
 	// TODO make sure all the fields are actually defined and return an error if not
-	if config != nil && config.Etcd.External != nil {
+	if config != nil && config.Etcd.External.IsDefined() {
 		etcdCert = &Certificate{
 			Purpose:  EtcdCA,
 			CertFile: config.Etcd.External.CAFile,
@@ -166,7 +188,7 @@ func NewControlPlaneJoinCerts(config *bootstrapv1.ClusterConfiguration) Certific
 // NewCertificatesForWorker return an initialized but empty set of CA certificates needed to bootstrap a cluster.
 func NewCertificatesForWorker(caCertPath string) Certificates {
 	if caCertPath == "" {
-		caCertPath = filepath.Join(DefaultCertificatesDir, "ca.crt")
+		caCertPath = path.Join(DefaultCertificatesDir, "ca.crt")
 	}
 
 	return Certificates{
@@ -190,30 +212,60 @@ func (c Certificates) GetByPurpose(purpose Purpose) *Certificate {
 
 // Lookup looks up each certificate from secrets and populates the certificate with the secret data.
 func (c Certificates) Lookup(ctx context.Context, ctrlclient client.Client, clusterName client.ObjectKey) error {
+	return c.LookupCached(ctx, nil, ctrlclient, clusterName)
+}
+
+// LookupCached looks up each certificate from secrets and populates the certificate with the secret data.
+// First we try to lookup the certificate secret via the secretCachingClient. If we get a NotFound error
+// we fall back to the regular uncached client.
+func (c Certificates) LookupCached(ctx context.Context, secretCachingClient, ctrlclient client.Client, clusterName client.ObjectKey) error {
 	// Look up each certificate as a secret and populate the certificate/key
 	for _, certificate := range c {
-		s := &corev1.Secret{}
 		key := client.ObjectKey{
 			Name:      Name(clusterName.Name, certificate.Purpose),
 			Namespace: clusterName.Namespace,
 		}
-		if err := ctrlclient.Get(ctx, key, s); err != nil {
+		s, err := getCertificateSecret(ctx, secretCachingClient, ctrlclient, key)
+		if err != nil {
 			if apierrors.IsNotFound(err) {
 				if certificate.External {
-					return errors.WithMessage(err, "external certificate not found")
+					return errors.Wrap(err, "external certificate not found")
 				}
 				continue
 			}
-			return errors.WithStack(err)
+			return err
 		}
 		// If a user has a badly formatted secret it will prevent the cluster from working.
 		kp, err := secretToKeyPair(s)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "failed to read keypair from certificate %s", klog.KObj(s))
 		}
 		certificate.KeyPair = kp
+		certificate.Secret = s
 	}
 	return nil
+}
+
+func getCertificateSecret(ctx context.Context, secretCachingClient, ctrlclient client.Client, key client.ObjectKey) (*corev1.Secret, error) {
+	secret := &corev1.Secret{}
+
+	if secretCachingClient != nil {
+		// Try to get the certificate via the cached client.
+		err := secretCachingClient.Get(ctx, key, secret)
+		if err != nil && !apierrors.IsNotFound(err) {
+			// Return error if we got an error which is not a NotFound error.
+			return nil, errors.Wrapf(err, "failed to get certificate %s", klog.KObj(secret))
+		}
+		if err == nil {
+			return secret, nil
+		}
+	}
+
+	// Try to get the certificate via the uncached client.
+	if err := ctrlclient.Get(ctx, key, secret); err != nil {
+		return nil, errors.Wrapf(err, "failed to get certificate %s", klog.KObj(secret))
+	}
+	return secret, nil
 }
 
 // EnsureAllExist ensure that there is some data present for every certificate.
@@ -257,14 +309,22 @@ func (c Certificates) SaveGenerated(ctx context.Context, ctrlclient client.Clien
 		if err := ctrlclient.Create(ctx, s); err != nil {
 			return errors.WithStack(err)
 		}
+		certificate.Secret = s
 	}
 	return nil
 }
 
 // LookupOrGenerate is a convenience function that wraps cluster bootstrap certificate behavior.
 func (c Certificates) LookupOrGenerate(ctx context.Context, ctrlclient client.Client, clusterName client.ObjectKey, owner metav1.OwnerReference) error {
+	return c.LookupOrGenerateCached(ctx, nil, ctrlclient, clusterName, owner)
+}
+
+// LookupOrGenerateCached is a convenience function that wraps cluster bootstrap certificate behavior.
+// During lookup we first try to lookup the certificate secret via the secretCachingClient. If we get a NotFound error
+// we fall back to the regular uncached client.
+func (c Certificates) LookupOrGenerateCached(ctx context.Context, secretCachingClient, ctrlclient client.Client, clusterName client.ObjectKey, owner metav1.OwnerReference) error {
 	// Find the certificates that exist
-	if err := c.Lookup(ctx, ctrlclient, clusterName); err != nil {
+	if err := c.LookupCached(ctx, secretCachingClient, ctrlclient, clusterName); err != nil {
 		return err
 	}
 
@@ -279,11 +339,14 @@ func (c Certificates) LookupOrGenerate(ctx context.Context, ctrlclient client.Cl
 
 // Certificate represents a single certificate CA.
 type Certificate struct {
-	Generated         bool
-	External          bool
-	Purpose           Purpose
-	KeyPair           *certs.KeyPair
-	CertFile, KeyFile string
+	Generated              bool
+	External               bool
+	Purpose                Purpose
+	KeyPair                *certs.KeyPair
+	CertFile, KeyFile      string
+	Secret                 *corev1.Secret
+	ValidityPeriodDays     int32
+	KeyEncryptionAlgorithm bootstrapv1.EncryptionAlgorithmType
 }
 
 // Hashes hashes all the certificates stored in a CA certificate.
@@ -312,7 +375,7 @@ func (c *Certificate) AsSecret(clusterName client.ObjectKey, owner metav1.OwnerR
 			Namespace: clusterName.Namespace,
 			Name:      Name(clusterName.Name, c.Purpose),
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName: clusterName.Name,
+				clusterv1.ClusterNameLabel: clusterName.Name,
 			},
 		},
 		Data: map[string][]byte{
@@ -323,7 +386,7 @@ func (c *Certificate) AsSecret(clusterName client.ObjectKey, owner metav1.OwnerR
 	}
 
 	if c.Generated {
-		s.OwnerReferences = []metav1.OwnerReference{owner}
+		s.SetOwnerReferences([]metav1.OwnerReference{owner})
 	}
 	return s
 }
@@ -331,6 +394,10 @@ func (c *Certificate) AsSecret(clusterName client.ObjectKey, owner metav1.OwnerR
 // AsFiles converts the certificate to a slice of Files that may have 0, 1 or 2 Files.
 func (c *Certificate) AsFiles() []bootstrapv1.File {
 	out := make([]bootstrapv1.File, 0)
+	if c.KeyPair == nil {
+		return out
+	}
+
 	if len(c.KeyPair.Cert) > 0 {
 		out = append(out, bootstrapv1.File{
 			Path:        c.CertFile,
@@ -362,7 +429,7 @@ func (c *Certificate) Generate() error {
 		generator = generateServiceAccountKeys
 	}
 
-	kp, err := generator()
+	kp, err := generator(c.ValidityPeriodDays, c.KeyEncryptionAlgorithm)
 	if err != nil {
 		return err
 	}
@@ -415,40 +482,49 @@ func secretToKeyPair(s *corev1.Secret) (*certs.KeyPair, error) {
 	}, nil
 }
 
-func generateCACert() (*certs.KeyPair, error) {
-	x509Cert, privKey, err := newCertificateAuthority()
+func generateCACert(validityPeriodDays int32, keyAlgorithmType bootstrapv1.EncryptionAlgorithmType) (*certs.KeyPair, error) {
+	x509Cert, privateKey, err := newCertificateAuthority(validityPeriodDays, keyAlgorithmType)
+	if err != nil {
+		return nil, err
+	}
+	encodedKey, err := certs.EncodePrivateKeyPEMFromSigner(privateKey)
 	if err != nil {
 		return nil, err
 	}
 	return &certs.KeyPair{
 		Cert: certs.EncodeCertPEM(x509Cert),
-		Key:  certs.EncodePrivateKeyPEM(privKey),
+		Key:  encodedKey,
 	}, nil
 }
 
-func generateServiceAccountKeys() (*certs.KeyPair, error) {
-	saCreds, err := certs.NewPrivateKey()
+func generateServiceAccountKeys(_ int32, keyEncryptionAlgorithm bootstrapv1.EncryptionAlgorithmType) (*certs.KeyPair, error) {
+	saCreds, err := certs.NewSigner(keyEncryptionAlgorithm)
 	if err != nil {
 		return nil, err
 	}
-	saPub, err := certs.EncodePublicKeyPEM(&saCreds.PublicKey)
+	saPub, err := certs.EncodePublicKeyPEMFromSigner(saCreds.Public())
 	if err != nil {
 		return nil, err
 	}
+	saKey, err := certs.EncodePrivateKeyPEMFromSigner(saCreds)
+	if err != nil {
+		return nil, err
+	}
+
 	return &certs.KeyPair{
 		Cert: saPub,
-		Key:  certs.EncodePrivateKeyPEM(saCreds),
+		Key:  saKey,
 	}, nil
 }
 
 // newCertificateAuthority creates new certificate and private key for the certificate authority.
-func newCertificateAuthority() (*x509.Certificate, *rsa.PrivateKey, error) {
-	key, err := certs.NewPrivateKey()
+func newCertificateAuthority(validityPeriodDays int32, keyAlgorithmType bootstrapv1.EncryptionAlgorithmType) (*x509.Certificate, crypto.Signer, error) {
+	key, err := certs.NewSigner(keyAlgorithmType)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	c, err := newSelfSignedCACert(key)
+	c, err := newSelfSignedCACert(key, validityPeriodDays)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -457,12 +533,16 @@ func newCertificateAuthority() (*x509.Certificate, *rsa.PrivateKey, error) {
 }
 
 // newSelfSignedCACert creates a CA certificate.
-func newSelfSignedCACert(key *rsa.PrivateKey) (*x509.Certificate, error) {
+func newSelfSignedCACert(key crypto.Signer, validityPeriodDays int32) (*x509.Certificate, error) {
 	cfg := certs.Config{
 		CommonName: "kubernetes",
 	}
 
 	now := time.Now().UTC()
+	notAfter := now.Add(DefaultCACertificatesExpiryDays * time.Hour * 24)
+	if validityPeriodDays != 0 {
+		notAfter = now.Add(time.Duration(validityPeriodDays) * time.Hour * 24)
+	}
 
 	tmpl := x509.Certificate{
 		SerialNumber: new(big.Int).SetInt64(0),
@@ -471,7 +551,7 @@ func newSelfSignedCACert(key *rsa.PrivateKey) (*x509.Certificate, error) {
 			Organization: cfg.Organization,
 		},
 		NotBefore:             now.Add(time.Minute * -5),
-		NotAfter:              now.Add(time.Hour * 24 * 365 * 10), // 10 years
+		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		MaxPathLenZero:        true,
 		BasicConstraintsValid: true,

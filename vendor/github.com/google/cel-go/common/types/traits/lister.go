@@ -25,3 +25,12 @@ type Lister interface {
 	Iterable
 	Sizer
 }
+
+// MutableLister interface which emits an immutable result after an intermediate computation.
+//
+// Note, this interface is intended only to be used within Comprehensions where the mutable
+// value is not directly observable within the user-authored CEL expression.
+type MutableLister interface {
+	Lister
+	ToImmutableList() Lister
+}

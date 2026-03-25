@@ -18,31 +18,23 @@ limitations under the License.
 package conversion
 
 import (
-	"context"
 	"math/rand"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	fuzz "github.com/google/gofuzz"
 	"github.com/onsi/gomega"
-	"github.com/pkg/errors"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/apitesting/fuzzer"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metafuzzer "k8s.io/apimachinery/pkg/apis/meta/fuzzer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
-
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/randfill"
 )
 
 const (
@@ -50,63 +42,6 @@ const (
 	// use to retain the data in case of down-conversion from the hub.
 	DataAnnotation = "cluster.x-k8s.io/conversion-data"
 )
-
-var (
-	contract = clusterv1.GroupVersion.String()
-)
-
-// UpdateReferenceAPIContract takes a client and object reference, queries the API Server for
-// the Custom Resource Definition and looks which one is the stored version available.
-//
-// The object passed as input is modified in place if an updated compatible version is found.
-// NOTE: In case CRDs are named incorrectly, this func is using an APIReader instead of the regular client to list CRDs
-// to avoid implicitly creating an informer for CRDs which would lead to high memory consumption.
-func UpdateReferenceAPIContract(ctx context.Context, c client.Client, apiReader client.Reader, ref *corev1.ObjectReference) error {
-	log := ctrl.LoggerFrom(ctx)
-	gvk := ref.GroupVersionKind()
-
-	metadata, err := util.GetGVKMetadata(ctx, c, gvk)
-	if err != nil {
-		log.Info("Cannot retrieve CRD with metadata only client, falling back to slower listing", "err", err.Error())
-		// Fallback to slower and more memory intensive method to get the full CRD.
-		crd, err := util.GetCRDWithContract(ctx, apiReader, gvk, contract)
-		if err != nil {
-			return err
-		}
-		metadata = &metav1.PartialObjectMetadata{
-			TypeMeta:   crd.TypeMeta,
-			ObjectMeta: crd.ObjectMeta,
-		}
-	}
-
-	chosen, err := getLatestAPIVersionFromContract(metadata)
-	if err != nil {
-		return err
-	}
-
-	// Modify the GroupVersionKind with the new version.
-	if gvk.Version != chosen {
-		gvk.Version = chosen
-		ref.SetGroupVersionKind(gvk)
-	}
-
-	return nil
-}
-
-func getLatestAPIVersionFromContract(metadata metav1.Object) (string, error) {
-	labels := metadata.GetLabels()
-
-	// If there is no label, return early without changing the reference.
-	supportedVersions, ok := labels[contract]
-	if !ok || supportedVersions == "" {
-		return "", errors.Errorf("cannot find any versions matching contract %q for GVK %v as contract version label(s) are either missing or empty", contract, metadata.GetName())
-	}
-
-	// Pick the latest version in the slice and validate it.
-	kubeVersions := util.KubeAwareAPIVersions(strings.Split(supportedVersions, "_"))
-	sort.Sort(kubeVersions)
-	return kubeVersions[len(kubeVersions)-1], nil
-}
 
 // MarshalData stores the source object as json data in the destination object annotations map.
 // It ignores the metadata of the source object.
@@ -146,7 +81,7 @@ func UnmarshalData(from metav1.Object, to interface{}) (bool, error) {
 }
 
 // GetFuzzer returns a new fuzzer to be used for testing.
-func GetFuzzer(scheme *runtime.Scheme, funcs ...fuzzer.FuzzerFuncs) *fuzz.Fuzzer {
+func GetFuzzer(scheme *runtime.Scheme, funcs ...fuzzer.FuzzerFuncs) *randfill.Filler {
 	funcs = append([]fuzzer.FuzzerFuncs{
 		metafuzzer.Funcs,
 		func(_ runtimeserializer.CodecFactory) []interface{} {
@@ -155,14 +90,34 @@ func GetFuzzer(scheme *runtime.Scheme, funcs ...fuzzer.FuzzerFuncs) *fuzz.Fuzzer
 				// fuzzed and always resulted in `nil` values.
 				// This implementation is somewhat similar to the one provided
 				// in the metafuzzer.Funcs.
-				func(input *metav1.Time, c fuzz.Continue) {
-					if input != nil {
-						var sec, nsec uint32
-						c.Fuzz(&sec)
-						c.Fuzz(&nsec)
-						fuzzed := metav1.Unix(int64(sec), int64(nsec)).Rfc3339Copy()
-						input.Time = fuzzed.Time
+				func(input **metav1.Time, c randfill.Continue) {
+					if c.Bool() {
+						// Leave the Time sometimes nil to also get coverage for this case.
+						return
 					}
+					if c.Bool() {
+						// Set the Time sometimes empty to also get coverage for this case.
+						*input = &metav1.Time{}
+						return
+					}
+					var sec, nsec uint32
+					c.Fill(&sec)
+					c.Fill(&nsec)
+					fuzzed := metav1.Unix(int64(sec), int64(nsec)).Rfc3339Copy()
+					*input = &metav1.Time{Time: fuzzed.Time}
+				},
+				// Custom fuzzer for intstr.IntOrString which does not get fuzzed otherwise.
+				func(in **intstr.IntOrString, c randfill.Continue) {
+					if c.Bool() {
+						// Leave the IntOrString sometimes nil to also get coverage for this case.
+						return
+					}
+					if c.Bool() {
+						// Set the IntOrString sometimes empty to also get coverage for this case.
+						*in = &intstr.IntOrString{}
+						return
+					}
+					*in = ptr.To(intstr.FromInt32(c.Int31n(50)))
 				},
 			}
 		},
@@ -202,10 +157,10 @@ func FuzzTestFunc(input FuzzTestFuncInput) func(*testing.T) {
 			g := gomega.NewWithT(t)
 			fuzzer := GetFuzzer(input.Scheme, input.FuzzerFuncs...)
 
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				// Create the spoke and fuzz it
 				spokeBefore := input.Spoke.DeepCopyObject().(conversion.Convertible)
-				fuzzer.Fuzz(spokeBefore)
+				fuzzer.Fill(spokeBefore)
 
 				// First convert spoke to hub
 				hubCopy := input.Hub.DeepCopyObject().(conversion.Hub)
@@ -226,17 +181,20 @@ func FuzzTestFunc(input FuzzTestFuncInput) func(*testing.T) {
 					input.SpokeAfterMutation(spokeAfter)
 				}
 
-				g.Expect(apiequality.Semantic.DeepEqual(spokeBefore, spokeAfter)).To(gomega.BeTrue(), cmp.Diff(spokeBefore, spokeAfter))
+				if !apiequality.Semantic.DeepEqual(spokeBefore, spokeAfter) {
+					diff := cmp.Diff(spokeBefore, spokeAfter)
+					g.Expect(false).To(gomega.BeTrue(), diff)
+				}
 			}
 		})
 		t.Run("hub-spoke-hub", func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			fuzzer := GetFuzzer(input.Scheme, input.FuzzerFuncs...)
 
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				// Create the hub and fuzz it
 				hubBefore := input.Hub.DeepCopyObject().(conversion.Hub)
-				fuzzer.Fuzz(hubBefore)
+				fuzzer.Fill(hubBefore)
 
 				// First convert hub to spoke
 				dstCopy := input.Spoke.DeepCopyObject().(conversion.Convertible)
@@ -250,7 +208,10 @@ func FuzzTestFunc(input FuzzTestFuncInput) func(*testing.T) {
 					input.HubAfterMutation(hubAfter)
 				}
 
-				g.Expect(apiequality.Semantic.DeepEqual(hubBefore, hubAfter)).To(gomega.BeTrue(), cmp.Diff(hubBefore, hubAfter))
+				if !apiequality.Semantic.DeepEqual(hubBefore, hubAfter) {
+					diff := cmp.Diff(hubBefore, hubAfter)
+					g.Expect(false).To(gomega.BeTrue(), diff)
+				}
 			}
 		})
 	}

@@ -18,18 +18,20 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/google/go-github/v39/github"
-	"github.com/pkg/errors"
+	"github.com/google/go-github/v58/github"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
 
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-sdk/github/internal"
 	"sigs.k8s.io/release-utils/env"
@@ -37,7 +39,7 @@ import (
 )
 
 const (
-	// TokenEnvKey is the default GitHub token environemt variable key
+	// TokenEnvKey is the default GitHub token environment variable key
 	TokenEnvKey = "GITHUB_TOKEN"
 	// GitHubURL Prefix for github URLs
 	GitHubURL = "https://github.com/"
@@ -73,87 +75,85 @@ func DefaultOptions() *Options {
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -generate
 //counterfeiter:generate . Client
+//go:generate /usr/bin/env bash -c "cat ../scripts/boilerplate/boilerplate.generatego.txt githubfakes/fake_client.go > githubfakes/_fake_client.go && mv githubfakes/_fake_client.go githubfakes/fake_client.go"
+
 // Client is an interface modeling supported GitHub operations
 type Client interface {
 	GetCommit(
 		context.Context, string, string, string,
 	) (*github.Commit, *github.Response, error)
-
 	GetPullRequest(
 		context.Context, string, string, int,
 	) (*github.PullRequest, *github.Response, error)
-
 	GetIssue(
 		context.Context, string, string, int,
 	) (*github.Issue, *github.Response, error)
-
 	GetRepoCommit(
 		context.Context, string, string, string,
 	) (*github.RepositoryCommit, *github.Response, error)
-
 	ListCommits(
 		context.Context, string, string, *github.CommitsListOptions,
 	) ([]*github.RepositoryCommit, *github.Response, error)
-
 	ListPullRequestsWithCommit(
-		context.Context, string, string, string, *github.PullRequestListOptions,
+		context.Context, string, string, string, *github.ListOptions,
 	) ([]*github.PullRequest, *github.Response, error)
-
 	ListMilestones(
 		context.Context, string, string, *github.MilestoneListOptions,
 	) ([]*github.Milestone, *github.Response, error)
-
 	ListReleases(
 		context.Context, string, string, *github.ListOptions,
 	) ([]*github.RepositoryRelease, *github.Response, error)
-
 	GetReleaseByTag(
 		context.Context, string, string, string,
 	) (*github.RepositoryRelease, *github.Response, error)
-
 	DownloadReleaseAsset(
 		context.Context, string, string, int64,
 	) (io.ReadCloser, string, error)
-
 	ListTags(
 		context.Context, string, string, *github.ListOptions,
 	) ([]*github.RepositoryTag, *github.Response, error)
-
 	ListBranches(
 		context.Context, string, string, *github.BranchListOptions,
 	) ([]*github.Branch, *github.Response, error)
-
 	CreatePullRequest(
 		context.Context, string, string, string, string, string, string,
 	) (*github.PullRequest, error)
-
 	CreateIssue(
 		context.Context, string, string, *github.IssueRequest,
 	) (*github.Issue, error)
-
 	GetRepository(
 		context.Context, string, string,
 	) (*github.Repository, *github.Response, error)
-
 	UpdateReleasePage(
 		context.Context, string, string, int64, *github.RepositoryRelease,
 	) (*github.RepositoryRelease, error)
-
+	UpdateIssue(
+		context.Context, string, string, int, *github.IssueRequest,
+	) (*github.Issue, *github.Response, error)
+	AddLabels(
+		context.Context, string, string, int, []string,
+	) ([]*github.Label, *github.Response, error)
 	UploadReleaseAsset(
 		context.Context, string, string, int64, *github.UploadOptions, *os.File,
 	) (*github.ReleaseAsset, error)
-
 	DeleteReleaseAsset(
 		context.Context, string, string, int64,
 	) error
-
 	ListReleaseAssets(
 		context.Context, string, string, int64, *github.ListOptions,
 	) ([]*github.ReleaseAsset, error)
-
 	CreateComment(
 		context.Context, string, string, int, string,
 	) (*github.IssueComment, *github.Response, error)
+	ListIssues(
+		context.Context, string, string, *github.IssueListByRepoOptions,
+	) ([]*github.Issue, *github.Response, error)
+	ListComments(
+		context.Context, string, string, int, *github.IssueListCommentsOptions,
+	) ([]*github.IssueComment, *github.Response, error)
+	RequestPullRequestReview(
+		context.Context, string, string, int, []string, []string,
+	) (*github.PullRequest, error)
 }
 
 // NewIssueOptions is a struct of optional fields for new issues
@@ -162,6 +162,20 @@ type NewIssueOptions struct {
 	State     string   // open, closed or all. Defaults to "open"
 	Assignees []string // List of GitHub handles of extra assignees, must be collaborators
 	Labels    []string // List of labels to apply. They will be created if new
+}
+
+// UpdateReleasePageOptions is a struct of optional fields for creating/updating releases.
+type UpdateReleasePageOptions struct {
+	// Name is the name/title of the release.
+	Name *string
+	// Body is the body/content of the release (e.g. release notes).
+	Body *string
+	// Draft is marking the release as draft, if set to true.
+	Draft *bool
+	// Prerelease is marking the release as a pre-release, if set to true.
+	Prerelease *bool
+	// Latest is marking the release to be set as latest at the time of updating, if set to true.
+	Latest *bool
 }
 
 // TODO: we should clean up the functions listed below and agree on the same
@@ -177,7 +191,7 @@ type NewIssueOptions struct {
 // GitHub requests.
 func New() *GitHub {
 	token := env.Default(TokenEnvKey, "")
-	client, _ := NewWithToken(token) // nolint: errcheck
+	client, _ := NewWithToken(token) //nolint: errcheck
 	return client
 }
 
@@ -194,6 +208,7 @@ func NewWithToken(token string) (*GitHub, error) {
 			&oauth2.Token{AccessToken: token},
 		))
 	}
+
 	logrus.Debugf("Using %s GitHub client", state)
 	return &GitHub{
 		client:  &githubClient{github.NewClient(client)},
@@ -217,7 +232,7 @@ func NewEnterpriseWithToken(baseURL, uploadURL, token string) (*GitHub, error) {
 		))
 	}
 	logrus.Debugf("Using %s Enterprise GitHub client", state)
-	ghclient, err := github.NewEnterpriseClient(baseURL, uploadURL, client)
+	ghclient, err := github.NewClient(client).WithEnterpriseURLs(baseURL, uploadURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to new github client: %s", err)
 	}
@@ -284,7 +299,7 @@ func (g *githubClient) ListCommits(
 
 func (g *githubClient) ListPullRequestsWithCommit(
 	ctx context.Context, owner, repo, sha string,
-	opt *github.PullRequestListOptions,
+	opt *github.ListOptions,
 ) ([]*github.PullRequest, *github.Response, error) {
 	for shouldRetry := internal.DefaultGithubErrChecker(); ; {
 		prs, resp, err := g.PullRequests.ListPullRequestsWithCommit(
@@ -349,7 +364,7 @@ func (g *githubClient) ListBranches(
 ) ([]*github.Branch, *github.Response, error) {
 	branches, response, err := g.Repositories.ListBranches(ctx, owner, repo, opt)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "fetching brnaches from repo")
+		return nil, nil, fmt.Errorf("fetching branches from repo: %w", err)
 	}
 
 	return branches, response, nil
@@ -378,12 +393,28 @@ func (g *githubClient) CreatePullRequest(
 		MaintainerCanModify: github.Bool(true),
 	}
 
-	pr, _, err := g.PullRequests.Create(ctx, owner, repo, newPullRequest)
-	if err != nil {
-		return pr, errors.Wrap(err, "creating pull request")
+	for shouldRetry := internal.DefaultGithubErrChecker(); ; {
+		pr, _, err := g.PullRequests.Create(ctx, owner, repo, newPullRequest)
+		if !shouldRetry(err) {
+			return pr, err
+		}
+	}
+}
+
+func (g *githubClient) RequestPullRequestReview(
+	ctx context.Context, owner, repo string, prNumber int, reviewers, teamReviewers []string,
+) (*github.PullRequest, error) {
+	reviewersRequest := github.ReviewersRequest{
+		Reviewers:     reviewers,
+		TeamReviewers: teamReviewers,
 	}
 
-	logrus.Infof("Successfully created PR #%d", pr.GetNumber())
+	pr, _, err := g.PullRequests.RequestReviewers(ctx, owner, repo, prNumber, reviewersRequest)
+	if err != nil {
+		return pr, fmt.Errorf("requesting reviewers for PR %d: %w", prNumber, err)
+	}
+
+	logrus.Infof("Successfully added reviewers for PR #%d", pr.GetNumber())
 	return pr, nil
 }
 
@@ -393,7 +424,7 @@ func (g *githubClient) CreateIssue(
 	// Create the issue on github
 	issue, _, err := g.Issues.Create(ctx, owner, repo, req)
 	if err != nil {
-		return issue, errors.Wrap(err, "creating new issue")
+		return issue, fmt.Errorf("creating new issue: %w", err)
 	}
 
 	logrus.Infof("Successfully created issue #%d: %s", issue.GetNumber(), issue.GetTitle())
@@ -405,7 +436,7 @@ func (g *githubClient) GetRepository(
 ) (*github.Repository, *github.Response, error) {
 	pr, resp, err := g.Repositories.Get(ctx, owner, repo)
 	if err != nil {
-		return pr, resp, errors.Wrap(err, "getting repository")
+		return pr, resp, fmt.Errorf("getting repository: %w", err)
 	}
 
 	return pr, resp, nil
@@ -423,7 +454,7 @@ func (g *githubClient) UpdateReleasePage(
 	}
 
 	if err != nil {
-		return nil, errors.Wrap(err, "updating release pagin in github")
+		return nil, fmt.Errorf("updating release pagin in github: %w", err)
 	}
 
 	return release, nil
@@ -437,17 +468,18 @@ func (g *githubClient) UploadReleaseAsset(
 		ctx, owner, repo, releaseID, opts, file,
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "while uploading asset file")
+		return nil, fmt.Errorf("while uploading asset file: %w", err)
 	}
 
 	return asset, nil
 }
 
 func (g *githubClient) DeleteReleaseAsset(
-	ctx context.Context, owner string, repo string, assetID int64) error {
+	ctx context.Context, owner string, repo string, assetID int64,
+) error {
 	_, err := g.Repositories.DeleteReleaseAsset(ctx, owner, repo, assetID)
 	if err != nil {
-		return errors.Wrapf(err, "deleting asset %d", assetID)
+		return fmt.Errorf("deleting asset %d: %w", assetID, err)
 	}
 	return nil
 }
@@ -461,7 +493,7 @@ func (g *githubClient) ListReleaseAssets(
 	for {
 		moreAssets, r, err := g.Repositories.ListReleaseAssets(ctx, owner, repo, releaseID, options)
 		if err != nil {
-			return nil, errors.Wrap(err, "getting release assets from GitHub")
+			return nil, fmt.Errorf("getting release assets from GitHub: %w", err)
 		}
 		assets = append(assets, moreAssets...)
 		if r.NextPage == 0 {
@@ -485,6 +517,31 @@ func (g *githubClient) CreateComment(
 			return issueComment, resp, err
 		}
 	}
+}
+
+func (g *githubClient) ListIssues(
+	ctx context.Context, owner, repo string, opts *github.IssueListByRepoOptions,
+) ([]*github.Issue, *github.Response, error) {
+	issues, response, err := g.Issues.ListByRepo(ctx, owner, repo, opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching issues from repo: %w", err)
+	}
+
+	return issues, response, nil
+}
+
+func (g *githubClient) ListComments(
+	ctx context.Context,
+	owner, repo string,
+	number int,
+	opts *github.IssueListCommentsOptions,
+) ([]*github.IssueComment, *github.Response, error) {
+	comments, response, err := g.Issues.ListComments(ctx, owner, repo, number, opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching comments from issue: %w", err)
+	}
+
+	return comments, response, nil
 }
 
 // SetClient can be used to manually set the internal GitHub client
@@ -530,7 +587,7 @@ func (g *GitHub) LatestGitHubTagsPerBranch() (TagsPerBranch, error) {
 			opts,
 		)
 		if err != nil {
-			return nil, errors.Wrap(err, "unable to retrieve GitHub tags")
+			return nil, fmt.Errorf("unable to retrieve GitHub tags: %w", err)
 		}
 		allTags = append(allTags, tags...)
 		if resp.NextPage == 0 {
@@ -586,7 +643,7 @@ func (g *GitHub) Releases(owner, repo string, includePrereleases bool) ([]*githu
 		context.Background(), owner, repo, nil,
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to retrieve GitHub releases")
+		return nil, fmt.Errorf("unable to retrieve GitHub releases: %w", err)
 	}
 
 	releases := []*github.RepositoryRelease{}
@@ -609,7 +666,7 @@ func (g *GitHub) Releases(owner, repo string, includePrereleases bool) ([]*githu
 func (g *GitHub) GetReleaseTags(owner, repo string, includePrereleases bool) ([]string, error) {
 	releases, err := g.Releases(owner, repo, includePrereleases)
 	if err != nil {
-		return nil, errors.Wrap(err, "getting releases")
+		return nil, fmt.Errorf("getting releases: %w", err)
 	}
 
 	releaseTags := []string{}
@@ -629,7 +686,7 @@ func (g *GitHub) DownloadReleaseAssets(owner, repo string, releaseTags []string,
 		for _, tag := range releaseTags {
 			release, _, err := g.client.GetReleaseByTag(context.Background(), owner, repo, tag)
 			if err != nil {
-				return errors.Wrapf(err, "getting release from tag %s", tag)
+				return fmt.Errorf("getting release from tag %s: %w", tag, err)
 			}
 			releases = append(releases, release)
 		}
@@ -652,12 +709,12 @@ func (g *GitHub) DownloadReleaseAssets(owner, repo string, releaseTags []string,
 
 			releaseDir := filepath.Join(outputDir, owner, repo, releaseTag)
 			if err := os.MkdirAll(releaseDir, os.FileMode(0o775)); err != nil {
-				return errors.Wrap(err, "creating output directory for release assets")
+				return fmt.Errorf("creating output directory for release assets: %w", err)
 			}
 
 			logrus.WithField("release", releaseTag).Infof("Writing assets to %s", releaseDir)
 			if err := g.downloadAssetsParallel(assets, owner, repo, releaseDir); err != nil {
-				return errors.Wrapf(err, "downloading assets for %s", releaseTag)
+				return fmt.Errorf("downloading assets for %s", releaseTag)
 			}
 			return nil
 		})
@@ -669,7 +726,7 @@ func (g *GitHub) DownloadReleaseAssets(owner, repo string, releaseTags []string,
 				finalErr = err
 				continue
 			}
-			finalErr = errors.Wrap(finalErr, err.Error())
+			finalErr = fmt.Errorf("%v: %w", finalErr, err)
 		}
 	}
 	return finalErr
@@ -687,19 +744,19 @@ func (g *GitHub) downloadAssetsParallel(assets []*github.ReleaseAsset, owner, re
 			logrus.Infof("GitHub asset ID: %v, download URL: %s", *asset.ID, *asset.BrowserDownloadURL)
 			assetBody, _, err := g.client.DownloadReleaseAsset(context.Background(), owner, repo, asset.GetID())
 			if err != nil {
-				return errors.Wrap(err, "downloading release assets")
+				return fmt.Errorf("downloading release assets: %w", err)
 			}
 
 			absFile := filepath.Join(releaseDir, asset.GetName())
 			defer assetBody.Close()
 			assetFile, err := os.Create(absFile)
 			if err != nil {
-				return errors.Wrap(err, "creating release asset file")
+				return fmt.Errorf("creating release asset file: %w", err)
 			}
 
 			defer assetFile.Close()
 			if _, err := io.Copy(assetFile, assetBody); err != nil {
-				return errors.Wrap(err, "copying release asset to file")
+				return fmt.Errorf("copying release asset to file: %w", err)
 			}
 			return nil
 		})
@@ -711,7 +768,7 @@ func (g *GitHub) downloadAssetsParallel(assets []*github.ReleaseAsset, owner, re
 				finalErr = err
 				continue
 			}
-			finalErr = errors.Wrap(finalErr, err.Error())
+			finalErr = fmt.Errorf("%v: %w", finalErr, err)
 		}
 	}
 	return finalErr
@@ -738,7 +795,7 @@ func (g *GitHub) UploadReleaseAsset(
 
 	f, err := os.Open(fileName)
 	if err != nil {
-		return nil, errors.Wrap(err, "opening the asset file for reading")
+		return nil, fmt.Errorf("opening the asset file for reading: %w", err)
 	}
 
 	// Only the first 512 bytes are used to sniff the content type.
@@ -746,12 +803,12 @@ func (g *GitHub) UploadReleaseAsset(
 
 	_, err = f.Read(buffer)
 	if err != nil {
-		return nil, errors.Wrap(err, "reading file to determine mimetype")
+		return nil, fmt.Errorf("reading file to determine mimetype: %w", err)
 	}
 	// Reset the pointer to reuse the filehandle
 	_, err = f.Seek(0, 0)
 	if err != nil {
-		return nil, errors.Wrap(err, "rewinding the asset filepointer")
+		return nil, fmt.Errorf("rewinding the asset filepointer: %w", err)
 	}
 
 	contentType := http.DetectContentType(buffer)
@@ -767,7 +824,7 @@ func (g *GitHub) UploadReleaseAsset(
 		context.Background(), owner, repo, releaseID, uopts, f,
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "uploading asset file to release")
+		return nil, fmt.Errorf("uploading asset file to release: %w", err)
 	}
 
 	return asset, nil
@@ -802,7 +859,7 @@ func (g *GitHub) CreateIssue(
 	issueRequest.Title = &title
 	issueRequest.Body = &body
 
-	// Create the issue using the cliente
+	// Create the issue using the client
 	return g.Client().CreateIssue(context.Background(), owner, repo, issueRequest)
 }
 
@@ -817,12 +874,26 @@ func (g *GitHub) CreatePullRequest(
 		return pr, err
 	}
 
+	logrus.Infof("Successfully created PR #%d", pr.GetNumber())
+	return pr, nil
+}
+
+func (g *GitHub) RequestPullRequestReview(
+	owner, repo string, prNumber int, reviewers, teamReviewers []string,
+) (*github.PullRequest, error) {
+	// Use the client to create a new PR
+	pr, err := g.Client().RequestPullRequestReview(context.Background(), owner, repo, prNumber, reviewers, teamReviewers)
+	if err != nil {
+		return pr, err
+	}
+
 	return pr, nil
 }
 
 // GetMilestone returns a milestone object from its string name
 func (g *GitHub) GetMilestone(owner, repo, title string) (
-	ms *github.Milestone, exists bool, err error) {
+	ms *github.Milestone, exists bool, err error,
+) {
 	if title == "" {
 		return nil, false, errors.New("unable to search milestone. Title is empty")
 	}
@@ -834,7 +905,7 @@ func (g *GitHub) GetMilestone(owner, repo, title string) (
 		mstones, resp, err := g.Client().ListMilestones(
 			context.Background(), owner, repo, opts)
 		if err != nil {
-			return nil, exists, errors.Wrap(err, "listing repository milestones")
+			return nil, exists, fmt.Errorf("listing repository milestones: %w", err)
 		}
 		for _, ms = range mstones {
 			if ms.GetTitle() == title {
@@ -874,7 +945,7 @@ func (g *GitHub) ListBranches(
 	for {
 		moreBranches, r, err := g.Client().ListBranches(context.Background(), owner, repo, options)
 		if err != nil {
-			return branches, errors.Wrap(err, "getting branches from client")
+			return branches, fmt.Errorf("getting branches from client: %w", err)
 		}
 		branches = append(branches, moreBranches...)
 		if r.NextPage == 0 {
@@ -892,7 +963,7 @@ func (g *GitHub) RepoIsForkOf(
 ) (bool, error) {
 	repository, _, err := g.Client().GetRepository(context.Background(), forkOwner, forkRepo)
 	if err != nil {
-		return false, errors.Wrap(err, "checking if repository is a fork")
+		return false, fmt.Errorf("checking if repository is a fork: %w", err)
 	}
 
 	// First, repo has to be an actual fork
@@ -917,7 +988,7 @@ func (g *GitHub) BranchExists(
 ) (isBranch bool, err error) {
 	branches, err := g.ListBranches(owner, repo)
 	if err != nil {
-		return false, errors.Wrap(err, "while listing repository branches")
+		return false, fmt.Errorf("while listing repository branches: %w", err)
 	}
 
 	for _, branch := range branches {
@@ -938,25 +1009,58 @@ func (g *GitHub) UpdateReleasePage(
 	tag, commitish, name, body string,
 	isDraft, isPrerelease bool,
 ) (release *github.RepositoryRelease, err error) {
-	logrus.Infof("Updating release page for %s", tag)
+	return g.UpdateReleasePageWithOptions(owner, repo, releaseID, tag, commitish, &UpdateReleasePageOptions{
+		Name:       &name,
+		Body:       &body,
+		Draft:      &isDraft,
+		Prerelease: &isPrerelease,
+	})
+}
 
-	// Create the options for the
-	releaseData := &github.RepositoryRelease{
-		TagName:         &tag,
-		TargetCommitish: &commitish,
-		Name:            &name,
-		Body:            &body,
-		Draft:           &isDraft,
-		Prerelease:      &isPrerelease,
+// toRepositoryRelease builds a repository release from the set of options.
+func (u *UpdateReleasePageOptions) toRepositoryRelease() *github.RepositoryRelease {
+	request := &github.RepositoryRelease{}
+	request.Name = u.Name
+	request.Body = u.Body
+	request.Draft = u.Draft
+	request.Prerelease = u.Prerelease
+
+	if u.Latest != nil {
+		if *u.Latest {
+			request.MakeLatest = ptr.To("true")
+		} else {
+			request.MakeLatest = ptr.To("false")
+		}
 	}
 
-	// Call the client
+	return request
+}
+
+// UpdateReleasePageWithOptions updates release pages (same as UpdateReleasePage),
+// but does so by taking a UpdateReleasePageOptions parameter. It will _not_ set
+// a release as latest unless the corresponding option is set.
+func (g *GitHub) UpdateReleasePageWithOptions(owner, repo string,
+	releaseID int64,
+	tag, commitish string,
+	opts *UpdateReleasePageOptions,
+) (release *github.RepositoryRelease, err error) {
+	logrus.Infof("Updating release page for %s", tag)
+
+	if opts == nil {
+		opts = &UpdateReleasePageOptions{}
+	}
+
+	releaseData := opts.toRepositoryRelease()
+	releaseData.TagName = &tag
+	releaseData.TargetCommitish = &commitish
+
+	// Call the client.
 	release, err = g.Client().UpdateReleasePage(
 		context.Background(), owner, repo, releaseID, releaseData,
 	)
 
 	if err != nil {
-		return nil, errors.Wrap(err, "updating the release page")
+		return nil, fmt.Errorf("updating the release page: %w", err)
 	}
 
 	return release, nil
@@ -964,21 +1068,25 @@ func (g *GitHub) UpdateReleasePage(
 
 // DeleteReleaseAsset deletes an asset from a release
 func (g *GitHub) DeleteReleaseAsset(owner, repo string, assetID int64) error {
-	return errors.Wrap(g.Client().DeleteReleaseAsset(
+	if err := g.Client().DeleteReleaseAsset(
 		context.Background(), owner, repo, assetID,
-	), "deleting asset from release")
+	); err != nil {
+		return fmt.Errorf("deleting asset from release: %w", err)
+	}
+	return nil
 }
 
 // ListReleaseAssets gets the assets uploaded to a GitHub release
 func (g *GitHub) ListReleaseAssets(
-	owner, repo string, releaseID int64) ([]*github.ReleaseAsset, error) {
+	owner, repo string, releaseID int64,
+) ([]*github.ReleaseAsset, error) {
 	// Get the assets from the client
 	assets, err := g.Client().ListReleaseAssets(
 		context.Background(), owner, repo, releaseID,
 		&github.ListOptions{PerPage: g.Options().GetItemsPerPage()},
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "getting release assets")
+		return nil, fmt.Errorf("getting release assets: %w", err)
 	}
 	return assets, nil
 }
@@ -991,7 +1099,7 @@ func (g *GitHub) TagExists(owner, repo, tag string) (exists bool, err error) {
 			context.Background(), owner, repo, options,
 		)
 		if err != nil {
-			return exists, errors.Wrap(err, "listing repository tags")
+			return exists, fmt.Errorf("listing repository tags: %w", err)
 		}
 
 		// List all tags returned and check if the one we're looking for exists
@@ -1006,4 +1114,138 @@ func (g *GitHub) TagExists(owner, repo, tag string) (exists bool, err error) {
 		options.Page = r.NextPage
 	}
 	return false, nil
+}
+
+// ListTags gets the tags from a GitHub repository
+func (g *GitHub) ListTags(owner, repo string) ([]*github.RepositoryTag, error) {
+	options := &github.ListOptions{PerPage: g.Options().GetItemsPerPage()}
+	tags := []*github.RepositoryTag{}
+	for {
+		repoTags, r, err := g.Client().ListTags(
+			context.Background(), owner, repo, options,
+		)
+		if err != nil {
+			return tags, fmt.Errorf("listing repository tags: %w", err)
+		}
+
+		tags = append(tags, repoTags...)
+
+		if r.NextPage == 0 {
+			break
+		}
+		options.Page = r.NextPage
+	}
+	return tags, nil
+}
+
+func (g *githubClient) UpdateIssue(
+	ctx context.Context, owner, repo string, number int, issueRequest *github.IssueRequest,
+) (*github.Issue, *github.Response, error) {
+	for shouldRetry := internal.DefaultGithubErrChecker(); ; {
+		issue, resp, err := g.Issues.Edit(ctx, owner, repo, number, issueRequest)
+		if !shouldRetry(err) {
+			return issue, resp, err
+		}
+	}
+}
+
+func (g *githubClient) AddLabels(
+	ctx context.Context, owner, repo string, number int, labels []string,
+) ([]*github.Label, *github.Response, error) {
+	for shouldRetry := internal.DefaultGithubErrChecker(); ; {
+		appliedLabels, resp, err := g.Issues.AddLabelsToIssue(ctx, owner, repo, number, labels)
+		if !shouldRetry(err) {
+			return appliedLabels, resp, err
+		}
+	}
+}
+
+// IssueState is the enum for all available issue states.
+type IssueState string
+
+const (
+	// IssueStateAll can be used to list all issues.
+	IssueStateAll IssueState = "all"
+
+	// IssueStateOpen can be used to list only open issues.
+	IssueStateOpen IssueState = "open"
+
+	// IssueStateClosed can be used to list only closed issues.
+	IssueStateClosed IssueState = "closed"
+)
+
+// ListIssues gets the issues from a GitHub repository.
+// State filters issues based on their state. Possible values are: open,
+// closed, all. Default is "open".
+func (g *GitHub) ListIssues(owner, repo string, state IssueState) ([]*github.Issue, error) {
+	options := &github.IssueListByRepoOptions{
+		State:       string(state),
+		ListOptions: github.ListOptions{PerPage: g.Options().GetItemsPerPage()},
+	}
+	issues := []*github.Issue{}
+	for {
+		more, r, err := g.Client().ListIssues(context.Background(), owner, repo, options)
+		if err != nil {
+			return issues, fmt.Errorf("getting issues from client: %w", err)
+		}
+		issues = append(issues, more...)
+		if r.NextPage == 0 {
+			break
+		}
+		options.Page = r.NextPage
+	}
+
+	return issues, nil
+}
+
+// Sort specifies how to sort comments. Possible values are: created, updated.
+type Sort string
+
+// SortDirection in which to sort comments. Possible values are: asc, desc.
+type SortDirection string
+
+const (
+	SortCreated Sort = "created"
+	SortUpdated Sort = "updated"
+
+	SortDirectionAscending  SortDirection = "asc"
+	SortDirectionDescending SortDirection = "desc"
+)
+
+// ListComments lists all comments on the specified issue. Specifying an issue
+// number of 0 will return all comments on all issues for the repository.
+//
+// GitHub API docs: https://docs.github.com/en/rest/issues/comments#list-issue-comments
+// GitHub API docs: https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository
+func (g *GitHub) ListComments(
+	owner, repo string,
+	issueNumber int,
+	sort Sort,
+	direction SortDirection,
+	since *time.Time,
+) ([]*github.IssueComment, error) {
+	options := &github.IssueListCommentsOptions{
+		Sort:        github.String(string(sort)),
+		Direction:   github.String(string(direction)),
+		ListOptions: github.ListOptions{PerPage: g.Options().GetItemsPerPage()},
+	}
+
+	if since != nil {
+		options.Since = since
+	}
+
+	comments := []*github.IssueComment{}
+	for {
+		more, r, err := g.Client().ListComments(context.Background(), owner, repo, issueNumber, options)
+		if err != nil {
+			return comments, fmt.Errorf("getting comments from client: %w", err)
+		}
+		comments = append(comments, more...)
+		if r.NextPage == 0 {
+			break
+		}
+		options.Page = r.NextPage
+	}
+
+	return comments, nil
 }

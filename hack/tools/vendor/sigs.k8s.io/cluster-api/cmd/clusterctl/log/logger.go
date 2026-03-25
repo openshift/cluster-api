@@ -67,7 +67,7 @@ type logger struct {
 
 var _ logr.LogSink = &logger{}
 
-func (l *logger) Init(info logr.RuntimeInfo) {
+func (l *logger) Init(_ logr.RuntimeInfo) {
 }
 
 // Enabled tests whether this Logger is enabled.
@@ -106,7 +106,7 @@ func (l *logger) V(level int) logr.LogSink {
 // WithName adds a new element to the logger's name.
 func (l *logger) WithName(name string) logr.LogSink {
 	nl := l.clone()
-	if len(l.prefix) > 0 {
+	if l.prefix != "" {
 		nl.prefix = l.prefix + "/"
 	}
 	nl.prefix += name
@@ -150,11 +150,11 @@ func copySlice(in []interface{}) []interface{} {
 
 // flatten returns a human readable/machine parsable text representing the LogEntry.
 // Most notable difference with the klog implementation are:
-// - The message is printed at the beginning of the line, without the Msg= variable name e.g.
-//   "Msg"="This is a message" --> This is a message
-// - Variables name are not quoted, eg.
-//   This is a message "Var1"="value" --> This is a message Var1="value"
-// - Variables are not sorted, thus allowing full control to the developer on the output.
+//   - The message is printed at the beginning of the line, without the Msg= variable name e.g.
+//     "Msg"="This is a message" --> This is a message
+//   - Variables name are not quoted, eg.
+//     This is a message "Var1"="value" --> This is a message Var1="value"
+//   - Variables are not sorted, thus allowing full control to the developer on the output.
 func flatten(entry logEntry) (string, error) {
 	var msgValue string
 	var errorValue error

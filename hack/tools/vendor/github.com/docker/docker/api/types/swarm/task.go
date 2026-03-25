@@ -1,9 +1,9 @@
-package swarm // import "github.com/docker/docker/api/types/swarm"
+package swarm
 
 import (
 	"time"
 
-	"github.com/docker/docker/api/types/swarm/runtime"
+	"github.com/docker/docker/api/types/filters"
 )
 
 // TaskState represents the state of a task.
@@ -62,6 +62,11 @@ type Task struct {
 	// used to determine which Tasks belong to which run of the job. This field
 	// is absent if the Service mode is Replicated or Global.
 	JobIteration *Version `json:",omitempty"`
+
+	// Volumes is the list of VolumeAttachments for this task. It specifies
+	// which particular volumes are to be used by this particular task, and
+	// fulfilling what mounts in the spec.
+	Volumes []VolumeAttachment
 }
 
 // TaskSpec represents the spec of a task.
@@ -71,7 +76,7 @@ type TaskSpec struct {
 	// NetworkAttachmentSpec is used if the `Runtime` field is set to
 	// `attachment`.
 	ContainerSpec         *ContainerSpec         `json:",omitempty"`
-	PluginSpec            *runtime.PluginSpec    `json:",omitempty"`
+	PluginSpec            *RuntimeSpec           `json:",omitempty"`
 	NetworkAttachmentSpec *NetworkAttachmentSpec `json:",omitempty"`
 
 	Resources     *ResourceRequirements     `json:",omitempty"`
@@ -203,4 +208,23 @@ type ContainerStatus struct {
 // service has published host ports
 type PortStatus struct {
 	Ports []PortConfig `json:",omitempty"`
+}
+
+// VolumeAttachment contains the associating a Volume to a Task.
+type VolumeAttachment struct {
+	// ID is the Swarmkit ID of the Volume. This is not the CSI VolumeId.
+	ID string `json:",omitempty"`
+
+	// Source, together with Target, indicates the Mount, as specified in the
+	// ContainerSpec, that this volume fulfills.
+	Source string `json:",omitempty"`
+
+	// Target, together with Source, indicates the Mount, as specified
+	// in the ContainerSpec, that this volume fulfills.
+	Target string `json:",omitempty"`
+}
+
+// TaskListOptions holds parameters to list tasks with.
+type TaskListOptions struct {
+	Filters filters.Args
 }
