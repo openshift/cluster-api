@@ -39,6 +39,8 @@ import (
 	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
+	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
+	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
 	"sigs.k8s.io/cluster-api/internal/test/envtest"
 )
 
@@ -96,9 +98,13 @@ func TestMain(m *testing.M) {
 		clusterCache.(interface{ SetConnectionCreationRetryInterval(time.Duration) }).
 			SetConnectionCreationRetryInterval(2 * time.Second)
 
+		clusterCache.(interface{ DisablePrivateKeyGeneration() }).DisablePrivateKeyGeneration()
+
 		if err := (&Reconciler{
-			Client:                           mgr.GetClient(),
-			APIReader:                        mgr.GetAPIReader(),
+			Client:    mgr.GetClient(),
+			APIReader: mgr.GetAPIReader(),
+			// Just adding a minimal RuntimeClient to avoid panics in tests.
+			RuntimeClient:                    fakeruntimeclient.NewRuntimeClientBuilder().WithCatalog(runtimecatalog.New()).Build(),
 			ClusterCache:                     clusterCache,
 			RemoteConditionsGracePeriod:      5 * time.Minute,
 			AdditionalSyncMachineLabels:      nil,

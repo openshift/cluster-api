@@ -39,7 +39,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/webhooks/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -1675,12 +1677,14 @@ func TestClusterTopologyValidation(t *testing.T) {
 	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.ClusterTopology, true)
 
 	tests := []struct {
-		name              string
-		in                *clusterv1.Cluster
-		old               *clusterv1.Cluster
-		additionalObjects []client.Object
-		expectErr         bool
-		expectWarning     bool
+		name                         string
+		in                           *clusterv1.Cluster
+		old                          *clusterv1.Cluster
+		additionalObjects            []client.Object
+		clusterClassVersions         []string
+		generateUpgradePlanExtension string
+		expectErr                    bool
+		expectWarning                bool
 	}{
 		{
 			name:      "should return error when topology does not have class",
@@ -1779,6 +1783,31 @@ func TestClusterTopologyValidation(t *testing.T) {
 				Build(),
 		},
 		{
+			name:      "should pass when changing build tag - not sortable",
+			expectErr: false,
+			old: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.2.3+ANCBG0").
+					Build()).
+				Build(),
+			in: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.2.3+ANCBG1").
+					Build()).
+				Build(),
+			additionalObjects: []client.Object{
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
+				builder.ControlPlane("fooboo", "cluster1-cp").WithVersion("v1.2.3+ANCBG0").
+					WithStatusFields(map[string]interface{}{"status.version": "v1.2.3+ANCBG0"}).
+					Build(),
+			},
+		},
+		{
 			name:      "should return error when upgrading +2 minor version",
 			expectErr: true,
 			old: builder.Cluster("fooboo", "cluster1").
@@ -1793,6 +1822,131 @@ func TestClusterTopologyValidation(t *testing.T) {
 					WithVersion("v1.4.0").
 					Build()).
 				Build(),
+		},
+		{
+			name:      "fails when kubernetes version are defined in CC and version does not match (on create)",
+			expectErr: true,
+			in: builder.Cluster("fooboo", "cluster1").
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.3.2").
+					Build()).
+				Build(),
+			clusterClassVersions: []string{"v1.2.3", "v1.3.1", "v1.4.0"},
+		},
+		{
+			name:      "fails when kubernetes version are defined in CC and version does not match",
+			expectErr: true,
+			old: builder.Cluster("fooboo", "cluster1").
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.2.3").
+					Build()).
+				Build(),
+			in: builder.Cluster("fooboo", "cluster1").
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.3.2").
+					Build()).
+				Build(),
+			clusterClassVersions: []string{"v1.2.3", "v1.3.1", "v1.4.0"},
+		},
+		{
+			name:      "fails when upgrading but the AfterClusterUpgrade is still pending",
+			expectErr: true,
+			old: builder.Cluster("fooboo", "cluster1").
+				WithAnnotations(map[string]string{
+					runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
+				}).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.2.3").
+					Build()).
+				Build(),
+			in: builder.Cluster("fooboo", "cluster1").
+				WithAnnotations(map[string]string{
+					runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
+				}).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.3.2").
+					Build()).
+				Build(),
+		},
+		{
+			name: "should allow upgrading >1 minor version when kubernetes version are defined in CC",
+			old: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.2.3").
+					Build()).
+				Build(),
+			in: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.4.0").
+					Build()).
+				Build(),
+			clusterClassVersions: []string{"v1.2.3", "v1.3.1", "v1.4.0"},
+			additionalObjects: []client.Object{
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
+				builder.ControlPlane("fooboo", "cluster1-cp").WithVersion("v1.2.3").
+					WithStatusFields(map[string]interface{}{"status.version": "v1.2.3"}).
+					Build(),
+			},
+		},
+		{
+			name: "should allow upgrading >1 minor version when kubernetes version are defined in CC - with build tags",
+			old: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.2.3+ANCBG0").
+					Build()).
+				Build(),
+			in: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.4.0+BXCBG0").
+					Build()).
+				Build(),
+			clusterClassVersions: []string{"v1.2.3+ANCBG0", "v1.3.1+QPAVG0", "v1.4.0+BXCBG0"},
+			additionalObjects: []client.Object{
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
+				builder.ControlPlane("fooboo", "cluster1-cp").WithVersion("v1.2.3+ANCBG0").
+					WithStatusFields(map[string]interface{}{"status.version": "v1.2.3+ANCBG0"}).
+					Build(),
+			},
+		},
+		{
+			name: "should allow upgrading >1 minor version when generateUpgradePlan extension is defined in CC",
+			old: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.2.3").
+					Build()).
+				Build(),
+			in: builder.Cluster("fooboo", "cluster1").
+				WithControlPlane(builder.ControlPlane("fooboo", "cluster1-cp").Build()).
+				WithTopology(builder.ClusterTopology().
+					WithClass("foo").
+					WithVersion("v1.4.0").
+					Build()).
+				Build(),
+			generateUpgradePlanExtension: "foo",
+			additionalObjects: []client.Object{
+				// Note: CRD is needed to look up the apiVersion from contract labels.
+				builder.GenericControlPlaneCRD,
+				builder.ControlPlane("fooboo", "cluster1-cp").WithVersion("v1.2.3").
+					WithStatusFields(map[string]interface{}{"status.version": "v1.2.3"}).
+					Build(),
+			},
 		},
 		{
 			name:      "should return error when duplicated MachineDeployments names exists in a Topology",
@@ -2138,6 +2292,11 @@ func TestClusterTopologyValidation(t *testing.T) {
 				).
 				Build()
 
+			if tt.clusterClassVersions != nil {
+				class.Spec.KubernetesVersions = tt.clusterClassVersions
+			}
+			class.Spec.Upgrade.External.GenerateUpgradePlanExtension = tt.generateUpgradePlanExtension
+
 			// Mark this condition to true so the webhook sees the ClusterClass as up to date.
 			conditions.Set(class, metav1.Condition{
 				Type:   clusterv1.ClusterClassVariablesReadyCondition,
@@ -2261,8 +2420,9 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 						WithControlPlaneReplicas(3).
 						WithControlPlaneMachineHealthCheck(clusterv1.ControlPlaneTopologyHealthCheck{
 							Checks: clusterv1.ControlPlaneTopologyHealthCheckChecks{
-								UnhealthyNodeConditions:   []clusterv1.UnhealthyNodeCondition{},
-								NodeStartupTimeoutSeconds: ptr.To(int32(30)),
+								UnhealthyNodeConditions:    []clusterv1.UnhealthyNodeCondition{},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{},
+								NodeStartupTimeoutSeconds:  ptr.To(int32(30)),
 							},
 						}).
 						Build()).
@@ -2287,6 +2447,12 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 									{
 										Type:   corev1.NodeReady,
 										Status: corev1.ConditionFalse,
+									},
+								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:   controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status: metav1.ConditionFalse,
 									},
 								},
 							},
@@ -2321,6 +2487,13 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 								TimeoutSeconds: ptr.To(int32(5 * 60)),
 							},
 						},
+						UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+							{
+								Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+								Status:         metav1.ConditionUnknown,
+								TimeoutSeconds: ptr.To(int32(5 * 60)),
+							},
+						},
 					},
 				}).
 				Build(),
@@ -2342,6 +2515,12 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 									{
 										Type:   corev1.NodeReady,
 										Status: corev1.ConditionFalse,
+									},
+								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:   controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status: metav1.ConditionFalse,
 									},
 								},
 							},
@@ -2393,8 +2572,9 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 								WithClass("worker-class").
 								WithMachineHealthCheck(clusterv1.MachineDeploymentTopologyHealthCheck{
 									Checks: clusterv1.MachineDeploymentTopologyHealthCheckChecks{
-										UnhealthyNodeConditions:   []clusterv1.UnhealthyNodeCondition{},
-										NodeStartupTimeoutSeconds: ptr.To(int32(30)),
+										UnhealthyNodeConditions:    []clusterv1.UnhealthyNodeCondition{},
+										UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{},
+										NodeStartupTimeoutSeconds:  ptr.To(int32(30)),
 									},
 								}).
 								Build(),
@@ -2439,6 +2619,13 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 										TimeoutSeconds: ptr.To(int32(5 * 60)),
 									},
 								},
+								UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+									{
+										Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+										Status:         metav1.ConditionUnknown,
+										TimeoutSeconds: ptr.To(int32(5 * 60)),
+									},
+								},
 							},
 						}).
 						Build(),
@@ -2465,6 +2652,12 @@ func TestClusterTopologyValidationWithClient(t *testing.T) {
 											{
 												Type:   corev1.NodeReady,
 												Status: corev1.ConditionFalse,
+											},
+										},
+										UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+											{
+												Type:   controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+												Status: metav1.ConditionFalse,
 											},
 										},
 									},
@@ -2595,7 +2788,6 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 				Build(),
 			wantErr: false,
 		},
-
 		{
 			name: "Reject cluster.topology.class change with an incompatible infrastructureCluster Kind ref change",
 			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
@@ -2654,7 +2846,6 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 				Build(),
 			wantErr: false,
 		},
-
 		{
 			name: "Reject cluster.topology.class change with an incompatible controlPlane Kind ref change",
 			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
@@ -3015,6 +3206,38 @@ func TestClusterTopologyValidationForTopologyClassChange(t *testing.T) {
 				Build(),
 			wantErr: true,
 		},
+
+		// Kubernetes Version changes.
+		{
+			name: "Accept cluster.topology.class change with a compatible Kubernetes Version",
+			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				Build(),
+			secondClass: builder.ClusterClass(metav1.NamespaceDefault, "class2").
+				WithInfrastructureClusterTemplate(refToUnstructured(compatibleNameChangeRef)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				WithVersions("v1.22.2", "v1.23.2").
+				Build(),
+			wantErr: false,
+		},
+		{
+			name: "Reject cluster.topology.class change with an incompatible Kubernetes Version",
+			firstClass: builder.ClusterClass(metav1.NamespaceDefault, "class1").
+				WithInfrastructureClusterTemplate(refToUnstructured(ref)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				Build(),
+			secondClass: builder.ClusterClass(metav1.NamespaceDefault, "class2").
+				WithInfrastructureClusterTemplate(refToUnstructured(compatibleNameChangeRef)).
+				WithControlPlaneTemplate(refToUnstructured(ref)).
+				WithControlPlaneInfrastructureMachineTemplate(refToUnstructured(ref)).
+				WithVersions("v1.33.0", "v1.34.0").
+				Build(),
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(*testing.T) {
@@ -3277,11 +3500,11 @@ func TestClusterClassPollingErrors(t *testing.T) {
 			wantErr:        false,
 		},
 		{
-			name:           "Fail on update if oldCluster ClusterClass generation does not match observedGeneration",
+			name:           "Pass on update if oldCluster ClusterClass generation does not match observedGeneration",
 			cluster:        builder.Cluster(metav1.NamespaceDefault, "cluster1").WithTopology(secondTopology).Build(),
 			oldCluster:     builder.Cluster(metav1.NamespaceDefault, "cluster1").WithTopology(topology).Build(),
 			clusterClasses: []*clusterv1.ClusterClass{ccGenerationMismatch, secondFullyReconciled},
-			wantErr:        true,
+			wantErr:        false,
 		},
 		{
 			name:           "Fail on update if old Cluster ClusterClass is not found",

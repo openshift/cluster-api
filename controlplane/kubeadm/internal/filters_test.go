@@ -17,7 +17,6 @@ limitations under the License.
 package internal
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -25,564 +24,351 @@ import (
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	kubeadmtypes "sigs.k8s.io/cluster-api/bootstrap/kubeadm/types"
 	"sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/upstream"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/desiredstate"
+	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
-func TestClusterConfigurationAnnotation(t *testing.T) {
-	t.Run("ClusterConfigurationToMachineAnnotationValue", func(t *testing.T) {
+func TestMatchesKubeadmConfig(t *testing.T) {
+	t.Run("returns true if Machine configRef is not defined", func(t *testing.T) {
 		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						APIServer: bootstrapv1.APIServer{
-							ExtraArgs: []bootstrapv1.Arg{
-								{
-									Name:  "foo",
-									Value: ptr.To("bar"),
-								},
-							},
-						},
-						CertificatesDir: "foo",
-					},
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					// ConfigRef not defined
 				},
 			},
 		}
-
-		annotations, err := ClusterConfigurationToMachineAnnotationValue(&kcp.Spec.KubeadmConfigSpec.ClusterConfiguration)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(annotations).To(Equal("{\"marshalVersion\":\"v1beta2\",\"apiServer\":{\"extraArgs\":[{\"name\":\"foo\",\"value\":\"bar\"}]},\"certificatesDir\":\"foo\"}"))
-	})
-	t.Run("ClusterConfigurationFromMachineIsOutdated", func(t *testing.T) {
-		g := NewWithT(t)
-
-		// Without annotation.
-		annotation := ""
-		g.Expect(ClusterConfigurationAnnotationFromMachineIsOutdated(annotation)).To(BeTrue())
-
-		// v1beta1 annotation (without marshalVersion)
-		annotation = "{\"etcd\":{},\"apiServer\":{\"extraArgs\":{\"foo\":\"bar\"}},\"controllerManager\":{},\"scheduler\":{},\"dns\":{}}"
-		g.Expect(ClusterConfigurationAnnotationFromMachineIsOutdated(annotation)).To(BeTrue())
-
-		// up to date annotation (marshalVersion equal to current version)
-		annotation = fmt.Sprintf("{\"marshalVersion\":%q,\"etcd\":{},\"apiServer\":{\"extraArgs\":[{\"name\":\"foo\",\"value\":\"bar\"}]},\"controllerManager\":{},\"scheduler\":{},\"dns\":{}}", bootstrapv1.GroupVersion.Version)
-		g.Expect(ClusterConfigurationAnnotationFromMachineIsOutdated(annotation)).To(BeFalse())
-
-		// marshalVersion not equal to the current version (this should not happen because marshalVersion has been introduced with the v1beta2 API)
-		annotation = "{\"marshalVersion\":\"foo\",\"etcd\":{},\"apiServer\":{\"extraArgs\":[{\"name\":\"foo\",\"value\":\"bar\"}]},\"controllerManager\":{},\"scheduler\":{},\"dns\":{}}"
-		g.Expect(ClusterConfigurationAnnotationFromMachineIsOutdated(annotation)).To(BeTrue())
-	})
-	t.Run("ClusterConfigurationFromMachine", func(t *testing.T) {
-		g := NewWithT(t)
-		m1 := &clusterv1.Machine{}
-
-		// Without annotation.
-		clusterConfiguration, err := ClusterConfigurationFromMachine(m1)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(clusterConfiguration).To(BeNil())
-
-		// v1beta1 annotation (without marshalVersion)
-		m1.SetAnnotations(map[string]string{controlplanev1.KubeadmClusterConfigurationAnnotation: "{\"etcd\":{},\"apiServer\":{\"extraArgs\":{\"foo\":\"bar\"}},\"controllerManager\":{},\"scheduler\":{},\"dns\":{},\"certificatesDir\":\"foo\"}"})
-		clusterConfiguration, err = ClusterConfigurationFromMachine(m1)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(clusterConfiguration).To(Equal(&bootstrapv1.ClusterConfiguration{
-			APIServer: bootstrapv1.APIServer{
-				ExtraArgs: []bootstrapv1.Arg{ // Extra args converted from old format to new format.
-					{
-						Name:  "foo",
-						Value: ptr.To("bar"),
-					},
-				},
-			},
-			CertificatesDir: "foo",
-		}))
-
-		// up to date annotation (marshalVersion equal to current version)
-		m1.SetAnnotations(map[string]string{controlplanev1.KubeadmClusterConfigurationAnnotation: fmt.Sprintf("{\"marshalVersion\":%q,\"etcd\":{},\"apiServer\":{\"extraArgs\":[{\"name\":\"foo\",\"value\":\"bar\"}]},\"controllerManager\":{},\"scheduler\":{},\"dns\":{},\"certificatesDir\":\"foo\"}", bootstrapv1.GroupVersion.Version)})
-		clusterConfiguration, err = ClusterConfigurationFromMachine(m1)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(clusterConfiguration).To(Equal(&bootstrapv1.ClusterConfiguration{
-			APIServer: bootstrapv1.APIServer{
-				ExtraArgs: []bootstrapv1.Arg{
-					{
-						Name:  "foo",
-						Value: ptr.To("bar"),
-					},
-				},
-			},
-			CertificatesDir: "foo",
-		}))
-	})
-}
-
-func TestMatchClusterConfiguration(t *testing.T) {
-	t.Run("machine without the ClusterConfiguration annotation should match (not enough information to make a decision)", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{}
-		m := &clusterv1.Machine{}
-		match, diff, err := matchClusterConfiguration(kcp, m)
+		reason, _, _, match, err := matchesKubeadmConfig(map[string]*bootstrapv1.KubeadmConfig{}, nil, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
+		g.Expect(reason).To(BeEmpty())
 	})
-	t.Run("machine with an invalid ClusterConfiguration annotation should not match (only solution is to rollout)", func(t *testing.T) {
+	t.Run("returns true if Machine KubeadmConfig is not found", func(t *testing.T) {
 		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{}
 		m := &clusterv1.Machine{
 			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "$|^^_",
-				},
-			},
-		}
-		match, diff, err := matchClusterConfiguration(kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeFalse())
-		g.Expect(diff).To(BeEmpty())
-	})
-	t.Run("Return true if cluster configuration matches", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						CertificatesDir: "foo",
-					},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "{\n  \"certificatesDir\": \"foo\"\n}",
-				},
-			},
-		}
-		match, diff, err := matchClusterConfiguration(kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
-	})
-	t.Run("Return false if cluster configuration does not match", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						CertificatesDir: "foo",
-					},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "{\n  \"certificatesDir\": \"bar\"\n}",
-				},
-			},
-		}
-		match, diff, err := matchClusterConfiguration(kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeFalse())
-		g.Expect(diff).To(BeComparableTo(`v1beta2.ClusterConfiguration{
-    ... // 4 identical fields
-    Scheduler:       {},
-    DNS:             {},
--   CertificatesDir: "bar",
-+   CertificatesDir: "foo",
-    ImageRepository: "",
-    FeatureGates:    nil,
-    ... // 2 identical fields
-  }`))
-	})
-	t.Run("Return true if only omittable fields are changed", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						FeatureGates: map[string]bool{},
-					},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "{}",
-				},
-			},
-		}
-		match, diff, err := matchClusterConfiguration(kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
-	})
-	t.Run("Return true if cluster configuration is nil (special case)", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{},
-			},
-		}
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "null",
-				},
-			},
-		}
-		match, diff, err := matchClusterConfiguration(kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
-	})
-	t.Run("Return true although the DNS fields are different", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						DNS: bootstrapv1.DNS{
-							ImageTag:        "v1.10.1",
-							ImageRepository: "gcr.io/capi-test",
-						},
-					},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "{\"dns\":{\"imageRepository\":\"gcr.io/capi-test\",\"imageTag\":\"v1.9.3\"}}",
-				},
-			},
-		}
-		match, diff, err := matchClusterConfiguration(kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
-	})
-	t.Run("Check we are not introducing unexpected rollouts when changing the API", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						APIServer: bootstrapv1.APIServer{
-							ExtraArgs: []bootstrapv1.Arg{
-								{
-									Name:  "foo",
-									Value: ptr.To("bar"),
-								},
-							},
-						},
-						ControllerManager: bootstrapv1.ControllerManager{
-							ExtraArgs: []bootstrapv1.Arg{
-								{
-									Name:  "foo",
-									Value: ptr.To("bar"),
-								},
-							},
-						},
-						Scheduler: bootstrapv1.Scheduler{
-							ExtraArgs: []bootstrapv1.Arg{
-								{
-									Name:  "foo",
-									Value: ptr.To("bar"),
-								},
-							},
-						},
-						DNS: bootstrapv1.DNS{
-							ImageTag:        "v1.10.1",
-							ImageRepository: "gcr.io/capi-test",
-						},
-					},
-				},
-			},
-		}
-
-		// This is a point in time snapshot of how a serialized ClusterConfiguration looks like;
-		// we are hardcoding this in the test so we can detect if a change in the API impacts serialization.
-		// NOTE: changes in the json representation do not always trigger a rollout in KCP, but they are an heads up that should be investigated.
-		annotationsCheckPoint := "{\"marshalVersion\":\"v1beta2\",\"apiServer\":{\"extraArgs\":[{\"name\":\"foo\",\"value\":\"bar\"}]},\"controllerManager\":{\"extraArgs\":[{\"name\":\"foo\",\"value\":\"bar\"}]},\"scheduler\":{\"extraArgs\":[{\"name\":\"foo\",\"value\":\"bar\"}]},\"dns\":{\"imageRepository\":\"gcr.io/capi-test\",\"imageTag\":\"v1.10.1\"}}"
-
-		// compute how a serialized ClusterConfiguration looks like now
-		annotations, err := ClusterConfigurationToMachineAnnotationValue(&kcp.Spec.KubeadmConfigSpec.ClusterConfiguration)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(annotations).To(Equal(annotationsCheckPoint))
-
-		// check the match function detects if a Machine with the annotation string above matches the object it originates from (round trip).
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: annotationsCheckPoint,
-				},
-			},
-		}
-		g.Expect(matchClusterConfiguration(kcp, m)).To(BeTrue())
-	})
-}
-
-func TestGetAdjustedKcpConfig(t *testing.T) {
-	t.Run("if the machine is the first control plane, kcp config should get InitConfiguration", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{
-						Patches: bootstrapv1.Patches{
-							Directory: "/tmp/patches",
-						},
-					},
-					JoinConfiguration: bootstrapv1.JoinConfiguration{
-						Patches: bootstrapv1.Patches{
-							Directory: "/tmp/patches",
-						},
-					},
-				},
-			},
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				InitConfiguration: bootstrapv1.InitConfiguration{ // first control-plane
-					Patches: bootstrapv1.Patches{
-						Directory: "/tmp/patches",
-					},
-				},
-			},
-		}
-		kcpConfig := getAdjustedKcpConfig(kcp, machineConfig)
-		g.Expect(kcpConfig.InitConfiguration.IsDefined()).To(BeTrue())
-		g.Expect(kcpConfig.JoinConfiguration.IsDefined()).To(BeFalse())
-	})
-	t.Run("if the machine is a joining control plane, kcp config should get JoinConfiguration", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{
-						Patches: bootstrapv1.Patches{
-							Directory: "/tmp/patches",
-						},
-					},
-					JoinConfiguration: bootstrapv1.JoinConfiguration{
-						Patches: bootstrapv1.Patches{
-							Directory: "/tmp/patches",
-						},
-					},
-				},
-			},
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				JoinConfiguration: bootstrapv1.JoinConfiguration{ // joining control-plane
-					Patches: bootstrapv1.Patches{
-						Directory: "/tmp/patches",
-					},
-				},
-			},
-		}
-		kcpConfig := getAdjustedKcpConfig(kcp, machineConfig)
-		g.Expect(kcpConfig.InitConfiguration.IsDefined()).To(BeFalse())
-		g.Expect(kcpConfig.JoinConfiguration.IsDefined()).To(BeTrue())
-	})
-}
-
-func TestCleanupConfigFields(t *testing.T) {
-	t.Run("ClusterConfiguration gets removed from KcpConfig and MachineConfig", func(t *testing.T) {
-		g := NewWithT(t)
-		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
-			ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-				CertificatesDir: "/tmp/certs",
-			},
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-					CertificatesDir: "/tmp/certs",
-				},
-			},
-		}
-		cleanupConfigFields(kcpConfig, machineConfig)
-		g.Expect(kcpConfig.ClusterConfiguration.IsDefined()).To(BeFalse())
-		g.Expect(machineConfig.Spec.ClusterConfiguration.IsDefined()).To(BeFalse())
-	})
-	t.Run("JoinConfiguration gets removed from MachineConfig if it was not derived by KCPConfig", func(t *testing.T) {
-		g := NewWithT(t)
-		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
-			JoinConfiguration: bootstrapv1.JoinConfiguration{}, // KCP not providing a JoinConfiguration
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				JoinConfiguration: bootstrapv1.JoinConfiguration{
-					ControlPlane: &bootstrapv1.JoinControlPlane{},
-				}, // Machine gets a default JoinConfiguration from CABPK
-			},
-		}
-		cleanupConfigFields(kcpConfig, machineConfig)
-		g.Expect(kcpConfig.JoinConfiguration.IsDefined()).To(BeFalse())
-		g.Expect(machineConfig.Spec.JoinConfiguration.IsDefined()).To(BeFalse())
-	})
-	t.Run("JoinConfiguration.Discovery gets removed because it is not relevant for compare", func(t *testing.T) {
-		g := NewWithT(t)
-		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
-			JoinConfiguration: bootstrapv1.JoinConfiguration{
-				Discovery: bootstrapv1.Discovery{TLSBootstrapToken: "aaa"},
-			},
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				JoinConfiguration: bootstrapv1.JoinConfiguration{
-					Discovery: bootstrapv1.Discovery{TLSBootstrapToken: "aaa"},
-				},
-			},
-		}
-		cleanupConfigFields(kcpConfig, machineConfig)
-		g.Expect(kcpConfig.JoinConfiguration.Discovery).To(BeComparableTo(bootstrapv1.Discovery{}))
-		g.Expect(machineConfig.Spec.JoinConfiguration.Discovery).To(BeComparableTo(bootstrapv1.Discovery{}))
-	})
-	t.Run("JoinConfiguration.ControlPlane gets removed from MachineConfig if it was not derived by KCPConfig", func(t *testing.T) {
-		g := NewWithT(t)
-		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
-			JoinConfiguration: bootstrapv1.JoinConfiguration{
-				ControlPlane: nil, // Control plane configuration missing in KCP
-			},
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				JoinConfiguration: bootstrapv1.JoinConfiguration{
-					ControlPlane: &bootstrapv1.JoinControlPlane{}, // Machine gets a default JoinConfiguration.ControlPlane from CABPK
-				},
-			},
-		}
-		cleanupConfigFields(kcpConfig, machineConfig)
-		g.Expect(kcpConfig.JoinConfiguration).ToNot(BeNil())
-		g.Expect(machineConfig.Spec.JoinConfiguration.ControlPlane).To(BeNil())
-	})
-	t.Run("JoinConfiguration.NodeRegistrationOptions gets removed from MachineConfig if it was not derived by KCPConfig", func(t *testing.T) {
-		g := NewWithT(t)
-		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
-			JoinConfiguration: bootstrapv1.JoinConfiguration{
-				NodeRegistration: bootstrapv1.NodeRegistrationOptions{}, // NodeRegistrationOptions configuration missing in KCP
-			},
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				JoinConfiguration: bootstrapv1.JoinConfiguration{
-					NodeRegistration: bootstrapv1.NodeRegistrationOptions{Name: "test"}, // Machine gets a some JoinConfiguration.NodeRegistrationOptions
-				},
-			},
-		}
-		cleanupConfigFields(kcpConfig, machineConfig)
-		g.Expect(kcpConfig.JoinConfiguration).ToNot(BeNil())
-		g.Expect(machineConfig.Spec.JoinConfiguration.NodeRegistration).To(BeComparableTo(bootstrapv1.NodeRegistrationOptions{}))
-	})
-	t.Run("drops omittable fields", func(t *testing.T) {
-		g := NewWithT(t)
-		kcpConfig := &bootstrapv1.KubeadmConfigSpec{
-			JoinConfiguration: bootstrapv1.JoinConfiguration{
-				NodeRegistration: bootstrapv1.NodeRegistrationOptions{
-					KubeletExtraArgs: []bootstrapv1.Arg{},
-				},
-			},
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{
-			Spec: bootstrapv1.KubeadmConfigSpec{
-				JoinConfiguration: bootstrapv1.JoinConfiguration{
-					NodeRegistration: bootstrapv1.NodeRegistrationOptions{
-						KubeletExtraArgs: []bootstrapv1.Arg{},
-					},
-				},
-			},
-		}
-		cleanupConfigFields(kcpConfig, machineConfig)
-		g.Expect(kcpConfig.JoinConfiguration.NodeRegistration.KubeletExtraArgs).To(BeNil())
-		g.Expect(machineConfig.Spec.JoinConfiguration.NodeRegistration.KubeletExtraArgs).To(BeNil())
-	})
-}
-
-func TestMatchInitOrJoinConfiguration(t *testing.T) {
-	t.Run("returns true if the machine does not have a bootstrap config", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{}
-		match, diff, err := matchInitOrJoinConfiguration(nil, kcp)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
-	})
-	t.Run("returns true if one format is empty and the other one cloud-config", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					Format: bootstrapv1.CloudConfig,
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "default",
-				Name:      "test",
+				Name: "machine",
 			},
 			Spec: clusterv1.MachineSpec{
 				Bootstrap: clusterv1.Bootstrap{
 					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: bootstrapv1.GroupVersion.Group,
 						Kind:     "KubeadmConfig",
 						Name:     "test",
-						APIGroup: bootstrapv1.GroupVersion.Group,
 					},
 				},
 			},
 		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
+		reason, _, _, match, err := matchesKubeadmConfig(map[string]*bootstrapv1.KubeadmConfig{}, nil, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns true if ClusterConfiguration is equal", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+						CertificatesDir: "foo",
+					},
 				},
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "test",
-				},
-				Spec: bootstrapv1.KubeadmConfigSpec{
-					Format: "",
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: bootstrapv1.GroupVersion.Group,
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+					},
 				},
 			},
 		}
-		match, diff, err := matchInitOrJoinConfiguration(machineConfigs[m.Name], kcp)
+		machineConfig := &bootstrapv1.KubeadmConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: bootstrapv1.KubeadmConfigSpec{
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+					CertificatesDir: "foo",
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: machineConfig,
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
 		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
+		g.Expect(reason).To(BeEmpty())
 	})
-	t.Run("returns true if InitConfiguration is equal", func(t *testing.T) {
+	t.Run("returns true if ClusterConfiguration is equal (empty)", func(t *testing.T) {
 		g := NewWithT(t)
 		kcp := &controlplanev1.KubeadmControlPlane{
 			Spec: controlplanev1.KubeadmControlPlaneSpec{
 				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
 					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
-					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine",
 			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: bootstrapv1.GroupVersion.Group,
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+					},
+				},
+			},
+		}
+		machineConfig := &bootstrapv1.KubeadmConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: bootstrapv1.KubeadmConfigSpec{
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: machineConfig,
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns true if ClusterConfiguration is equal apart from defaulted FeatureGates field", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+				},
+				Version: "v1.31.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: bootstrapv1.GroupVersion.Group,
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+					},
+				},
+			},
+		}
+		machineConfig := &bootstrapv1.KubeadmConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: bootstrapv1.KubeadmConfigSpec{
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+					FeatureGates: map[string]bool{
+						desiredstate.ControlPlaneKubeletLocalMode: true,
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: machineConfig,
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns true if ClusterConfiguration is equal apart from ControlPlaneEndpoint and DNS fields", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+						DNS: bootstrapv1.DNS{
+							ImageTag:        "v1.10.1",
+							ImageRepository: "gcr.io/capi-test",
+						},
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: bootstrapv1.GroupVersion.Group,
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+					},
+				},
+			},
+		}
+		machineConfig := &bootstrapv1.KubeadmConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: bootstrapv1.KubeadmConfigSpec{
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+					ControlPlaneEndpoint: "1.2.3.4:6443",
+					DNS: bootstrapv1.DNS{
+						ImageTag:        "v1.9.3",
+						ImageRepository: "gcr.io/capi-test",
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: machineConfig,
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns false if ClusterConfiguration is NOT equal", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+						CertificatesDir: "foo",
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: bootstrapv1.GroupVersion.Group,
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+					},
+				},
+			},
+		}
+		machineConfig := &bootstrapv1.KubeadmConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: bootstrapv1.KubeadmConfigSpec{
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+					CertificatesDir: "bar",
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: machineConfig,
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(match).To(BeFalse())
+		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
+    ClusterConfiguration: v1beta2.ClusterConfiguration{
+      ... // 4 identical fields
+      Scheduler:       {},
+      DNS:             {},
+-     CertificatesDir: "bar",
++     CertificatesDir: "foo",
+      ImageRepository: "",
+      FeatureGates:    nil,
+      ... // 3 identical fields
+    },
+    InitConfiguration: {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
+    JoinConfiguration: {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
+    ... // 11 identical fields
+  }`))
+	})
+	t.Run("returns true if InitConfiguration is equal after conversion to JoinConfiguration", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						Timeouts: bootstrapv1.Timeouts{
+							// ControlPlaneComponentHealthCheckSeconds is different, but it is ignored for the diff
+							ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](5),
+							KubernetesAPICallSeconds:                ptr.To[int32](7),
+						},
+						Patches: bootstrapv1.Patches{
+							Directory: "/test/patches",
+						},
+						SkipPhases: []string{"skip-phase"},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+							KubeletExtraArgs: []bootstrapv1.Arg{
+								{
+									Name:  "v",
+									Value: ptr.To("8"),
+								},
+							},
+						},
+						ControlPlane: &bootstrapv1.JoinControlPlane{
+							LocalAPIEndpoint: bootstrapv1.APIEndpoint{
+								AdvertiseAddress: "1.2.3.4",
+								BindPort:         6443,
+							},
+						},
+						CACertPath: "/tmp/cacert", // This field doesn't exist in InitConfiguration, so it should not lead to a rollout.
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -599,23 +385,104 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
 				},
 				Spec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{},
+					// InitConfiguration will be converted to JoinConfiguration and then compared against the JoinConfiguration from KCP.
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						Timeouts: bootstrapv1.Timeouts{
+							// ControlPlaneComponentHealthCheckSeconds is different, but it is ignored for the diff
+							ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](1),
+							KubernetesAPICallSeconds:                ptr.To[int32](7),
+						},
+						Patches: bootstrapv1.Patches{
+							Directory: "/test/patches",
+						},
+						SkipPhases: []string{"skip-phase"},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+							KubeletExtraArgs: []bootstrapv1.Arg{
+								{
+									Name:  "v",
+									Value: ptr.To("8"),
+								},
+							},
+						},
+						LocalAPIEndpoint: bootstrapv1.APIEndpoint{
+							AdvertiseAddress: "1.2.3.4",
+							BindPort:         6443,
+						},
+					},
 				},
 			},
 		}
-		match, diff, err := matchInitOrJoinConfiguration(machineConfigs[m.Name], kcp)
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
 		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns true if JoinConfiguration is not equal, but InitConfiguration is", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "Different name",
+						},
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+						APIGroup: bootstrapv1.GroupVersion.Group,
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: {
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+				},
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
+				},
+			},
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
 	})
 	t.Run("returns false if InitConfiguration is NOT equal", func(t *testing.T) {
 		g := NewWithT(t)
@@ -628,15 +495,16 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 							Name: "A new name", // This is a change
 						},
 					},
-					JoinConfiguration: bootstrapv1.JoinConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "A new name", // This is a change
+						},
+					},
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -653,10 +521,6 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
@@ -670,10 +534,13 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 				},
 			},
 		}
-		match, diff, err := matchInitOrJoinConfiguration(machineConfigs[m.Name], kcp)
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
 		g.Expect(match).To(BeFalse())
-		g.Expect(diff).To(BeComparableTo(`&v1beta2.KubeadmConfigSpec{
+		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
     ClusterConfiguration: {},
     InitConfiguration: v1beta2.InitConfiguration{
       BootstrapTokens: nil,
@@ -700,15 +567,16 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
 					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
 					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "A new name",
+						},
+					},
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -725,23 +593,309 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
 				},
 				Spec: bootstrapv1.KubeadmConfigSpec{
-					JoinConfiguration: bootstrapv1.JoinConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "A new name",
+						},
+					},
 				},
 			},
 		}
-		match, diff, err := matchInitOrJoinConfiguration(machineConfigs[m.Name], kcp)
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
 		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns true if JoinConfiguration is equal apart from Discovery and Timeouts", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+					InitConfiguration:    bootstrapv1.InitConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "A new name",
+						},
+						// Discovery gets removed because Discovery is not relevant for the rollout decision.
+						Discovery: bootstrapv1.Discovery{TLSBootstrapToken: "aaa"},
+						Timeouts: bootstrapv1.Timeouts{
+							ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](1),
+						},
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+						APIGroup: bootstrapv1.GroupVersion.Group,
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: {
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+				},
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "A new name",
+						},
+						// Discovery gets removed because Discovery is not relevant for the rollout decision.
+						Discovery: bootstrapv1.Discovery{TLSBootstrapToken: "bbb"},
+						Timeouts: bootstrapv1.Timeouts{
+							ControlPlaneComponentHealthCheckSeconds: ptr.To[int32](11),
+						},
+					},
+				},
+			},
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns true if JoinConfiguration is equal apart from JoinControlPlane", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+					InitConfiguration:    bootstrapv1.InitConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "A new name",
+						},
+						ControlPlane: nil, // Control plane configuration missing in KCP
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+						APIGroup: bootstrapv1.GroupVersion.Group,
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: {
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+				},
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "A new name",
+						},
+						// Machine gets a default JoinConfiguration.ControlPlane from CABPK
+						// Note: This field is now also set by KCP, but leaving this case here for additional coverage.
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+					},
+				},
+			},
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns false if JoinConfiguration is not equal, and InitConfiguration is also not equal", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "Different name",
+						},
+					},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "Different name",
+						},
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+						APIGroup: bootstrapv1.GroupVersion.Group,
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: {
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+				},
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
+				},
+			},
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
+		g.Expect(match).To(BeFalse())
+		g.Expect(reason).To(Equal(`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
+    ClusterConfiguration: {},
+    InitConfiguration: v1beta2.InitConfiguration{
+      BootstrapTokens: nil,
+      NodeRegistration: v1beta2.NodeRegistrationOptions{
+-       Name:      "name",
++       Name:      "Different name",
+        CRISocket: "",
+        Taints:    nil,
+        ... // 4 identical fields
+      },
+      LocalAPIEndpoint: {},
+      SkipPhases:       nil,
+      ... // 2 identical fields
+    },
+    JoinConfiguration: {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
+    Files:             nil,
+    ... // 10 identical fields
+  }`))
+	})
+	t.Run("returns false if JoinConfiguration has other differences in ControlPlane", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+					InitConfiguration:    bootstrapv1.InitConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+						ControlPlane: nil, // Control plane configuration missing in KCP
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+						APIGroup: bootstrapv1.GroupVersion.Group,
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: {
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+				},
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+						ControlPlane: &bootstrapv1.JoinControlPlane{
+							LocalAPIEndpoint: bootstrapv1.APIEndpoint{
+								AdvertiseAddress: "1.2.3.4",
+								BindPort:         6443,
+							},
+						},
+					},
+				},
+			},
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
+		g.Expect(match).To(BeFalse())
+		g.Expect(reason).To(Equal(`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
+    ClusterConfiguration: {},
+    InitConfiguration:    {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
+    JoinConfiguration: v1beta2.JoinConfiguration{
+      NodeRegistration: {Name: "name", ImagePullPolicy: "IfNotPresent"},
+      CACertPath:       "",
+      Discovery:        {},
+      ControlPlane: &v1beta2.JoinControlPlane{
+        LocalAPIEndpoint: v1beta2.APIEndpoint{
+-         AdvertiseAddress: "1.2.3.4",
++         AdvertiseAddress: "",
+-         BindPort:         6443,
++         BindPort:         0,
+        },
+      },
+      SkipPhases: nil,
+      Patches:    {},
+      Timeouts:   {},
+    },
+    Files:     nil,
+    DiskSetup: {},
+    ... // 9 identical fields
+  }`))
 	})
 	t.Run("returns false if JoinConfiguration is NOT equal", func(t *testing.T) {
 		g := NewWithT(t)
@@ -756,13 +910,10 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 						},
 					},
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -779,16 +930,13 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
 				},
 				Spec: bootstrapv1.KubeadmConfigSpec{
 					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
 						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
 							Name: "An old name", // This is a change
 						},
@@ -796,10 +944,13 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
 				},
 			},
 		}
-		match, diff, err := matchInitOrJoinConfiguration(machineConfigs[m.Name], kcp)
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
 		g.Expect(match).To(BeFalse())
-		g.Expect(diff).To(BeComparableTo(`&v1beta2.KubeadmConfigSpec{
+		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
     ClusterConfiguration: {},
     InitConfiguration:    {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
     JoinConfiguration: v1beta2.JoinConfiguration{
@@ -819,357 +970,6 @@ func TestMatchInitOrJoinConfiguration(t *testing.T) {
     ... // 9 identical fields
   }`))
 	})
-	t.Run("returns true if returns true if only omittable configurations are not equal", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
-					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
-					Files:                []bootstrapv1.File{}, // This is a change, but it is an omittable field and the diff between nil and empty array is not relevant.
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "default",
-				Name:      "test",
-			},
-			Spec: clusterv1.MachineSpec{
-				Bootstrap: clusterv1.Bootstrap{
-					ConfigRef: clusterv1.ContractVersionedObjectReference{
-						Kind:     "KubeadmConfig",
-						Name:     "test",
-						APIGroup: bootstrapv1.GroupVersion.Group,
-					},
-				},
-			},
-		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "test",
-				},
-				Spec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{},
-				},
-			},
-		}
-		match, diff, err := matchInitOrJoinConfiguration(machineConfigs[m.Name], kcp)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(diff).To(BeEmpty())
-	})
-	t.Run("returns false if some other configurations are not equal", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
-					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
-					Files:                []bootstrapv1.File{{Path: "/tmp/foo"}}, // This is a change
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "default",
-				Name:      "test",
-			},
-			Spec: clusterv1.MachineSpec{
-				Bootstrap: clusterv1.Bootstrap{
-					ConfigRef: clusterv1.ContractVersionedObjectReference{
-						Kind:     "KubeadmConfig",
-						Name:     "test",
-						APIGroup: bootstrapv1.GroupVersion.Group,
-					},
-				},
-			},
-		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "test",
-				},
-				Spec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{},
-				},
-			},
-		}
-		match, diff, err := matchInitOrJoinConfiguration(machineConfigs[m.Name], kcp)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeFalse())
-		g.Expect(diff).To(BeComparableTo(`&v1beta2.KubeadmConfigSpec{
-    ClusterConfiguration: {},
-    InitConfiguration:    {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
-    JoinConfiguration:    {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
--   Files:                nil,
-+   Files:                []v1beta2.File{{Path: "/tmp/foo"}},
-    DiskSetup:            {},
-    Mounts:               nil,
-    ... // 8 identical fields
-  }`))
-	})
-}
-
-func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
-	t.Run("returns true if ClusterConfiguration is equal", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						CertificatesDir: "foo",
-					},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "{\n  \"certificatesDir\": \"foo\"\n}",
-				},
-			},
-		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {},
-		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(reason).To(BeEmpty())
-	})
-	t.Run("returns false if ClusterConfiguration is NOT equal", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
-						CertificatesDir: "foo",
-					},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					controlplanev1.KubeadmClusterConfigurationAnnotation: "{\n  \"certificatesDir\": \"bar\"\n}",
-				},
-			},
-		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {},
-		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeFalse())
-		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig ClusterConfiguration is outdated: diff: v1beta2.ClusterConfiguration{
-    ... // 4 identical fields
-    Scheduler:       {},
-    DNS:             {},
--   CertificatesDir: "bar",
-+   CertificatesDir: "foo",
-    ImageRepository: "",
-    FeatureGates:    nil,
-    ... // 2 identical fields
-  }`))
-	})
-	t.Run("returns true if InitConfiguration is equal", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
-					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "default",
-				Name:      "test",
-			},
-			Spec: clusterv1.MachineSpec{
-				Bootstrap: clusterv1.Bootstrap{
-					ConfigRef: clusterv1.ContractVersionedObjectReference{
-						Kind:     "KubeadmConfig",
-						Name:     "test",
-						APIGroup: bootstrapv1.GroupVersion.Group,
-					},
-				},
-			},
-		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "test",
-				},
-				Spec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{},
-				},
-			},
-		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(reason).To(BeEmpty())
-	})
-	t.Run("returns false if InitConfiguration is NOT equal", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
-					InitConfiguration: bootstrapv1.InitConfiguration{
-						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
-							Name: "A new name", // This is a change
-						},
-					},
-					JoinConfiguration: bootstrapv1.JoinConfiguration{},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "default",
-				Name:      "test",
-			},
-			Spec: clusterv1.MachineSpec{
-				Bootstrap: clusterv1.Bootstrap{
-					ConfigRef: clusterv1.ContractVersionedObjectReference{
-						Kind:     "KubeadmConfig",
-						Name:     "test",
-						APIGroup: bootstrapv1.GroupVersion.Group,
-					},
-				},
-			},
-		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "test",
-				},
-				Spec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{
-						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
-							Name: "An old name", // This is a change
-						},
-					},
-				},
-			},
-		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeFalse())
-		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig InitConfiguration or JoinConfiguration are outdated: diff: &v1beta2.KubeadmConfigSpec{
-    ClusterConfiguration: {},
-    InitConfiguration: v1beta2.InitConfiguration{
-      BootstrapTokens: nil,
-      NodeRegistration: v1beta2.NodeRegistrationOptions{
--       Name:      "An old name",
-+       Name:      "A new name",
-        CRISocket: "",
-        Taints:    nil,
-        ... // 4 identical fields
-      },
-      LocalAPIEndpoint: {},
-      SkipPhases:       nil,
-      ... // 2 identical fields
-    },
-    JoinConfiguration: {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
-    Files:             nil,
-    ... // 10 identical fields
-  }`))
-	})
-	t.Run("returns true if JoinConfiguration is equal", func(t *testing.T) {
-		g := NewWithT(t)
-		kcp := &controlplanev1.KubeadmControlPlane{
-			Spec: controlplanev1.KubeadmControlPlaneSpec{
-				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
-					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
-				},
-			},
-		}
-		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "default",
-				Name:      "test",
-			},
-			Spec: clusterv1.MachineSpec{
-				Bootstrap: clusterv1.Bootstrap{
-					ConfigRef: clusterv1.ContractVersionedObjectReference{
-						Kind:     "KubeadmConfig",
-						Name:     "test",
-						APIGroup: bootstrapv1.GroupVersion.Group,
-					},
-				},
-			},
-		}
-		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
-			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "test",
-				},
-				Spec: bootstrapv1.KubeadmConfigSpec{
-					JoinConfiguration: bootstrapv1.JoinConfiguration{},
-				},
-			},
-		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
-		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(match).To(BeTrue())
-		g.Expect(reason).To(BeEmpty())
-	})
 	t.Run("returns false if JoinConfiguration is NOT equal", func(t *testing.T) {
 		g := NewWithT(t)
 		kcp := &controlplanev1.KubeadmControlPlane{
@@ -1177,19 +977,12 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
 					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
 					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration: bootstrapv1.JoinConfiguration{
-						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
-							Name: "A new name", // This is a change
-						},
-					},
+					// JoinConfiguration not set anymore.
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -1206,16 +999,13 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
 				},
 				Spec: bootstrapv1.KubeadmConfigSpec{
 					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
 						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
 							Name: "An old name", // This is a change
 						},
@@ -1223,16 +1013,19 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 				},
 			},
 		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		// Can't check if desiredKubeadmConfig is for join because the test case is that JoinConfiguration is not set anymore.
 		g.Expect(match).To(BeFalse())
-		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig InitConfiguration or JoinConfiguration are outdated: diff: &v1beta2.KubeadmConfigSpec{
+		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
     ClusterConfiguration: {},
     InitConfiguration:    {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
     JoinConfiguration: v1beta2.JoinConfiguration{
       NodeRegistration: v1beta2.NodeRegistrationOptions{
 -       Name:      "An old name",
-+       Name:      "A new name",
++       Name:      "",
         CRISocket: "",
         Taints:    nil,
         ... // 4 identical fields
@@ -1251,18 +1044,27 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 		kcp := &controlplanev1.KubeadmControlPlane{
 			Spec: controlplanev1.KubeadmControlPlaneSpec{
 				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
-					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
-					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
-					Files:                []bootstrapv1.File{}, // This is a change, but it is an omittable field and the diff between nil and empty array is not relevant.
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+						FeatureGates: map[string]bool{}, // This is a change, but it is an omittable field
+					},
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name:             "name",
+							KubeletExtraArgs: []bootstrapv1.Arg{},
+						},
+					},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name:             "name",
+							KubeletExtraArgs: []bootstrapv1.Arg{},
+						},
+					},
+					Files: []bootstrapv1.File{}, // This is a change, but it is an omittable field and the diff between nil and empty array is not relevant.
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -1279,41 +1081,103 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
 				},
 				Spec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{},
+					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
+					InitConfiguration:    bootstrapv1.InitConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
 				},
 			},
 		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
 		g.Expect(match).To(BeTrue())
 		g.Expect(reason).To(BeEmpty())
 	})
-	t.Run("returns false if some other configurations are not equal", func(t *testing.T) {
+	t.Run("returns true if KubeadmConfig is equal apart from defaulted format field", func(t *testing.T) {
+		g := NewWithT(t)
+		kcp := &controlplanev1.KubeadmControlPlane{
+			Spec: controlplanev1.KubeadmControlPlaneSpec{
+				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+					Format: bootstrapv1.CloudConfig,
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
+				},
+				Version: "v1.30.0",
+			},
+		}
+		m := &clusterv1.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test",
+			},
+			Spec: clusterv1.MachineSpec{
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "KubeadmConfig",
+						Name:     "test",
+						APIGroup: bootstrapv1.GroupVersion.Group,
+					},
+				},
+			},
+		}
+		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
+			m.Name: {
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+				},
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					Format: "",
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
+				},
+			},
+		}
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
+		g.Expect(match).To(BeTrue())
+		g.Expect(reason).To(BeEmpty())
+	})
+	t.Run("returns false if KubeadmConfig is not equal (other configurations)", func(t *testing.T) {
 		g := NewWithT(t)
 		kcp := &controlplanev1.KubeadmControlPlane{
 			Spec: controlplanev1.KubeadmControlPlaneSpec{
 				KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
 					ClusterConfiguration: bootstrapv1.ClusterConfiguration{},
 					InitConfiguration:    bootstrapv1.InitConfiguration{},
-					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
-					Files:                []bootstrapv1.File{{Path: "/tmp/foo"}}, // This is a change
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
+					Files: []bootstrapv1.File{{Path: "/tmp/foo"}}, // This is a change
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -1330,26 +1194,30 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
 				},
 				Spec: bootstrapv1.KubeadmConfigSpec{
-					InitConfiguration: bootstrapv1.InitConfiguration{},
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Name: "name",
+						},
+					},
 				},
 			},
 		}
-		reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
+		reason, currentKubeadmConfig, desiredKubeadmConfig, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(currentKubeadmConfig).ToNot(BeNil())
+		g.Expect(desiredKubeadmConfig).ToNot(BeNil())
+		g.Expect(isKubeadmConfigForJoin(desiredKubeadmConfig)).To(BeTrue())
 		g.Expect(match).To(BeFalse())
-		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig InitConfiguration or JoinConfiguration are outdated: diff: &v1beta2.KubeadmConfigSpec{
+		g.Expect(reason).To(BeComparableTo(`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
     ClusterConfiguration: {},
     InitConfiguration:    {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
-    JoinConfiguration:    {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
+    JoinConfiguration:    {NodeRegistration: {Name: "name", ImagePullPolicy: "IfNotPresent"}, ControlPlane: &{}},
 -   Files:                nil,
 +   Files:                []v1beta2.File{{Path: "/tmp/foo"}},
     DiskSetup:            {},
@@ -1375,13 +1243,10 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 					InitConfiguration:    bootstrapv1.InitConfiguration{},
 					JoinConfiguration:    bootstrapv1.JoinConfiguration{},
 				},
+				Version: "v1.30.0",
 			},
 		}
 		m := &clusterv1.Machine{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Machine",
-				APIVersion: clusterv1.GroupVersion.String(),
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default",
 				Name:      "test",
@@ -1398,10 +1263,6 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 		}
 		machineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 			m.Name: {
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "KubeadmConfig",
-					APIVersion: bootstrapv1.GroupVersion.String(),
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
 					Name:      "test",
@@ -1416,7 +1277,7 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 			g := NewWithT(t)
 			machineConfigs[m.Name].Annotations = nil
 			machineConfigs[m.Name].Labels = nil
-			reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
+			reason, _, _, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(match).To(BeTrue())
 			g.Expect(reason).To(BeEmpty())
@@ -1426,7 +1287,7 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 			g := NewWithT(t)
 			machineConfigs[m.Name].Annotations = kcp.Spec.MachineTemplate.ObjectMeta.Annotations
 			machineConfigs[m.Name].Labels = nil
-			reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
+			reason, _, _, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(match).To(BeTrue())
 			g.Expect(reason).To(BeEmpty())
@@ -1436,7 +1297,7 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 			g := NewWithT(t)
 			machineConfigs[m.Name].Annotations = nil
 			machineConfigs[m.Name].Labels = kcp.Spec.MachineTemplate.ObjectMeta.Labels
-			reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
+			reason, _, _, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(match).To(BeTrue())
 			g.Expect(reason).To(BeEmpty())
@@ -1446,7 +1307,7 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 			g := NewWithT(t)
 			machineConfigs[m.Name].Labels = kcp.Spec.MachineTemplate.ObjectMeta.Labels
 			machineConfigs[m.Name].Annotations = kcp.Spec.MachineTemplate.ObjectMeta.Annotations
-			reason, match, err := matchesKubeadmBootstrapConfig(machineConfigs, kcp, m)
+			reason, _, _, match, err := matchesKubeadmConfig(machineConfigs, kcp, &clusterv1.Cluster{}, m)
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(match).To(BeTrue())
 			g.Expect(reason).To(BeEmpty())
@@ -1454,14 +1315,7 @@ func TestMatchesKubeadmBootstrapConfig(t *testing.T) {
 	})
 }
 
-func TestMatchesTemplateClonedFrom(t *testing.T) {
-	t.Run("nil machine returns false", func(t *testing.T) {
-		g := NewWithT(t)
-		reason, match := matchesTemplateClonedFrom(nil, nil, nil)
-		g.Expect(match).To(BeFalse())
-		g.Expect(reason).To(Equal("Machine cannot be compared with KCP.spec.machineTemplate.spec.infrastructureRef: Machine is nil"))
-	})
-
+func TestMatchesInfraMachine(t *testing.T) {
 	t.Run("returns true if machine not found", func(t *testing.T) {
 		g := NewWithT(t)
 		kcp := &controlplanev1.KubeadmControlPlane{}
@@ -1474,7 +1328,8 @@ func TestMatchesTemplateClonedFrom(t *testing.T) {
 				},
 			},
 		}
-		reason, match := matchesTemplateClonedFrom(map[string]*unstructured.Unstructured{}, kcp, machine)
+		reason, _, _, match, err := matchesInfraMachine(t.Context(), nil, map[string]*unstructured.Unstructured{}, kcp, &clusterv1.Cluster{}, machine)
+		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(match).To(BeTrue())
 		g.Expect(reason).To(BeEmpty())
 	})
@@ -1496,20 +1351,32 @@ func TestMatchesTemplateClonedFrom(t *testing.T) {
 					},
 					Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
 						InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-							Kind:     "GenericMachineTemplate",
-							Name:     "infra-foo",
-							APIGroup: "generic.io",
+							APIGroup: builder.InfrastructureGroupVersion.Group,
+							Kind:     builder.TestInfrastructureMachineTemplateKind,
+							Name:     "infra-machine-template1",
 						},
 					},
 				},
 			},
 		}
+
+		infraMachineTemplate := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": builder.InfrastructureGroupVersion.String(),
+				"kind":       builder.TestInfrastructureMachineTemplateKind,
+				"metadata": map[string]interface{}{
+					"name":      "infra-machine-template1",
+					"namespace": "default",
+				},
+			},
+		}
+
 		m := &clusterv1.Machine{
 			Spec: clusterv1.MachineSpec{
 				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-					Kind:     "GenericMachine",
-					Name:     "infra-foo",
-					APIGroup: "generic.io",
+					APIGroup: builder.InfrastructureGroupVersion.Group,
+					Kind:     builder.TestInfrastructureMachineKind,
+					Name:     "infra-config1",
 				},
 			},
 		}
@@ -1517,8 +1384,8 @@ func TestMatchesTemplateClonedFrom(t *testing.T) {
 		infraConfigs := map[string]*unstructured.Unstructured{
 			m.Name: {
 				Object: map[string]interface{}{
-					"kind":       "InfrastructureMachine",
-					"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
+					"apiVersion": builder.InfrastructureGroupVersion.String(),
+					"kind":       builder.TestInfrastructureMachineKind,
 					"metadata": map[string]interface{}{
 						"name":      "infra-config1",
 						"namespace": "default",
@@ -1526,160 +1393,86 @@ func TestMatchesTemplateClonedFrom(t *testing.T) {
 				},
 			},
 		}
+		scheme := runtime.NewScheme()
+		_ = apiextensionsv1.AddToScheme(scheme)
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(builder.TestInfrastructureMachineTemplateCRD, infraMachineTemplate).Build()
 
-		t.Run("by returning true if neither labels or annotations match", func(t *testing.T) {
+		t.Run("by returning true if annotations don't exist", func(t *testing.T) {
 			g := NewWithT(t)
-			infraConfigs[m.Name].SetAnnotations(map[string]string{
-				clusterv1.TemplateClonedFromNameAnnotation:      "infra-foo",
-				clusterv1.TemplateClonedFromGroupKindAnnotation: "GenericMachineTemplate.generic.io",
-			})
-			infraConfigs[m.Name].SetLabels(nil)
-			reason, match := matchesTemplateClonedFrom(infraConfigs, kcp, m)
+			infraConfigs[m.Name].SetAnnotations(map[string]string{})
+			reason, _, _, match, err := matchesInfraMachine(t.Context(), c, infraConfigs, kcp, &clusterv1.Cluster{}, m)
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(match).To(BeTrue())
 			g.Expect(reason).To(BeEmpty())
 		})
 
-		t.Run("by returning true if only labels don't match", func(t *testing.T) {
+		t.Run("by returning false if neither Name nor GroupKind matches", func(t *testing.T) {
 			g := NewWithT(t)
 			infraConfigs[m.Name].SetAnnotations(map[string]string{
-				clusterv1.TemplateClonedFromNameAnnotation:      "infra-foo",
-				clusterv1.TemplateClonedFromGroupKindAnnotation: "GenericMachineTemplate.generic.io",
-				"test": "annotation",
+				clusterv1.TemplateClonedFromNameAnnotation:      "different-infra-machine-template1",
+				clusterv1.TemplateClonedFromGroupKindAnnotation: "DifferentTestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io",
 			})
-			infraConfigs[m.Name].SetLabels(nil)
-			reason, match := matchesTemplateClonedFrom(infraConfigs, kcp, m)
-			g.Expect(match).To(BeTrue())
-			g.Expect(reason).To(BeEmpty())
+			reason, _, _, match, err := matchesInfraMachine(t.Context(), c, infraConfigs, kcp, &clusterv1.Cluster{}, m)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(match).To(BeFalse())
+			g.Expect(reason).To(Equal("Infrastructure template on KCP rotated from DifferentTestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io different-infra-machine-template1 to TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io infra-machine-template1"))
 		})
 
-		t.Run("by returning true if only annotations don't match", func(t *testing.T) {
+		t.Run("by returning false if only GroupKind matches", func(t *testing.T) {
 			g := NewWithT(t)
 			infraConfigs[m.Name].SetAnnotations(map[string]string{
-				clusterv1.TemplateClonedFromNameAnnotation:      "infra-foo",
-				clusterv1.TemplateClonedFromGroupKindAnnotation: "GenericMachineTemplate.generic.io",
+				clusterv1.TemplateClonedFromNameAnnotation:      "different-infra-machine-template1",
+				clusterv1.TemplateClonedFromGroupKindAnnotation: "TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io",
 			})
-			infraConfigs[m.Name].SetLabels(kcp.Spec.MachineTemplate.ObjectMeta.Labels)
-			reason, match := matchesTemplateClonedFrom(infraConfigs, kcp, m)
-			g.Expect(match).To(BeTrue())
-			g.Expect(reason).To(BeEmpty())
+			reason, _, _, match, err := matchesInfraMachine(t.Context(), c, infraConfigs, kcp, &clusterv1.Cluster{}, m)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(match).To(BeFalse())
+			g.Expect(reason).To(Equal("Infrastructure template on KCP rotated from TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io different-infra-machine-template1 to TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io infra-machine-template1"))
 		})
 
-		t.Run("by returning true if both labels and annotations match", func(t *testing.T) {
+		t.Run("by returning false if only Name matches", func(t *testing.T) {
 			g := NewWithT(t)
 			infraConfigs[m.Name].SetAnnotations(map[string]string{
-				clusterv1.TemplateClonedFromNameAnnotation:      "infra-foo",
-				clusterv1.TemplateClonedFromGroupKindAnnotation: "GenericMachineTemplate.generic.io",
-				"test": "annotation",
+				clusterv1.TemplateClonedFromNameAnnotation:      "infra-machine-template1",
+				clusterv1.TemplateClonedFromGroupKindAnnotation: "DifferentTestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io",
 			})
-			infraConfigs[m.Name].SetLabels(kcp.Spec.MachineTemplate.ObjectMeta.Labels)
-			reason, match := matchesTemplateClonedFrom(infraConfigs, kcp, m)
-			g.Expect(match).To(BeTrue())
+			reason, _, _, match, err := matchesInfraMachine(t.Context(), c, infraConfigs, kcp, &clusterv1.Cluster{}, m)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(match).To(BeFalse())
+			g.Expect(reason).To(Equal("Infrastructure template on KCP rotated from DifferentTestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io infra-machine-template1 to TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io infra-machine-template1"))
+		})
+
+		t.Run("by returning true if both Name and GroupKind match", func(t *testing.T) {
+			g := NewWithT(t)
+			infraConfigs[m.Name].SetAnnotations(map[string]string{
+				clusterv1.TemplateClonedFromNameAnnotation:      "infra-machine-template1",
+				clusterv1.TemplateClonedFromGroupKindAnnotation: "TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io",
+			})
+			reason, _, _, match, err := matchesInfraMachine(t.Context(), c, infraConfigs, kcp, &clusterv1.Cluster{}, m)
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(reason).To(BeEmpty())
+			g.Expect(match).To(BeTrue())
 		})
 	})
-}
-
-func TestMatchesTemplateClonedFrom_WithClonedFromAnnotations(t *testing.T) {
-	kcp := &controlplanev1.KubeadmControlPlane{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "default",
-		},
-		Spec: controlplanev1.KubeadmControlPlaneSpec{
-			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
-					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-						Kind:     "GenericMachineTemplate",
-						Name:     "infra-foo",
-						APIGroup: "generic.io",
-					},
-				},
-			},
-		},
-	}
-	machine := &clusterv1.Machine{
-		Spec: clusterv1.MachineSpec{
-			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
-				Kind:     "InfrastructureMachine",
-				Name:     "infra-config1",
-			},
-		},
-	}
-	tests := []struct {
-		name         string
-		annotations  map[string]interface{}
-		expectMatch  bool
-		expectReason string
-	}{
-		{
-			name:        "returns true if annotations don't exist",
-			annotations: map[string]interface{}{},
-			expectMatch: true,
-		},
-		{
-			name: "returns false if annotations don't match anything",
-			annotations: map[string]interface{}{
-				clusterv1.TemplateClonedFromNameAnnotation:      "barfoo1",
-				clusterv1.TemplateClonedFromGroupKindAnnotation: "barfoo2",
-			},
-			expectMatch:  false,
-			expectReason: "Infrastructure template on KCP rotated from barfoo2 barfoo1 to GenericMachineTemplate.generic.io infra-foo",
-		},
-		{
-			name: "returns false if TemplateClonedFromNameAnnotation matches but TemplateClonedFromGroupKindAnnotation doesn't",
-			annotations: map[string]interface{}{
-				clusterv1.TemplateClonedFromNameAnnotation:      "infra-foo",
-				clusterv1.TemplateClonedFromGroupKindAnnotation: "barfoo2",
-			},
-			expectMatch:  false,
-			expectReason: "Infrastructure template on KCP rotated from barfoo2 infra-foo to GenericMachineTemplate.generic.io infra-foo",
-		},
-		{
-			name: "returns true if both annotations match",
-			annotations: map[string]interface{}{
-				clusterv1.TemplateClonedFromNameAnnotation:      "infra-foo",
-				clusterv1.TemplateClonedFromGroupKindAnnotation: "GenericMachineTemplate.generic.io",
-			},
-			expectMatch: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-			infraConfigs := map[string]*unstructured.Unstructured{
-				machine.Name: {
-					Object: map[string]interface{}{
-						"kind":       "InfrastructureMachine",
-						"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
-						"metadata": map[string]interface{}{
-							"name":        "infra-config1",
-							"namespace":   "default",
-							"annotations": tt.annotations,
-						},
-					},
-				},
-			}
-			reason, match := matchesTemplateClonedFrom(infraConfigs, kcp, machine)
-			g.Expect(match).To(Equal(tt.expectMatch))
-			g.Expect(reason).To(Equal(tt.expectReason))
-		})
-	}
 }
 
 func TestUpToDate(t *testing.T) {
 	reconciliationTime := metav1.Now()
 
 	defaultKcp := &controlplanev1.KubeadmControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      "kcp",
+		},
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Replicas: nil,
-			Version:  "v1.31.0",
+			Version:  "v1.30.0",
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
 				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
 					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-						APIGroup: clusterv1.GroupVersionInfrastructure.Group,
-						Kind:     "AWSMachineTemplate",
-						Name:     "template1",
+						APIGroup: builder.InfrastructureGroupVersion.Group,
+						Kind:     builder.TestInfrastructureMachineTemplateKind,
+						Name:     "infra-machine-template1",
 					},
 				},
 			},
@@ -1696,16 +1489,46 @@ func TestUpToDate(t *testing.T) {
 			},
 		},
 	}
+
+	infraMachineTemplate1 := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": builder.InfrastructureGroupVersion.String(),
+			"kind":       builder.TestInfrastructureMachineTemplateKind,
+			"metadata": map[string]interface{}{
+				"name":      "infra-machine-template1",
+				"namespace": "default",
+			},
+		},
+	}
+	infraMachineTemplate2 := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": builder.InfrastructureGroupVersion.String(),
+			"kind":       builder.TestInfrastructureMachineTemplateKind,
+			"metadata": map[string]interface{}{
+				"name":      "infra-machine-template2",
+				"namespace": "default",
+			},
+		},
+	}
+
 	defaultMachine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
 			CreationTimestamp: metav1.Time{Time: reconciliationTime.Add(-2 * 24 * time.Hour)}, // two days ago.
-			Annotations: map[string]string{
-				controlplanev1.KubeadmClusterConfigurationAnnotation: "{\n  \"certificatesDir\": \"foo\"\n}",
-			},
 		},
 		Spec: clusterv1.MachineSpec{
-			Version:           "v1.31.0",
-			InfrastructureRef: clusterv1.ContractVersionedObjectReference{APIGroup: clusterv1.GroupVersionInfrastructure.Group, Kind: "AWSMachine", Name: "infra-machine1"},
+			Version: "v1.30.0",
+			Bootstrap: clusterv1.Bootstrap{
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: bootstrapv1.GroupVersion.Group,
+					Kind:     "KubeadmConfig",
+					Name:     "boostrap-config1",
+				},
+			},
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: clusterv1.GroupVersionInfrastructure.Group,
+				Kind:     "TestInfrastructureMachine",
+				Name:     "infra-machine1",
+			},
 		},
 		Status: clusterv1.MachineStatus{
 			CertificatesExpiryDate: metav1.Time{Time: reconciliationTime.Add(100 * 24 * time.Hour)}, // certificates will expire in 100 days from now.
@@ -1715,14 +1538,14 @@ func TestUpToDate(t *testing.T) {
 	defaultInfraConfigs := map[string]*unstructured.Unstructured{
 		defaultMachine.Name: {
 			Object: map[string]interface{}{
-				"kind":       "AWSMachine",
+				"kind":       builder.TestInfrastructureMachineKind,
 				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
-					"name":      "infra-config1",
+					"name":      "infra-machine1",
 					"namespace": "default",
 					"annotations": map[string]interface{}{
-						"cluster.x-k8s.io/cloned-from-name":      "template1",
-						"cluster.x-k8s.io/cloned-from-groupkind": "AWSMachineTemplate.infrastructure.cluster.x-k8s.io",
+						"cluster.x-k8s.io/cloned-from-name":      "infra-machine-template1",
+						"cluster.x-k8s.io/cloned-from-groupkind": builder.InfrastructureGroupVersion.WithKind(builder.TestInfrastructureMachineTemplateKind).GroupKind().String(),
 					},
 				},
 			},
@@ -1731,31 +1554,39 @@ func TestUpToDate(t *testing.T) {
 
 	defaultMachineConfigs := map[string]*bootstrapv1.KubeadmConfig{
 		defaultMachine.Name: {
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "boostrap-config1",
+			},
 			Spec: bootstrapv1.KubeadmConfigSpec{
+				ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+					CertificatesDir: "foo",
+				},
 				InitConfiguration: bootstrapv1.InitConfiguration{}, // first control-plane
 			},
 		},
 	}
 
 	tests := []struct {
-		name                    string
-		kcp                     *controlplanev1.KubeadmControlPlane
-		machine                 *clusterv1.Machine
-		infraConfigs            map[string]*unstructured.Unstructured
-		machineConfigs          map[string]*bootstrapv1.KubeadmConfig
-		expectUptoDate          bool
-		expectLogMessages       []string
-		expectConditionMessages []string
+		name                           string
+		kcp                            *controlplanev1.KubeadmControlPlane
+		machine                        *clusterv1.Machine
+		infraConfigs                   map[string]*unstructured.Unstructured
+		machineConfigs                 map[string]*bootstrapv1.KubeadmConfig
+		expectUptoDate                 bool
+		expectEligibleForInPlaceUpdate bool
+		expectLogMessages              []string
+		expectConditionMessages        []string
 	}{
 		{
-			name:                    "machine up-to-date",
-			kcp:                     defaultKcp,
-			machine:                 defaultMachine,
-			infraConfigs:            defaultInfraConfigs,
-			machineConfigs:          defaultMachineConfigs,
-			expectUptoDate:          true,
-			expectLogMessages:       nil,
-			expectConditionMessages: nil,
+			name:                           "machine up-to-date",
+			kcp:                            defaultKcp,
+			machine:                        defaultMachine,
+			infraConfigs:                   defaultInfraConfigs,
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 true,
+			expectEligibleForInPlaceUpdate: false,
+			expectLogMessages:              nil,
+			expectConditionMessages:        nil,
 		},
 		{
 			name: "certificate are expiring soon",
@@ -1764,12 +1595,13 @@ func TestUpToDate(t *testing.T) {
 				kcp.Spec.Rollout.Before.CertificatesExpiryDays = 150 // rollout if certificates will expire in less then 150 days.
 				return kcp
 			}(),
-			machine:                 defaultMachine, // certificates will expire in 100 days from now.
-			infraConfigs:            defaultInfraConfigs,
-			machineConfigs:          defaultMachineConfigs,
-			expectUptoDate:          false,
-			expectLogMessages:       []string{"certificates will expire soon, rolloutBefore expired"},
-			expectConditionMessages: []string{"Certificates will expire soon"},
+			machine:                        defaultMachine, // certificates will expire in 100 days from now.
+			infraConfigs:                   defaultInfraConfigs,
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 false,
+			expectEligibleForInPlaceUpdate: false,
+			expectLogMessages:              []string{"certificates will expire soon, rolloutBefore expired"},
+			expectConditionMessages:        []string{"Certificates will expire soon"},
 		},
 		{
 			name: "rollout after expired",
@@ -1778,26 +1610,76 @@ func TestUpToDate(t *testing.T) {
 				kcp.Spec.Rollout.After = metav1.Time{Time: reconciliationTime.Add(-1 * 24 * time.Hour)} // one day ago
 				return kcp
 			}(),
-			machine:                 defaultMachine, // created two days ago
-			infraConfigs:            defaultInfraConfigs,
-			machineConfigs:          defaultMachineConfigs,
-			expectUptoDate:          false,
-			expectLogMessages:       []string{"rolloutAfter expired"},
-			expectConditionMessages: []string{"KubeadmControlPlane spec.rolloutAfter expired"},
+			machine:                        defaultMachine, // created two days ago
+			infraConfigs:                   defaultInfraConfigs,
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 false,
+			expectEligibleForInPlaceUpdate: false,
+			expectLogMessages:              []string{"rolloutAfter expired"},
+			expectConditionMessages:        []string{"KubeadmControlPlane spec.rolloutAfter expired"},
 		},
 		{
 			name: "kubernetes version does not match",
 			kcp: func() *controlplanev1.KubeadmControlPlane {
 				kcp := defaultKcp.DeepCopy()
-				kcp.Spec.Version = "v1.31.2"
+				kcp.Spec.Version = "v1.30.2"
 				return kcp
 			}(),
-			machine:                 defaultMachine, // defaultMachine has "v1.31.0"
-			infraConfigs:            defaultInfraConfigs,
-			machineConfigs:          defaultMachineConfigs,
-			expectUptoDate:          false,
-			expectLogMessages:       []string{"Machine version \"v1.31.0\" is not equal to KCP version \"v1.31.2\""},
-			expectConditionMessages: []string{"Version v1.31.0, v1.31.2 required"},
+			machine: func() *clusterv1.Machine {
+				machine := defaultMachine.DeepCopy()
+				machine.Spec.Version = "v1.30.0"
+				return machine
+			}(),
+			infraConfigs:                   defaultInfraConfigs,
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 false,
+			expectEligibleForInPlaceUpdate: true,
+			expectLogMessages:              []string{"Machine version \"v1.30.0\" is not equal to KCP version \"v1.30.2\""},
+			expectConditionMessages:        []string{"Version v1.30.0, v1.30.2 required"},
+		},
+		{
+			name: "kubernetes version does not match + delete annotation",
+			kcp: func() *controlplanev1.KubeadmControlPlane {
+				kcp := defaultKcp.DeepCopy()
+				kcp.Spec.Version = "v1.30.2"
+				return kcp
+			}(),
+			machine: func() *clusterv1.Machine {
+				machine := defaultMachine.DeepCopy()
+				machine.Spec.Version = "v1.30.0"
+				machine.Annotations = map[string]string{
+					clusterv1.DeleteMachineAnnotation: "",
+				}
+				return machine
+			}(),
+			infraConfigs:                   defaultInfraConfigs,
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 false,
+			expectEligibleForInPlaceUpdate: false, // Not eligible for in-place update because of delete annotation.
+			expectLogMessages:              []string{"Machine version \"v1.30.0\" is not equal to KCP version \"v1.30.2\""},
+			expectConditionMessages:        []string{"Version v1.30.0, v1.30.2 required"},
+		},
+		{
+			name: "kubernetes version does not match + remediate annotation",
+			kcp: func() *controlplanev1.KubeadmControlPlane {
+				kcp := defaultKcp.DeepCopy()
+				kcp.Spec.Version = "v1.30.2"
+				return kcp
+			}(),
+			machine: func() *clusterv1.Machine {
+				machine := defaultMachine.DeepCopy()
+				machine.Spec.Version = "v1.30.0"
+				machine.Annotations = map[string]string{
+					clusterv1.RemediateMachineAnnotation: "",
+				}
+				return machine
+			}(),
+			infraConfigs:                   defaultInfraConfigs,
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 false,
+			expectEligibleForInPlaceUpdate: false, // Not eligible for in-place update because of remediate annotation.
+			expectLogMessages:              []string{"Machine version \"v1.30.0\" is not equal to KCP version \"v1.30.2\""},
+			expectConditionMessages:        []string{"Version v1.30.0, v1.30.2 required"},
 		},
 		{
 			name: "KubeadmConfig is not up-to-date",
@@ -1806,26 +1688,48 @@ func TestUpToDate(t *testing.T) {
 				kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.CertificatesDir = "bar"
 				return kcp
 			}(),
-			machine:                 defaultMachine, // was created with cluster name "foo"
-			infraConfigs:            defaultInfraConfigs,
-			machineConfigs:          defaultMachineConfigs,
-			expectUptoDate:          false,
-			expectLogMessages:       []string{"Machine KubeadmConfig ClusterConfiguration is outdated: diff: v1beta2.ClusterConfiguration{\n    ... // 4 identical fields\n    Scheduler:       {},\n    DNS:             {},\n-   CertificatesDir: \"foo\",\n+   CertificatesDir: \"bar\",\n    ImageRepository: \"\",\n    FeatureGates:    nil,\n    ... // 2 identical fields\n  }"},
+			machine:                        defaultMachine, // was created with cluster name "foo"
+			infraConfigs:                   defaultInfraConfigs,
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 false,
+			expectEligibleForInPlaceUpdate: true,
+			expectLogMessages: []string{`Machine KubeadmConfig is outdated: diff: &v1beta2.KubeadmConfigSpec{
+    ClusterConfiguration: v1beta2.ClusterConfiguration{
+      ... // 4 identical fields
+      Scheduler:       {},
+      DNS:             {},
+-     CertificatesDir: "foo",
++     CertificatesDir: "bar",
+      ImageRepository: "",
+      FeatureGates:    nil,
+      ... // 3 identical fields
+    },
+    InitConfiguration: {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
+    JoinConfiguration: {NodeRegistration: {ImagePullPolicy: "IfNotPresent"}},
+    ... // 11 identical fields
+  }`},
 			expectConditionMessages: []string{"KubeadmConfig is not up-to-date"},
 		},
 		{
-			name: "AWSMachine is not up-to-date",
+			name: "InfraMachine is not up-to-date",
 			kcp: func() *controlplanev1.KubeadmControlPlane {
 				kcp := defaultKcp.DeepCopy()
-				kcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{APIGroup: clusterv1.GroupVersionInfrastructure.Group, Kind: "AWSMachineTemplate", Name: "template2"} // kcp moving to template 2
+				kcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+					APIGroup: builder.InfrastructureGroupVersion.Group,
+					Kind:     builder.TestInfrastructureMachineTemplateKind,
+					Name:     "infra-machine-template2",
+				} // kcp moving to infra-machine-template2
 				return kcp
 			}(),
-			machine:                 defaultMachine,
-			infraConfigs:            defaultInfraConfigs, // infra config cloned from template1
-			machineConfigs:          defaultMachineConfigs,
-			expectUptoDate:          false,
-			expectLogMessages:       []string{"Infrastructure template on KCP rotated from AWSMachineTemplate.infrastructure.cluster.x-k8s.io template1 to AWSMachineTemplate.infrastructure.cluster.x-k8s.io template2"},
-			expectConditionMessages: []string{"AWSMachine is not up-to-date"},
+			machine:                        defaultMachine,
+			infraConfigs:                   defaultInfraConfigs, // infra config cloned from infra-machine-template1
+			machineConfigs:                 defaultMachineConfigs,
+			expectUptoDate:                 false,
+			expectEligibleForInPlaceUpdate: true,
+			expectLogMessages: []string{"Infrastructure template on KCP rotated from " +
+				"TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io infra-machine-template1 to " +
+				"TestInfrastructureMachineTemplate.infrastructure.cluster.x-k8s.io infra-machine-template2"},
+			expectConditionMessages: []string{"TestInfrastructureMachine is not up-to-date"},
 		},
 	}
 
@@ -1833,11 +1737,28 @@ func TestUpToDate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			upToDate, logMessages, conditionMessages, err := UpToDate(tt.machine, tt.kcp, &reconciliationTime, tt.infraConfigs, tt.machineConfigs)
+			scheme := runtime.NewScheme()
+			_ = apiextensionsv1.AddToScheme(scheme)
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(builder.TestInfrastructureMachineTemplateCRD, infraMachineTemplate1, infraMachineTemplate2).Build()
+
+			upToDate, res, err := UpToDate(t.Context(), c, &clusterv1.Cluster{}, tt.machine, tt.kcp, &reconciliationTime, tt.infraConfigs, tt.machineConfigs)
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(upToDate).To(Equal(tt.expectUptoDate))
-			g.Expect(logMessages).To(BeComparableTo(tt.expectLogMessages))
-			g.Expect(conditionMessages).To(Equal(tt.expectConditionMessages))
+			g.Expect(res).ToNot(BeNil())
+			g.Expect(res.EligibleForInPlaceUpdate).To(Equal(tt.expectEligibleForInPlaceUpdate))
+			g.Expect(res.DesiredMachine).ToNot(BeNil())
+			g.Expect(res.DesiredMachine.Spec.Version).To(Equal(tt.kcp.Spec.Version))
+			g.Expect(res.CurrentInfraMachine).ToNot(BeNil())
+			g.Expect(res.DesiredInfraMachine).ToNot(BeNil())
+			g.Expect(res.CurrentKubeadmConfig).ToNot(BeNil())
+			g.Expect(res.DesiredKubeadmConfig).ToNot(BeNil())
+			if upToDate {
+				g.Expect(res.LogMessages).To(BeEmpty())
+				g.Expect(res.ConditionMessages).To(BeEmpty())
+			} else {
+				g.Expect(res.LogMessages).To(BeComparableTo(tt.expectLogMessages))
+				g.Expect(res.ConditionMessages).To(Equal(tt.expectConditionMessages))
+			}
 		})
 	}
 }

@@ -2844,19 +2844,22 @@ func TestSetAvailableCondition(t *testing.T) {
 							Reason: "Foo",
 						},
 						{
-							Type:    clusterv1.ClusterTopologyReconciledCondition,
-							Status:  metav1.ConditionFalse,
-							Reason:  clusterv1.ClusterTopologyReconciledControlPlaneUpgradePendingReason,
-							Message: "Control plane rollout and upgrade to version v1.29.0 on hold.",
+							Type:   clusterv1.ClusterTopologyReconciledCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.ClusterTopologyReconciledClusterUpgradingReason,
+							Message: "Cluster is upgrading to v1.22.0\n" +
+								"  * MachineDeployment md1 upgrading to version v1.22.0",
 						},
 					},
 				},
 			},
 			expectCondition: metav1.Condition{
-				Type:    clusterv1.ClusterAvailableCondition,
-				Status:  metav1.ConditionTrue,
-				Reason:  clusterv1.ClusterAvailableReason,
-				Message: "* TopologyReconciled: Control plane rollout and upgrade to version v1.29.0 on hold.",
+				Type:   clusterv1.ClusterAvailableCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.ClusterAvailableReason,
+				Message: "* TopologyReconciled:\n" +
+					"  * Cluster is upgrading to v1.22.0\n" +
+					"      * MachineDeployment md1 upgrading to version v1.22.0",
 			},
 		},
 		{
@@ -2902,10 +2905,11 @@ func TestSetAvailableCondition(t *testing.T) {
 							Reason: "Foo",
 						},
 						{
-							Type:    clusterv1.ClusterTopologyReconciledCondition,
-							Status:  metav1.ConditionFalse,
-							Reason:  clusterv1.ClusterTopologyReconciledControlPlaneUpgradePendingReason,
-							Message: "Control plane rollout and upgrade to version v1.29.0 on hold.",
+							Type:   clusterv1.ClusterTopologyReconciledCondition,
+							Status: metav1.ConditionFalse,
+							Reason: clusterv1.ClusterTopologyReconciledClusterUpgradingReason,
+							Message: "Cluster is upgrading to v1.22.0\n" +
+								"  * MachineDeployment md1 upgrading to version v1.22.0",
 						},
 					},
 				},
@@ -3057,11 +3061,6 @@ type fakeClusterOption interface {
 
 func fakeCluster(name string, options ...fakeClusterOption) *clusterv1.Cluster {
 	c := &clusterv1.Cluster{
-		TypeMeta: metav1.TypeMeta{
-			// Note: this is required by ownerRef checks
-			APIVersion: clusterv1.GroupVersion.String(),
-			Kind:       "Cluster",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},

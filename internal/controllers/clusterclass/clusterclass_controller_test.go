@@ -1101,15 +1101,15 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 			wantErrMessage: "failed to discover variables for ClusterClass class1: [" +
 				"patch1.variables[cpu].schema.openAPIV3Schema.properties[nestedField].default: Invalid value: \"integer\": failed rule: self >= 1, " +
 				"patch1.variables[anotherCPU].schema.openAPIV3Schema.x-kubernetes-validations[0].messageExpression: Invalid value: " +
-				"apiextensions.ValidationRule{Rule:\"self >= 1\", Message:\"\", MessageExpression:\"'Expected integer greater or equal to 1, got ' + this does not compile\", " +
-				"Reason:(*apiextensions.FieldValueErrorReason)(nil), FieldPath:\"\", OptionalOldSelf:(*bool)(nil)}: " +
+				"{\"Rule\":\"self \\u003e= 1\",\"Message\":\"\",\"MessageExpression\":\"'Expected integer greater or equal to 1, got ' + this does not compile\"," +
+				"\"Reason\":null,\"FieldPath\":\"\",\"OptionalOldSelf\":null}: " +
 				"messageExpression compilation failed: ERROR: <input>:1:55: Syntax error: mismatched input 'does' expecting <EOF>\n " +
 				"| 'Expected integer greater or equal to 1, got ' + this does not compile\n " +
 				"| ......................................................^]",
 			wantVariableDiscoveryErrorMessage: "VariableDiscovery failed: [patch1.variables[cpu].schema.openAPIV3Schema.properties[nestedField].default: Invalid value: \"integer\": failed rule: self >= 1, " +
 				"patch1.variables[anotherCPU].schema.openAPIV3Schema.x-kubernetes-validations[0].messageExpression: Invalid value: " +
-				"apiextensions.ValidationRule{Rule:\"self >= 1\", Message:\"\", MessageExpression:\"'Expected integer greater or equal to 1, got ' + this does not compile\", " +
-				"Reason:(*apiextensions.FieldValueErrorReason)(nil), FieldPath:\"\", OptionalOldSelf:(*bool)(nil)}: " +
+				"{\"Rule\":\"self \\u003e= 1\",\"Message\":\"\",\"MessageExpression\":\"'Expected integer greater or equal to 1, got ' + this does not compile\"," +
+				"\"Reason\":null,\"FieldPath\":\"\",\"OptionalOldSelf\":null}: " +
 				"messageExpression compilation failed: ERROR: <input>:1:55: Syntax error: mismatched input 'does' expecting <EOF>\n " +
 				"| 'Expected integer greater or equal to 1, got ' + this does not compile\n " +
 				"| ......................................................^]",
@@ -1150,7 +1150,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 			},
 			wantErrMessage: "failed to discover variables for ClusterClass class1: " +
 				"patch1.variables[someIP].schema.openAPIV3Schema.x-kubernetes-validations[0].rule: Invalid value: " +
-				"apiextensions.ValidationRule{Rule:\"ip(self).family() == 6\", Message:\"\", MessageExpression:\"\", Reason:(*apiextensions.FieldValueErrorReason)(nil), FieldPath:\"\", OptionalOldSelf:(*bool)(nil)}: compilation failed: " +
+				"{\"Rule\":\"ip(self).family() == 6\",\"Message\":\"\",\"MessageExpression\":\"\",\"Reason\":null,\"FieldPath\":\"\",\"OptionalOldSelf\":null}: compilation failed: " +
 				"ERROR: <input>:1:3: undeclared reference to 'ip' (in container '')\n" +
 				" | ip(self).family() == 6\n" +
 				" | ..^\n" +
@@ -1158,7 +1158,7 @@ func TestReconciler_reconcileVariables(t *testing.T) {
 				" | ip(self).family() == 6\n" +
 				" | ...............^",
 			wantVariableDiscoveryErrorMessage: "VariableDiscovery failed: patch1.variables[someIP].schema.openAPIV3Schema.x-kubernetes-validations[0].rule: Invalid value: " +
-				"apiextensions.ValidationRule{Rule:\"ip(self).family() == 6\", Message:\"\", MessageExpression:\"\", Reason:(*apiextensions.FieldValueErrorReason)(nil), FieldPath:\"\", OptionalOldSelf:(*bool)(nil)}: compilation failed: " +
+				"{\"Rule\":\"ip(self).family() == 6\",\"Message\":\"\",\"MessageExpression\":\"\",\"Reason\":null,\"FieldPath\":\"\",\"OptionalOldSelf\":null}: compilation failed: " +
 				"ERROR: <input>:1:3: undeclared reference to 'ip' (in container '')\n" +
 				" | ip(self).family() == 6\n" +
 				" | ..^\n" +
@@ -1219,10 +1219,6 @@ func TestReconciler_extensionConfigToClusterClass(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "runtime1",
 		},
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ExtensionConfig",
-			APIVersion: runtimev1.GroupVersion.String(),
-		},
 		Spec: runtimev1.ExtensionConfigSpec{
 			NamespaceSelector: &metav1.LabelSelector{},
 		},
@@ -1230,10 +1226,6 @@ func TestReconciler_extensionConfigToClusterClass(t *testing.T) {
 	secondExtConfig := &runtimev1.ExtensionConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "runtime2",
-		},
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ExtensionConfig",
-			APIVersion: runtimev1.GroupVersion.String(),
 		},
 		Spec: runtimev1.ExtensionConfigSpec{
 			NamespaceSelector: &metav1.LabelSelector{},

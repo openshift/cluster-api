@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -45,13 +44,13 @@ import (
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	kubeadmtypes "sigs.k8s.io/cluster-api/bootstrap/kubeadm/types"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/desiredstate"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/proxy"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/certs"
 	containerutil "sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/patch"
-	"sigs.k8s.io/cluster-api/util/version"
 )
 
 const (
@@ -63,13 +62,6 @@ const (
 )
 
 var (
-	// minKubernetesVersionControlPlaneKubeletLocalMode is the min version from which
-	// we will enable the ControlPlaneKubeletLocalMode kubeadm feature gate.
-	// Note: We have to do this with Kubernetes 1.31. Because with that version we encountered
-	// a case where it's not okay anymore to ignore the Kubernetes version skew (kubelet 1.31 uses
-	// the spec.clusterIP field selector that is only implemented in kube-apiserver >= 1.31.0).
-	minKubernetesVersionControlPlaneKubeletLocalMode = semver.MustParse("1.31.0")
-
 	// ErrControlPlaneMinNodes signals that a cluster doesn't meet the minimum required nodes
 	// to remove an etcd member.
 	ErrControlPlaneMinNodes = errors.New("cluster has fewer than 2 control plane nodes; removing an etcd member is not supported")
@@ -95,6 +87,7 @@ type WorkloadCluster interface {
 	UpdateControllerManagerInKubeadmConfigMap(controllerManager bootstrapv1.ControllerManager) func(*bootstrapv1.ClusterConfiguration)
 	UpdateSchedulerInKubeadmConfigMap(scheduler bootstrapv1.Scheduler) func(*bootstrapv1.ClusterConfiguration)
 	UpdateCertificateValidityPeriodDays(certificateValidityPeriodDays int32) func(*bootstrapv1.ClusterConfiguration)
+	UpdateEncryptionAlgorithm(encryptionAlgorithm bootstrapv1.EncryptionAlgorithmType) func(*bootstrapv1.ClusterConfiguration)
 	UpdateKubeProxyImageInfo(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane) error
 	UpdateCoreDNS(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane) error
 	RemoveEtcdMemberForMachine(ctx context.Context, machine *clusterv1.Machine) error
@@ -166,32 +159,11 @@ func (w *Workload) UpdateFeatureGatesInKubeadmConfigMap(kubeadmConfigSpec bootst
 	return func(c *bootstrapv1.ClusterConfiguration) {
 		// We use DeepCopy here to avoid modifying the KCP object in the apiserver.
 		kubeadmConfigSpec := kubeadmConfigSpec.DeepCopy()
-		DefaultFeatureGates(kubeadmConfigSpec, kubernetesVersion)
+		desiredstate.DefaultFeatureGates(kubeadmConfigSpec, kubernetesVersion)
 
 		// Even if featureGates is nil, reset it to ClusterConfiguration
 		// to override any previously set feature gates.
 		c.FeatureGates = kubeadmConfigSpec.ClusterConfiguration.FeatureGates
-	}
-}
-
-const (
-	// ControlPlaneKubeletLocalMode is a feature gate of kubeadm that ensures
-	// kubelets only communicate with the local apiserver.
-	ControlPlaneKubeletLocalMode = "ControlPlaneKubeletLocalMode"
-)
-
-// DefaultFeatureGates defaults the feature gates field.
-func DefaultFeatureGates(kubeadmConfigSpec *bootstrapv1.KubeadmConfigSpec, kubernetesVersion semver.Version) {
-	if version.Compare(kubernetesVersion, minKubernetesVersionControlPlaneKubeletLocalMode, version.WithoutPreReleases()) < 0 {
-		return
-	}
-
-	if kubeadmConfigSpec.ClusterConfiguration.FeatureGates == nil {
-		kubeadmConfigSpec.ClusterConfiguration.FeatureGates = map[string]bool{}
-	}
-
-	if _, ok := kubeadmConfigSpec.ClusterConfiguration.FeatureGates[ControlPlaneKubeletLocalMode]; !ok {
-		kubeadmConfigSpec.ClusterConfiguration.FeatureGates[ControlPlaneKubeletLocalMode] = true
 	}
 }
 
@@ -220,6 +192,13 @@ func (w *Workload) UpdateSchedulerInKubeadmConfigMap(scheduler bootstrapv1.Sched
 func (w *Workload) UpdateCertificateValidityPeriodDays(certificateValidityPeriodDays int32) func(*bootstrapv1.ClusterConfiguration) {
 	return func(c *bootstrapv1.ClusterConfiguration) {
 		c.CertificateValidityPeriodDays = certificateValidityPeriodDays
+	}
+}
+
+// UpdateEncryptionAlgorithm updates EncryptionAlgorithmType in kubeadm config map.
+func (w *Workload) UpdateEncryptionAlgorithm(encryptionAlgorithm bootstrapv1.EncryptionAlgorithmType) func(*bootstrapv1.ClusterConfiguration) {
+	return func(c *bootstrapv1.ClusterConfiguration) {
+		c.EncryptionAlgorithm = encryptionAlgorithm
 	}
 }
 
@@ -375,7 +354,7 @@ func calculateAPIServerPort(config *bootstrapv1.KubeadmConfig) int32 {
 	return 6443
 }
 
-func generateClientCert(caCertEncoded, caKeyEncoded []byte, clientKey *rsa.PrivateKey) (tls.Certificate, error) {
+func generateClientCert(caCertEncoded, caKeyEncoded []byte, keyEncryptionAlgorithm bootstrapv1.EncryptionAlgorithmType) (tls.Certificate, error) {
 	caCert, err := certs.DecodeCertPEM(caCertEncoded)
 	if err != nil {
 		return tls.Certificate{}, err
@@ -384,14 +363,24 @@ func generateClientCert(caCertEncoded, caKeyEncoded []byte, clientKey *rsa.Priva
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+
+	clientKey, err := certs.NewSigner(keyEncryptionAlgorithm)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
 	x509Cert, err := newClientCert(caCert, clientKey, caKey)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	return tls.X509KeyPair(certs.EncodeCertPEM(x509Cert), certs.EncodePrivateKeyPEM(clientKey))
+	encodedClientKey, err := certs.EncodePrivateKeyPEMFromSigner(clientKey)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	return tls.X509KeyPair(certs.EncodeCertPEM(x509Cert), encodedClientKey)
 }
 
-func newClientCert(caCert *x509.Certificate, key *rsa.PrivateKey, caKey crypto.Signer) (*x509.Certificate, error) {
+func newClientCert(caCert *x509.Certificate, key crypto.Signer, caKey crypto.Signer) (*x509.Certificate, error) {
 	cfg := certs.Config{
 		CommonName: "cluster-api.x-k8s.io",
 	}

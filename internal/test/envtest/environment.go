@@ -39,6 +39,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -52,6 +53,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -61,6 +63,7 @@ import (
 
 	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1beta1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
@@ -68,9 +71,8 @@ import (
 	bootstrapwebhooks "sigs.k8s.io/cluster-api/bootstrap/kubeadm/webhooks"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	controlplanewebhooks "sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks"
-	expipamwebhooks "sigs.k8s.io/cluster-api/exp/ipam/webhooks"
-	expapiwebhooks "sigs.k8s.io/cluster-api/exp/webhooks"
 	"sigs.k8s.io/cluster-api/feature"
+	"sigs.k8s.io/cluster-api/internal/contract"
 	internalwebhooks "sigs.k8s.io/cluster-api/internal/webhooks"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/test/builder"
@@ -118,6 +120,7 @@ func registerSchemes(s *runtime.Scheme) {
 	utilruntime.Must(bootstrapv1.AddToScheme(s))
 	utilruntime.Must(clusterv1.AddToScheme(s))
 	utilruntime.Must(controlplanev1.AddToScheme(s))
+	utilruntime.Must(controlplanev1beta1.AddToScheme(s))
 	utilruntime.Must(ipamv1.AddToScheme(s))
 	utilruntime.Must(runtimev1.AddToScheme(s))
 }
@@ -166,7 +169,7 @@ func Run(ctx context.Context, input RunInput) int {
 	}
 
 	// Bootstrapping test environment
-	env := newEnvironment(scheme, input.AdditionalCRDDirectoryPaths, input.ManagerCacheOptions, input.ManagerUncachedObjs...)
+	env := newEnvironment(ctx, scheme, input.AdditionalCRDDirectoryPaths, input.ManagerCacheOptions, input.ManagerUncachedObjs...)
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	env.cancelManager = cancel
@@ -251,7 +254,7 @@ type Environment struct {
 //
 // This function should be called only once for each package you're running tests within,
 // usually the environment is initialized in a suite_test.go file within a `BeforeSuite` ginkgo block.
-func newEnvironment(scheme *runtime.Scheme, additionalCRDDirectoryPaths []string, managerCacheOptions cache.Options, uncachedObjs ...client.Object) *Environment {
+func newEnvironment(ctx context.Context, scheme *runtime.Scheme, additionalCRDDirectoryPaths []string, managerCacheOptions cache.Options, uncachedObjs ...client.Object) *Environment {
 	// Get the root of the current file to use in CRD paths.
 	_, filename, _, _ := goruntime.Caller(0) //nolint:dogsled
 	root := path.Join(path.Dir(filename), "..", "..", "..")
@@ -296,6 +299,37 @@ func newEnvironment(scheme *runtime.Scheme, additionalCRDDirectoryPaths []string
 		// initialize webhook here to be able to test the envtest install via webhookOptions
 		// This should set LocalServingCertDir and LocalServingPort that are used below.
 		WebhookInstallOptions: initWebhookInstallOptions(),
+	}
+
+	// if ARTIFACTS is setup, configure apiserver audit logs to log to ARTIFACTS dir
+	if os.Getenv("ARTIFACTS") != "" {
+		_, packageFileName, _, _ := goruntime.Caller(2)
+		relativePathPackageCallerFile, err := filepath.Rel(root, packageFileName)
+		if err != nil {
+			klog.Fatalf("unable to get relative path of calling package %+v", err)
+		}
+
+		relativePathPackageCallerDir := filepath.Dir(relativePathPackageCallerFile)
+		auditLogsDir := filepath.Join(os.Getenv("ARTIFACTS"), relativePathPackageCallerDir)
+		auditLogsFilePath := filepath.Join(auditLogsDir, "apiserver-audit-logs")
+
+		if err = os.MkdirAll(auditLogsDir, 0750); err != nil {
+			klog.Fatalf("failed to create audit logs dir: %+v", err)
+		}
+
+		auditPolicyPath, err := writeAuditPolicy(auditLogsDir)
+		if err != nil {
+			klog.Fatalf("failed to write audit logs policy file: %+v", err)
+		}
+
+		env.ControlPlane = envtest.ControlPlane{}
+		env.ControlPlane.APIServer = &envtest.APIServer{}
+		env.ControlPlane.APIServer.Configure().Set("audit-log-path", auditLogsFilePath)
+		env.ControlPlane.APIServer.Configure().Set("audit-log-format", "json")
+		env.ControlPlane.APIServer.Configure().Set("audit-policy-file", auditPolicyPath)
+		env.ControlPlane.APIServer.Configure().Set("audit-log-maxage", "0")
+		env.ControlPlane.APIServer.Configure().Set("audit-log-maxbackup", "0")
+		env.ControlPlane.APIServer.Configure().Set("audit-log-maxsize", "0")
 	}
 
 	if _, err := env.Start(); err != nil {
@@ -347,6 +381,12 @@ func newEnvironment(scheme *runtime.Scheme, additionalCRDDirectoryPaths []string
 	// Set minNodeStartupTimeout for Test, so it does not need to be at least 30s
 	internalwebhooks.SetMinNodeStartupTimeoutSeconds(0)
 
+	// Setup the func to retrieve apiVersion for a GroupKind for conversion webhooks.
+	apiVersionGetter := func(gk schema.GroupKind) (string, error) {
+		return contract.GetAPIVersion(ctx, mgr.GetClient(), gk)
+	}
+	controlplanev1beta1.SetAPIVersionGetter(apiVersionGetter)
+
 	if err := (&webhooks.Cluster{Client: mgr.GetClient()}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook: %+v", err)
 	}
@@ -386,16 +426,16 @@ func newEnvironment(scheme *runtime.Scheme, additionalCRDDirectoryPaths []string
 	if err := (&webhooks.ClusterResourceSetBinding{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for ClusterResourceSetBinding: %+v", err)
 	}
-	if err := (&expapiwebhooks.MachinePool{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.MachinePool{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for machinepool: %+v", err)
 	}
 	if err := (&webhooks.ExtensionConfig{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for extensionconfig: %+v", err)
 	}
-	if err := (&expipamwebhooks.IPAddress{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.IPAddress{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for ipaddress: %v", err)
 	}
-	if err := (&expipamwebhooks.IPAddressClaim{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.IPAddressClaim{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for ipaddressclaim: %v", err)
 	}
 
@@ -405,6 +445,30 @@ func newEnvironment(scheme *runtime.Scheme, additionalCRDDirectoryPaths []string
 		Config:  mgr.GetConfig(),
 		env:     env,
 	}
+}
+
+func writeAuditPolicy(dir string) (string, error) {
+	policyFile := filepath.Join(dir, "audit-policy.yaml")
+
+	policyYAML := []byte(`
+apiVersion: audit.k8s.io/v1
+kind: Policy
+rules:
+  - level: RequestResponse
+    resources:
+      - group: ""
+      - group: "cluster.x-k8s.io"
+      - group: "infrastructure.cluster.x-k8s.io"
+      - group: "controlplane.cluster.x-k8s.io"
+      - group: "addons.cluster.x-k8s.io"
+      - group: "bootstrap.cluster.x-k8s.io"
+      - group: "runtime.cluster.x-k8s.io"
+`)
+
+	if err := os.WriteFile(policyFile, policyYAML, 0600); err != nil {
+		return "", err
+	}
+	return policyFile, nil
 }
 
 // start starts the manager.
@@ -529,10 +593,49 @@ func (e *Environment) CreateAndWait(ctx context.Context, obj client.Object, opts
 	return nil
 }
 
+// DeleteAndWait deletes the given object and waits for the cache to be updated accordingly.
+//
+// NOTE: Waiting for the cache to be updated helps in preventing test flakes due to the cache sync delays.
+func (e *Environment) DeleteAndWait(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if err := e.Delete(ctx, obj, opts...); err != nil {
+		return err
+	}
+
+	// Makes sure the cache is updated with the new object
+	objCopy := obj.DeepCopyObject().(client.Object)
+	key := client.ObjectKeyFromObject(obj)
+	if err := wait.ExponentialBackoff(
+		cacheSyncBackoff,
+		func() (done bool, err error) {
+			if err := e.Get(ctx, key, objCopy); err != nil {
+				if apierrors.IsNotFound(err) {
+					// if not found possible no finalizer and delete just removed the object.
+					return true, nil
+				}
+				return false, err
+			}
+			if !objCopy.GetDeletionTimestamp().IsZero() {
+				return true, nil
+			}
+			return false, nil
+		}); err != nil {
+		return errors.Wrapf(err, "object %s, %s is not being added to the testenv client cache", obj.GetObjectKind().GroupVersionKind().String(), key)
+	}
+	return nil
+}
+
 // PatchAndWait creates or updates the given object using server-side apply and waits for the cache to be updated accordingly.
 //
 // NOTE: Waiting for the cache to be updated helps in preventing test flakes due to the cache sync delays.
 func (e *Environment) PatchAndWait(ctx context.Context, obj client.Object, opts ...client.PatchOption) error {
+	objGVK, err := apiutil.GVKForObject(obj, e.Scheme())
+	if err != nil {
+		return errors.Wrapf(err, "failed to get GVK to set GVK on object")
+	}
+	// Ensure that GVK is explicitly set because e.Patch below uses json.Marshal
+	// to serialize the object and the apiserver would complain if GVK is not sent.
+	obj.GetObjectKind().SetGroupVersionKind(objGVK)
+
 	key := client.ObjectKeyFromObject(obj)
 	objCopy := obj.DeepCopyObject().(client.Object)
 	if err := e.GetAPIReader().Get(ctx, key, objCopy); err != nil {
@@ -610,6 +713,14 @@ func verifyPanicMetrics() error {
 			for _, webhookPanicMetric := range metricFamily.Metric {
 				if webhookPanicMetric.Counter != nil && webhookPanicMetric.Counter.Value != nil && *webhookPanicMetric.Counter.Value > 0 {
 					errs = append(errs, fmt.Errorf("%.0f panics occurred in webhooks (check logs for more details)", *webhookPanicMetric.Counter.Value))
+				}
+			}
+		}
+
+		if metricFamily.GetName() == "controller_runtime_conversion_webhook_panics_total" {
+			for _, webhookPanicMetric := range metricFamily.Metric {
+				if webhookPanicMetric.Counter != nil && webhookPanicMetric.Counter.Value != nil && *webhookPanicMetric.Counter.Value > 0 {
+					errs = append(errs, fmt.Errorf("%.0f panics occurred in conversion webhooks (check logs for more details)", *webhookPanicMetric.Counter.Value))
 				}
 			}
 		}

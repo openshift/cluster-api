@@ -99,6 +99,40 @@ var moveTests = []struct {
 		wantErr: false,
 	},
 	{
+		name: "Paused Cluster",
+		fields: moveTestsFields{
+			objs: test.NewFakeCluster("ns1", "foo").WithPaused().Objs(),
+		},
+		wantMoveGroups: [][]string{
+			{ // group 1
+				clusterv1.GroupVersion.String() + ", Kind=Cluster, ns1/foo",
+			},
+			{ // group 2 (objects with ownerReferences in group 1)
+				// owned by Clusters
+				"/v1, Kind=Secret, ns1/foo-ca",
+				"/v1, Kind=Secret, ns1/foo-kubeconfig",
+				clusterv1.GroupVersionInfrastructure.String() + ", Kind=GenericInfrastructureCluster, ns1/foo",
+			},
+		},
+		wantErr: true,
+	},
+	{
+		name: "Paused ClusterClass",
+		fields: moveTestsFields{
+			objs: test.NewFakeClusterClass("ns1", "class1").WithPaused().Objs(),
+		},
+		wantMoveGroups: [][]string{
+			{ // group 1
+				clusterv1.GroupVersion.String() + ", Kind=ClusterClass, ns1/class1",
+			},
+			{ // group 2
+				clusterv1.GroupVersionInfrastructure.String() + ", Kind=GenericInfrastructureClusterTemplate, ns1/class1",
+				clusterv1.GroupVersionControlPlane.String() + ", Kind=GenericControlPlaneTemplate, ns1/class1",
+			},
+		},
+		wantErr: true,
+	},
+	{
 		name: "Cluster with cloud config secret with the force move label",
 		fields: moveTestsFields{
 			objs: test.NewFakeCluster("ns1", "foo").WithCloudConfigSecret().Objs(),
@@ -693,10 +727,10 @@ var backupRestoreTests = []struct {
 			objs: test.NewFakeCluster("ns1", "foo").Objs(),
 		},
 		files: map[string]string{
-			"Cluster_ns1_foo.yaml":                      `{"apiVersion":"$CAPI","kind":"Cluster","metadata":{"creationTimestamp":null,"name":"foo","namespace":"ns1","resourceVersion":"999","uid":"$CAPI, Kind=Cluster, ns1/foo"},"spec":{"infrastructureRef":{"apiGroup":"$INFRA_GROUP","kind":"GenericInfrastructureCluster","name":"foo"}}}` + "\n",
-			"Secret_ns1_foo-kubeconfig.yaml":            `{"apiVersion":"v1","kind":"Secret","metadata":{"creationTimestamp":null,"name":"foo-kubeconfig","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-kubeconfig"}}` + "\n",
-			"Secret_ns1_foo-ca.yaml":                    `{"apiVersion":"v1","kind":"Secret","metadata":{"creationTimestamp":null,"name":"foo-ca","namespace":"ns1","resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-ca"}}` + "\n",
-			"GenericInfrastructureCluster_ns1_foo.yaml": `{"apiVersion":"$INFRA","kind":"GenericInfrastructureCluster","metadata":{"creationTimestamp":null,"labels":{"cluster.x-k8s.io/cluster-name":"foo"},"name":"foo","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"$INFRA, Kind=GenericInfrastructureCluster, ns1/foo"}}` + "\n",
+			"Cluster_ns1_foo.yaml":                      `{"apiVersion":"$CAPI","kind":"Cluster","metadata":{"name":"foo","namespace":"ns1","resourceVersion":"999","uid":"$CAPI, Kind=Cluster, ns1/foo"},"spec":{"infrastructureRef":{"apiGroup":"$INFRA_GROUP","kind":"GenericInfrastructureCluster","name":"foo"}}}` + "\n",
+			"Secret_ns1_foo-kubeconfig.yaml":            `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"foo-kubeconfig","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-kubeconfig"}}` + "\n",
+			"Secret_ns1_foo-ca.yaml":                    `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"foo-ca","namespace":"ns1","resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-ca"}}` + "\n",
+			"GenericInfrastructureCluster_ns1_foo.yaml": `{"apiVersion":"$INFRA","kind":"GenericInfrastructureCluster","metadata":{"labels":{"cluster.x-k8s.io/cluster-name":"foo"},"name":"foo","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"$INFRA, Kind=GenericInfrastructureCluster, ns1/foo"}}` + "\n",
 		},
 		wantErr: false,
 	},
@@ -711,14 +745,14 @@ var backupRestoreTests = []struct {
 			}(),
 		},
 		files: map[string]string{
-			"Cluster_ns1_foo.yaml":                      `{"apiVersion":"$CAPI","kind":"Cluster","metadata":{"creationTimestamp":null,"name":"foo","namespace":"ns1","resourceVersion":"999","uid":"$CAPI, Kind=Cluster, ns1/foo"},"spec":{"infrastructureRef":{"apiGroup":"$INFRA_GROUP","kind":"GenericInfrastructureCluster","name":"foo"}}}` + "\n",
-			"Secret_ns1_foo-kubeconfig.yaml":            `{"apiVersion":"v1","kind":"Secret","metadata":{"creationTimestamp":null,"name":"foo-kubeconfig","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-kubeconfig"}}` + "\n",
-			"Secret_ns1_foo-ca.yaml":                    `{"apiVersion":"v1","kind":"Secret","metadata":{"creationTimestamp":null,"name":"foo-ca","namespace":"ns1","resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-ca"}}` + "\n",
-			"GenericInfrastructureCluster_ns1_foo.yaml": `{"apiVersion":"$INFRA","kind":"GenericInfrastructureCluster","metadata":{"creationTimestamp":null,"labels":{"cluster.x-k8s.io/cluster-name":"foo"},"name":"foo","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"$INFRA, Kind=GenericInfrastructureCluster, ns1/foo"}}` + "\n",
-			"Cluster_ns2_bar.yaml":                      `{"apiVersion":"$CAPI","kind":"Cluster","metadata":{"creationTimestamp":null,"name":"bar","namespace":"ns2","resourceVersion":"999","uid":"$CAPI, Kind=Cluster, ns2/bar"},"spec":{"infrastructureRef":{"apiGroup":"$INFRA_GROUP","kind":"GenericInfrastructureCluster","name":"bar"}}}` + "\n",
-			"Secret_ns2_bar-kubeconfig.yaml":            `{"apiVersion":"v1","kind":"Secret","metadata":{"creationTimestamp":null,"name":"bar-kubeconfig","namespace":"ns2","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"bar","uid":"$CAPI, Kind=Cluster, ns2/bar"}],"resourceVersion":"999","uid":"/v1, Kind=Secret, ns2/bar-kubeconfig"}}` + "\n",
-			"Secret_ns2_bar-ca.yaml":                    `{"apiVersion":"v1","kind":"Secret","metadata":{"creationTimestamp":null,"name":"bar-ca","namespace":"ns2","resourceVersion":"999","uid":"/v1, Kind=Secret, ns2/bar-ca"}}` + "\n",
-			"GenericInfrastructureCluster_ns2_bar.yaml": `{"apiVersion":"$INFRA","kind":"GenericInfrastructureCluster","metadata":{"creationTimestamp":null,"labels":{"cluster.x-k8s.io/cluster-name":"bar"},"name":"bar","namespace":"ns2","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"bar","uid":"$CAPI, Kind=Cluster, ns2/bar"}],"resourceVersion":"999","uid":"$INFRA, Kind=GenericInfrastructureCluster, ns2/bar"}}` + "\n",
+			"Cluster_ns1_foo.yaml":                      `{"apiVersion":"$CAPI","kind":"Cluster","metadata":{"name":"foo","namespace":"ns1","resourceVersion":"999","uid":"$CAPI, Kind=Cluster, ns1/foo"},"spec":{"infrastructureRef":{"apiGroup":"$INFRA_GROUP","kind":"GenericInfrastructureCluster","name":"foo"}}}` + "\n",
+			"Secret_ns1_foo-kubeconfig.yaml":            `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"foo-kubeconfig","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-kubeconfig"}}` + "\n",
+			"Secret_ns1_foo-ca.yaml":                    `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"foo-ca","namespace":"ns1","resourceVersion":"999","uid":"/v1, Kind=Secret, ns1/foo-ca"}}` + "\n",
+			"GenericInfrastructureCluster_ns1_foo.yaml": `{"apiVersion":"$INFRA","kind":"GenericInfrastructureCluster","metadata":{"labels":{"cluster.x-k8s.io/cluster-name":"foo"},"name":"foo","namespace":"ns1","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"foo","uid":"$CAPI, Kind=Cluster, ns1/foo"}],"resourceVersion":"999","uid":"$INFRA, Kind=GenericInfrastructureCluster, ns1/foo"}}` + "\n",
+			"Cluster_ns2_bar.yaml":                      `{"apiVersion":"$CAPI","kind":"Cluster","metadata":{"name":"bar","namespace":"ns2","resourceVersion":"999","uid":"$CAPI, Kind=Cluster, ns2/bar"},"spec":{"infrastructureRef":{"apiGroup":"$INFRA_GROUP","kind":"GenericInfrastructureCluster","name":"bar"}}}` + "\n",
+			"Secret_ns2_bar-kubeconfig.yaml":            `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"bar-kubeconfig","namespace":"ns2","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"bar","uid":"$CAPI, Kind=Cluster, ns2/bar"}],"resourceVersion":"999","uid":"/v1, Kind=Secret, ns2/bar-kubeconfig"}}` + "\n",
+			"Secret_ns2_bar-ca.yaml":                    `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"bar-ca","namespace":"ns2","resourceVersion":"999","uid":"/v1, Kind=Secret, ns2/bar-ca"}}` + "\n",
+			"GenericInfrastructureCluster_ns2_bar.yaml": `{"apiVersion":"$INFRA","kind":"GenericInfrastructureCluster","metadata":{"labels":{"cluster.x-k8s.io/cluster-name":"bar"},"name":"bar","namespace":"ns2","ownerReferences":[{"apiVersion":"$CAPI","kind":"Cluster","name":"bar","uid":"$CAPI, Kind=Cluster, ns2/bar"}],"resourceVersion":"999","uid":"$INFRA, Kind=GenericInfrastructureCluster, ns2/bar"}}` + "\n",
 		},
 		wantErr: false,
 	},
@@ -923,8 +957,29 @@ func Test_objectMover_restoreTargetObject(t *testing.T) {
 }
 
 func Test_objectMover_toDirectory(t *testing.T) {
-	// NB. we are testing the move and move sequence using the same set of moveTests, but checking the results at different stages of the move process
-	for _, tt := range backupRestoreTests {
+	tests := []struct {
+		name    string
+		fields  moveTestsFields
+		files   map[string]string
+		wantErr bool
+	}{
+		{
+			name: "Cluster is paused",
+			fields: moveTestsFields{
+				objs: test.NewFakeCluster("ns1", "foo").WithPaused().Objs(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "ClusterClass is paused",
+			fields: moveTestsFields{
+				objs: test.NewFakeClusterClass("ns1", "foo").WithPaused().Objs(),
+			},
+			wantErr: true,
+		},
+	}
+	tests = append(tests, backupRestoreTests...)
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 

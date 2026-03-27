@@ -27,6 +27,7 @@ import (
 
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	"sigs.k8s.io/cluster-api/util/collections"
 )
@@ -122,17 +123,19 @@ func TestControlPlane(t *testing.T) {
 
 		g.Expect(controlPlane.Machines).To(HaveLen(5))
 
-		machinesNotUptoDate, machinesNotUptoDateConditionMessages := controlPlane.NotUpToDateMachines()
+		machinesNotUptoDate, machinesUpToDateResults := controlPlane.NotUpToDateMachines()
 		g.Expect(machinesNotUptoDate.Names()).To(ConsistOf("m2", "m3"))
-		g.Expect(machinesNotUptoDateConditionMessages).To(HaveLen(2))
-		g.Expect(machinesNotUptoDateConditionMessages).To(HaveKeyWithValue("m2", []string{"Version v1.29.0, v1.31.0 required"}))
-		g.Expect(machinesNotUptoDateConditionMessages).To(HaveKeyWithValue("m3", []string{"Version v1.29.3, v1.31.0 required"}))
+		// machinesUpToDateResults contains results for all Machines (including up-to-date Machines).
+		g.Expect(machinesUpToDateResults).To(HaveLen(5))
+		g.Expect(machinesUpToDateResults["m2"].ConditionMessages).To(Equal([]string{"Version v1.29.0, v1.31.0 required"}))
+		g.Expect(machinesUpToDateResults["m3"].ConditionMessages).To(Equal([]string{"Version v1.29.3, v1.31.0 required"}))
 
-		machinesNeedingRollout, machinesNotUptoDateLogMessages := controlPlane.MachinesNeedingRollout()
+		machinesNeedingRollout, machinesUpToDateResults := controlPlane.MachinesNeedingRollout()
 		g.Expect(machinesNeedingRollout.Names()).To(ConsistOf("m2"))
-		g.Expect(machinesNotUptoDateLogMessages).To(HaveLen(2))
-		g.Expect(machinesNotUptoDateLogMessages).To(HaveKeyWithValue("m2", []string{"Machine version \"v1.29.0\" is not equal to KCP version \"v1.31.0\""}))
-		g.Expect(machinesNotUptoDateLogMessages).To(HaveKeyWithValue("m3", []string{"Machine version \"v1.29.3\" is not equal to KCP version \"v1.31.0\""}))
+		// machinesUpToDateResults contains results for all Machines (including up-to-date Machines).
+		g.Expect(machinesUpToDateResults).To(HaveLen(5))
+		g.Expect(machinesUpToDateResults["m2"].LogMessages).To(Equal([]string{"Machine version \"v1.29.0\" is not equal to KCP version \"v1.31.0\""}))
+		g.Expect(machinesUpToDateResults["m3"].LogMessages).To(Equal([]string{"Machine version \"v1.29.3\" is not equal to KCP version \"v1.31.0\""}))
 
 		upToDateMachines := controlPlane.UpToDateMachines()
 		g.Expect(upToDateMachines).To(HaveLen(3))
@@ -291,6 +294,160 @@ func TestHasHealthyMachineStillProvisioning(t *testing.T) {
 	})
 }
 
+func TestMachinesToCompleteTriggerInPlaceUpdate(t *testing.T) {
+	machineWithoutAnnotations := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithoutAnnotations",
+		},
+	}
+	machineWithUpdateInProgressAnnotation := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithUpdateInProgressAnnotation",
+			Annotations: map[string]string{
+				clusterv1.UpdateInProgressAnnotation: "",
+			},
+		},
+	}
+	machineWithPendingHooksAnnotation := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithPendingHooksAnnotation",
+			Annotations: map[string]string{
+				runtimev1.PendingHooksAnnotation: "UpdateMachine",
+			},
+		},
+	}
+	machineWithBothAnnotations := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithBothAnnotations",
+			Annotations: map[string]string{
+				clusterv1.UpdateInProgressAnnotation: "",
+				runtimev1.PendingHooksAnnotation:     "UpdateMachine",
+			},
+		},
+	}
+
+	tests := []struct {
+		name                         string
+		machine                      *clusterv1.Machine
+		completeTriggerInPlaceUpdate bool
+	}{
+		{
+			name:                         "machineWithoutAnnotations => false",
+			machine:                      machineWithoutAnnotations,
+			completeTriggerInPlaceUpdate: false,
+		},
+		{
+			name:                         "machineWithUpdateInProgressAnnotation => true",
+			machine:                      machineWithUpdateInProgressAnnotation,
+			completeTriggerInPlaceUpdate: true,
+		},
+		{
+			name:                         "machineWithPendingHooksAnnotation => false",
+			machine:                      machineWithPendingHooksAnnotation,
+			completeTriggerInPlaceUpdate: false,
+		},
+		{
+			name:                         "machineWithBothAnnotations => false",
+			machine:                      machineWithBothAnnotations,
+			completeTriggerInPlaceUpdate: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			c := ControlPlane{
+				Machines: collections.FromMachines(tt.machine),
+			}
+
+			if tt.completeTriggerInPlaceUpdate {
+				g.Expect(c.MachinesToCompleteTriggerInPlaceUpdate().Len()).To(Equal(1))
+				g.Expect(c.MachinesToCompleteTriggerInPlaceUpdate().Has(tt.machine)).To(BeTrue())
+			} else {
+				g.Expect(c.MachinesToCompleteTriggerInPlaceUpdate().Len()).To(Equal(0))
+			}
+		})
+	}
+}
+
+func TestMachinesToCompleteInPlaceUpdate(t *testing.T) {
+	machineWithoutAnnotations := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithoutAnnotations",
+		},
+	}
+	machineWithUpdateInProgressAnnotation := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithUpdateInProgressAnnotation",
+			Annotations: map[string]string{
+				clusterv1.UpdateInProgressAnnotation: "",
+			},
+		},
+	}
+	machineWithPendingHooksAnnotation := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithPendingHooksAnnotation",
+			Annotations: map[string]string{
+				runtimev1.PendingHooksAnnotation: "UpdateMachine",
+			},
+		},
+	}
+	machineWithBothAnnotations := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machineWithBothAnnotations",
+			Annotations: map[string]string{
+				clusterv1.UpdateInProgressAnnotation: "",
+				runtimev1.PendingHooksAnnotation:     "UpdateMachine",
+			},
+		},
+	}
+
+	tests := []struct {
+		name                  string
+		machine               *clusterv1.Machine
+		completeInPlaceUpdate bool
+	}{
+		{
+			name:                  "machineWithoutAnnotations => false",
+			machine:               machineWithoutAnnotations,
+			completeInPlaceUpdate: false,
+		},
+		{
+			name:                  "machineWithUpdateInProgressAnnotation => true",
+			machine:               machineWithUpdateInProgressAnnotation,
+			completeInPlaceUpdate: true,
+		},
+		{
+			name:                  "machineWithPendingHooksAnnotation => true",
+			machine:               machineWithPendingHooksAnnotation,
+			completeInPlaceUpdate: true,
+		},
+		{
+			name:                  "machineWithBothAnnotations => true",
+			machine:               machineWithBothAnnotations,
+			completeInPlaceUpdate: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			c := ControlPlane{
+				Machines: collections.FromMachines(tt.machine),
+			}
+
+			if tt.completeInPlaceUpdate {
+				g.Expect(c.MachinesToCompleteInPlaceUpdate().Len()).To(Equal(1))
+				g.Expect(c.MachinesToCompleteInPlaceUpdate().Has(tt.machine)).To(BeTrue())
+			} else {
+				g.Expect(c.MachinesToCompleteInPlaceUpdate().Len()).To(Equal(0))
+			}
+		})
+	}
+}
+
 func TestStatusToLogKeyAndValues(t *testing.T) {
 	healthyMachine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Name: "healthy"},
@@ -339,7 +496,7 @@ func TestStatusToLogKeyAndValues(t *testing.T) {
 	c := &ControlPlane{
 		KCP:                 &controlplanev1.KubeadmControlPlane{},
 		Machines:            collections.FromMachines(healthyMachine, machineWithoutNode, machineJustDeleted, machineNotUpToDate, machineMarkedForRemediation),
-		machinesNotUptoDate: collections.FromMachines(machineNotUpToDate),
+		MachinesNotUpToDate: collections.FromMachines(machineNotUpToDate),
 		EtcdMembers:         []*etcd.Member{{Name: "m1"}, {Name: "m2"}, {Name: "m3"}},
 	}
 

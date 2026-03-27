@@ -22,12 +22,15 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/gomega"
@@ -89,6 +92,7 @@ func TestClient_httpCall(t *testing.T) {
 		{
 			name: "succeed for valid request and response objects",
 			request: &fakev1alpha1.FakeRequest{
+				// Note: Intentionally setting TypeMeta here to test if everything works if TypeMeta is set.
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "FakeRequest",
 					APIVersion: fakev1alpha1.GroupVersion.Identifier(),
@@ -114,6 +118,7 @@ func TestClient_httpCall(t *testing.T) {
 		{
 			name: "success if request and response are valid objects - with conversion",
 			request: &fakev1alpha2.FakeRequest{
+				// Note: Intentionally setting TypeMeta here to test if everything works if TypeMeta is set.
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "FakeRequest",
 					APIVersion: fakev1alpha2.GroupVersion.Identifier(),
@@ -201,6 +206,15 @@ func TestClient_httpCall(t *testing.T) {
 				// set url to srv for in tt.opts
 				tt.opts.config.URL = srv.URL
 				tt.opts.config.CABundle = testcerts.CACert
+
+				// set httpClient in tt.opts
+				// Note: cert and key file are not necessary, because in this test the server do not requires client authentication with certificates signed by a given CA.
+				u, err := url.Parse(srv.URL)
+				g.Expect(err).ToNot(HaveOccurred())
+
+				httpClient, err := createHTTPClient("", "", testcerts.CACert, u.Hostname())
+				g.Expect(err).ToNot(HaveOccurred())
+				tt.opts.httpClient = httpClient
 			}
 
 			err := httpCall(context.TODO(), tt.request, tt.response, tt.opts)
@@ -214,6 +228,7 @@ func TestClient_httpCall(t *testing.T) {
 }
 
 func fakeHookHandler(w http.ResponseWriter, _ *http.Request) {
+	// Setting GVK because we directly Marshal to JSON.
 	response := &fakev1alpha1.FakeResponse{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "FakeHookResponse",
@@ -352,10 +367,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "succeed with valid skeleton DiscoveryResponse",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "extension",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -369,10 +380,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error if handler name has capital letters",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "HAS-CAPITAL-LETTERS",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -386,10 +393,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error if handler name has full stops",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "has.full.stops",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -403,10 +406,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error with TimeoutSeconds of over 30 seconds",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "ext1",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -421,10 +420,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error with TimeoutSeconds of less than 0",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "ext1",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -439,10 +434,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error with FailurePolicy not Fail or Ignore",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "ext1",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -458,10 +449,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error when handler name is duplicated",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{
 					{
 						Name: "ext1",
@@ -491,10 +478,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error if handler GroupVersionHook is not registered",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "ext1",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -509,10 +492,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 		{
 			name: "error if handler GroupVersion can not be parsed",
 			discovery: &runtimehooksv1.DiscoveryResponse{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "DiscoveryResponse",
-					APIVersion: runtimehooksv1.GroupVersion.String(),
-				},
 				Handlers: []runtimehooksv1.ExtensionHandler{{
 					Name: "ext1",
 					RequestHook: runtimehooksv1.GroupVersionHook{
@@ -536,10 +515,6 @@ func Test_defaultAndValidateDiscoveryResponse(t *testing.T) {
 
 func TestClient_CallExtension(t *testing.T) {
 	ns := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Namespace",
-			APIVersion: corev1.SchemeGroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "foo",
 		},
@@ -761,6 +736,42 @@ func TestClient_CallExtension(t *testing.T) {
 			wantErr:            true,
 			wantResponseCached: false,
 		},
+		{
+			name:                       "should fail when calling ExtensionHandler with unknown response status and FailurePolicyFail",
+			registeredExtensionConfigs: []runtimev1.ExtensionConfig{validExtensionHandlerWithFailPolicy},
+			testServer: testServerConfig{
+				start: true,
+				responses: map[string]testServerResponse{
+					"/*": response(runtimehooksv1.ResponseStatus("Unknown")),
+				},
+			},
+			args: args{
+				hook:     fakev1alpha1.FakeHook,
+				name:     "valid-extension",
+				request:  &fakev1alpha1.FakeRequest{},
+				response: &fakev1alpha1.FakeResponse{},
+			},
+			wantErr:            true,
+			wantResponseCached: false,
+		},
+		{
+			name:                       "should fail when calling ExtensionHandler with unknown response status and FailurePolicyIgnore",
+			registeredExtensionConfigs: []runtimev1.ExtensionConfig{validExtensionHandlerWithIgnorePolicy},
+			testServer: testServerConfig{
+				start: true,
+				responses: map[string]testServerResponse{
+					"/*": response(runtimehooksv1.ResponseStatus("Unknown")),
+				},
+			},
+			args: args{
+				hook:     fakev1alpha1.FakeHook,
+				name:     "valid-extension",
+				request:  &fakev1alpha1.FakeRequest{},
+				response: &fakev1alpha1.FakeResponse{},
+			},
+			wantErr:            true,
+			wantResponseCached: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -788,11 +799,12 @@ func TestClient_CallExtension(t *testing.T) {
 				WithObjects(ns).
 				Build()
 
-			c := New(Options{
+			c, _, err := New(Options{
 				Catalog:  cat,
 				Registry: registry(tt.registeredExtensionConfigs),
 				Client:   fakeClient,
 			})
+			g.Expect(err).ToNot(HaveOccurred())
 
 			obj := &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
@@ -801,7 +813,7 @@ func TestClient_CallExtension(t *testing.T) {
 				},
 			}
 			// Call once without caching.
-			err := c.CallExtension(context.Background(), tt.args.hook, obj, tt.args.name, tt.args.request, tt.args.response)
+			err = c.CallExtension(context.Background(), tt.args.hook, obj, tt.args.name, tt.args.request, tt.args.response)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
@@ -845,10 +857,6 @@ func TestClient_CallExtension(t *testing.T) {
 
 func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
 	ns := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Namespace",
-			APIVersion: corev1.SchemeGroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "foo",
 		},
@@ -890,14 +898,17 @@ func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
 	g.Expect(os.WriteFile(clientKeyFile, testcerts.ClientKey, 0600)).To(Succeed())
 
 	var serverCallCount int
-	srv := createSecureTestServer(testServerConfig{
-		start: true,
-		responses: map[string]testServerResponse{
-			"/*": response(runtimehooksv1.ResponseStatusSuccess),
-		},
-	}, func() {
-		serverCallCount++
-	})
+	createServer := func() *httptest.Server {
+		return createSecureTestServer(testServerConfig{
+			start: true,
+			responses: map[string]testServerResponse{
+				"/*": response(runtimehooksv1.ResponseStatusSuccess),
+			},
+		}, func() {
+			serverCallCount++
+		})
+	}
+	srv := createServer()
 
 	// Setup the runtime extension server so it requires client authentication with certificates signed by a given CA.
 	certpool := x509.NewCertPool()
@@ -906,7 +917,7 @@ func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
 	srv.TLS.ClientCAs = certpool
 
 	srv.StartTLS()
-	defer srv.Close()
+	listenerAddr := srv.Listener.Addr()
 
 	// Set the URL to the real address of the test server.
 	validExtensionHandlerWithFailPolicy.Spec.ClientConfig.URL = fmt.Sprintf("https://%s/", srv.Listener.Addr().String())
@@ -918,7 +929,7 @@ func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
 		WithObjects(ns).
 		Build()
 
-	c := New(Options{
+	c, certWatcher, err := New(Options{
 		// Add client authentication credentials to the client
 		CertFile: clientCertFile,
 		KeyFile:  clientKeyFile,
@@ -926,6 +937,10 @@ func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
 		Registry: registry([]runtimev1.ExtensionConfig{validExtensionHandlerWithFailPolicy}),
 		Client:   fakeClient,
 	})
+	g.Expect(err).ToNot(HaveOccurred())
+	go func() {
+		_ = certWatcher.Start(t.Context())
+	}()
 
 	obj := &clusterv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
@@ -933,10 +948,167 @@ func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
 			Namespace: "foo",
 		},
 	}
-	// Call once without caching.
-	err := c.CallExtension(context.Background(), fakev1alpha1.FakeHook, obj, "valid-extension", &fakev1alpha1.FakeRequest{}, &fakev1alpha1.FakeResponse{})
+
+	err = c.CallExtension(context.Background(), fakev1alpha1.FakeHook, obj, "valid-extension", &fakev1alpha1.FakeRequest{}, &fakev1alpha1.FakeResponse{})
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(serverCallCount).To(Equal(1))
+
+	// Test case 1: Rotate client cert/key on client-side and then client ca on server-side.
+
+	// Rotate client cert/key on client-side.
+	g.Expect(os.WriteFile(clientCertFile, testClientCert, 0600)).To(Succeed())
+	g.Expect(os.WriteFile(clientKeyFile, testClientKey, 0600)).To(Succeed())
+
+	// Validate that the client rotated the client cert/key.
+	// The server still uses the old client ca so it should reject the client cert.
+	g.Eventually(func(g Gomega) {
+		err = c.CallExtension(context.Background(), fakev1alpha1.FakeHook, obj, "valid-extension", &fakev1alpha1.FakeRequest{}, &fakev1alpha1.FakeResponse{})
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(err.Error()).To(ContainSubstring("test.runtime.cluster.x-k8s.io/v1alpha1/fakehook/valid-extension?timeout=1s\": remote error: tls: unknown certificate authority"))
+	}, 10*time.Second).Should(Succeed())
+
+	// Rotate client ca on server-side.
+	srv.Close()
+	srv = createServer()
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", listenerAddr.String()) // Ensure the server uses the same port as before.
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(srv.Listener.Close()).To(Succeed())
+	srv.Listener = l
+	certpool = x509.NewCertPool()
+	certpool.AppendCertsFromPEM(testCACert)
+	srv.TLS.ClientAuth = tls.RequireAndVerifyClientCert
+	srv.TLS.ClientCAs = certpool
+	srv.StartTLS()
+
+	// Validate that the server rotated the client ca.
+	// The server now uses the new client ca so it should accept the client cert.
+	g.Eventually(func(g Gomega) {
+		err = c.CallExtension(context.Background(), fakev1alpha1.FakeHook, obj, "valid-extension", &fakev1alpha1.FakeRequest{}, &fakev1alpha1.FakeResponse{})
+		g.Expect(err).ToNot(HaveOccurred())
+	}, 10*time.Second).Should(Succeed())
+
+	// Test case 2: Rotate client ca on server-side and then client cert/key on client-side.
+
+	// Rotate client ca on server-side.
+	srv.Close()
+	srv = createServer()
+	l, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp", listenerAddr.String()) // Ensure the server uses the same port as before.
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(srv.Listener.Close()).To(Succeed())
+	srv.Listener = l
+	certpool = x509.NewCertPool()
+	certpool.AppendCertsFromPEM(testcerts.CACert)
+	srv.TLS.ClientAuth = tls.RequireAndVerifyClientCert
+	srv.TLS.ClientCAs = certpool
+	srv.StartTLS()
+
+	// Validate that the server rotated the client ca.
+	// The server now uses the new client ca so it should reject the client cert.
+	g.Eventually(func(g Gomega) {
+		err = c.CallExtension(context.Background(), fakev1alpha1.FakeHook, obj, "valid-extension", &fakev1alpha1.FakeRequest{}, &fakev1alpha1.FakeResponse{})
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(err.Error()).To(ContainSubstring("test.runtime.cluster.x-k8s.io/v1alpha1/fakehook/valid-extension?timeout=1s\": remote error: tls: unknown certificate authority"))
+	}, 10*time.Second).Should(Succeed())
+
+	// Rotate client cert/key on client-side.
+	g.Expect(os.WriteFile(clientCertFile, testcerts.ClientCert, 0600)).To(Succeed())
+	g.Expect(os.WriteFile(clientKeyFile, testcerts.ClientKey, 0600)).To(Succeed())
+
+	// Validate that the client rotated the client cert/key.
+	// The client now uses the new client cert so the server should accept it.
+	g.Eventually(func(g Gomega) {
+		err = c.CallExtension(context.Background(), fakev1alpha1.FakeHook, obj, "valid-extension", &fakev1alpha1.FakeRequest{}, &fakev1alpha1.FakeResponse{})
+		g.Expect(err).ToNot(HaveOccurred())
+	}, 10*time.Second).Should(Succeed())
+
+	srv.Close()
+}
+
+func TestClient_GetHttpClient(t *testing.T) {
+	g := NewWithT(t)
+
+	extension1 := runtimev1.ExtensionConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "extension1",
+			ResourceVersion: "15",
+		},
+		Spec: runtimev1.ExtensionConfigSpec{
+			ClientConfig: runtimev1.ClientConfig{
+				URL:      "https://serverA.example.com/",
+				CABundle: testcerts.CACert,
+			},
+		},
+	}
+
+	extension2 := runtimev1.ExtensionConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "extension2",
+			ResourceVersion: "36",
+		},
+		Spec: runtimev1.ExtensionConfigSpec{
+			ClientConfig: runtimev1.ClientConfig{
+				URL:      "https://serverA.example.com/",
+				CABundle: testcerts.CACert,
+			},
+		},
+	}
+
+	extension3 := runtimev1.ExtensionConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "extension3",
+			ResourceVersion: "54",
+		},
+		Spec: runtimev1.ExtensionConfigSpec{
+			ClientConfig: runtimev1.ClientConfig{
+				URL:      "https://serverB.example.com/",
+				CABundle: testcerts.CACert, // in a real example also CA should be different, but the host name is already enough to require a different client.
+			},
+		},
+	}
+
+	c, _, err := New(Options{})
+	g.Expect(err).ToNot(HaveOccurred())
+
+	internalClient := c.(*client)
+	g.Expect(internalClient.httpClientsCache.Len()).To(Equal(0))
+
+	// Get http client for extension 1
+	gotClientExtension1, err := internalClient.getHTTPClient(extension1.Spec.ClientConfig)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(gotClientExtension1).ToNot(BeNil())
+
+	// Check http client cache have only one item
+	g.Expect(internalClient.httpClientsCache.Len()).To(Equal(1))
+	_, ok := internalClient.httpClientsCache.Has(newHTTPClientEntryKey("serverA.example.com", extension1.Spec.ClientConfig.CABundle))
+	g.Expect(ok).To(BeTrue())
+
+	// Check http client cache is used for the same extension
+	gotClientExtension1Again, err := internalClient.getHTTPClient(extension1.Spec.ClientConfig)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(gotClientExtension1Again).To(Equal(gotClientExtension1))
+
+	// Get http client for extension 2, same server
+	gotClientExtension2, err := internalClient.getHTTPClient(extension2.Spec.ClientConfig)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(gotClientExtension2).ToNot(BeNil())
+	g.Expect(gotClientExtension2).To(Equal(gotClientExtension1))
+
+	// Check http client cache have two items
+	g.Expect(internalClient.httpClientsCache.Len()).To(Equal(1))
+	_, ok = internalClient.httpClientsCache.Has(newHTTPClientEntryKey("serverA.example.com", extension2.Spec.ClientConfig.CABundle))
+	g.Expect(ok).To(BeTrue())
+
+	// Get http client for extension 3, another server
+	gotClientExtension3, err := internalClient.getHTTPClient(extension3.Spec.ClientConfig)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(gotClientExtension3).ToNot(BeNil())
+
+	// Check http client cache have two items
+	g.Expect(internalClient.httpClientsCache.Len()).To(Equal(2))
+	_, ok = internalClient.httpClientsCache.Has(newHTTPClientEntryKey("serverA.example.com", extension1.Spec.ClientConfig.CABundle))
+	g.Expect(ok).To(BeTrue())
+	_, ok = internalClient.httpClientsCache.Has(newHTTPClientEntryKey("serverB.example.com", extension2.Spec.ClientConfig.CABundle))
+	g.Expect(ok).To(BeTrue())
 }
 
 func cacheKeyFunc(extensionName, extensionConfigResourceVersion string, request runtimehooksv1.RequestObject) string {
@@ -1027,12 +1199,158 @@ func TestPrepareRequest(t *testing.T) {
 	})
 }
 
+func TestClient_GetAllExtensions(t *testing.T) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "foo",
+			Labels: map[string]string{
+				"kubernetes.io/metadata.name": "foo",
+			},
+		},
+	}
+	nsDifferent := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "different",
+			Labels: map[string]string{
+				"kubernetes.io/metadata.name": "different",
+			},
+		},
+	}
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster",
+			Namespace: "foo",
+		},
+	}
+	clusterDifferentNamespace := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster",
+			Namespace: "different",
+		},
+	}
+
+	extensionConfig := runtimev1.ExtensionConfig{
+		Spec: runtimev1.ExtensionConfigSpec{
+			ClientConfig: runtimev1.ClientConfig{
+				// Set a fake URL, in test cases where we start the test server the URL will be overridden.
+				URL:      "https://127.0.0.1/",
+				CABundle: testcerts.CACert,
+			},
+			// The extensions in this ExtensionConfig will be only registered for the foo namespace.
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "kubernetes.io/metadata.name",
+						Operator: metav1.LabelSelectorOpIn,
+						Values:   []string{ns.Name},
+					},
+				},
+			},
+		},
+		Status: runtimev1.ExtensionConfigStatus{
+			Handlers: []runtimev1.ExtensionHandler{
+				{
+					Name: "first-extension",
+					RequestHook: runtimev1.GroupVersionHook{
+						APIVersion: fakev1alpha1.GroupVersion.String(),
+						Hook:       "FakeHook",
+					},
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
+				},
+				{
+					Name: "second-extension",
+					RequestHook: runtimev1.GroupVersionHook{
+						APIVersion: fakev1alpha1.GroupVersion.String(),
+						Hook:       "FakeHook",
+					},
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
+				},
+				{
+					Name: "third-extension",
+					RequestHook: runtimev1.GroupVersionHook{
+						APIVersion: fakev1alpha1.GroupVersion.String(),
+						Hook:       "FakeHook",
+					},
+					TimeoutSeconds: 1,
+					FailurePolicy:  runtimev1.FailurePolicyFail,
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name                       string
+		registeredExtensionConfigs []runtimev1.ExtensionConfig
+		hook                       runtimecatalog.Hook
+		cluster                    *clusterv1.Cluster
+		wantExtensions             []string
+		wantErr                    bool
+	}{
+		{
+			name:                       "should return extensions if ExtensionHandlers are registered for the hook",
+			registeredExtensionConfigs: []runtimev1.ExtensionConfig{extensionConfig},
+			hook:                       fakev1alpha1.FakeHook,
+			cluster:                    cluster,
+			wantExtensions:             []string{"first-extension", "second-extension", "third-extension"},
+		},
+		{
+			name:                       "should return no extensions if ExtensionHandlers are registered for the hook in a different namespace",
+			registeredExtensionConfigs: []runtimev1.ExtensionConfig{extensionConfig},
+			hook:                       fakev1alpha1.FakeHook,
+			cluster:                    clusterDifferentNamespace,
+			wantExtensions:             []string{},
+		},
+		{
+			name:                       "should return no extensions if no ExtensionHandlers are registered for the hook",
+			registeredExtensionConfigs: []runtimev1.ExtensionConfig{},
+			hook:                       fakev1alpha1.SecondFakeHook,
+			cluster:                    cluster,
+			wantExtensions:             []string{},
+		},
+		{
+			name:                       "should return error if hook is not registered in the catalog",
+			registeredExtensionConfigs: []runtimev1.ExtensionConfig{},
+			hook:                       "UnknownHook",
+			wantErr:                    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			scheme := runtime.NewScheme()
+			g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+			g.Expect(corev1.AddToScheme(scheme)).To(Succeed())
+
+			cat := runtimecatalog.New()
+			_ = fakev1alpha1.AddToCatalog(cat)
+			_ = fakev1alpha2.AddToCatalog(cat)
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(ns, nsDifferent).
+				Build()
+			c, _, err := New(Options{
+				Catalog:  cat,
+				Registry: registry(tt.registeredExtensionConfigs),
+				Client:   fakeClient,
+			})
+			g.Expect(err).ToNot(HaveOccurred())
+
+			gotExtensions, err := c.GetAllExtensions(context.Background(), tt.hook, tt.cluster)
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).ToNot(HaveOccurred())
+			}
+			g.Expect(gotExtensions).To(ConsistOf(tt.wantExtensions))
+		})
+	}
+}
+
 func TestClient_CallAllExtensions(t *testing.T) {
 	ns := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Namespace",
-			APIVersion: corev1.SchemeGroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "foo",
 		},
@@ -1202,17 +1520,23 @@ func TestClient_CallAllExtensions(t *testing.T) {
 				}
 			}
 
+			scheme := runtime.NewScheme()
+			g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+			g.Expect(corev1.AddToScheme(scheme)).To(Succeed())
+
 			cat := runtimecatalog.New()
 			_ = fakev1alpha1.AddToCatalog(cat)
 			_ = fakev1alpha2.AddToCatalog(cat)
 			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
 				WithObjects(ns).
 				Build()
-			c := New(Options{
+			c, _, err := New(Options{
 				Catalog:  cat,
 				Registry: registry(tt.registeredExtensionConfigs),
 				Client:   fakeClient,
 			})
+			g.Expect(err).ToNot(HaveOccurred())
 
 			obj := &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1220,7 +1544,7 @@ func TestClient_CallAllExtensions(t *testing.T) {
 					Namespace: "foo",
 				},
 			}
-			err := c.CallAllExtensions(context.Background(), tt.args.hook, obj, tt.args.request, tt.args.response)
+			err = c.CallAllExtensions(context.Background(), tt.args.hook, obj, tt.args.request, tt.args.response)
 
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
@@ -1234,10 +1558,6 @@ func TestClient_CallAllExtensions(t *testing.T) {
 func Test_client_matchNamespace(t *testing.T) {
 	g := NewWithT(t)
 	foo := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Namespace",
-			APIVersion: corev1.SchemeGroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "foo",
 			Labels: map[string]string{
@@ -1246,10 +1566,6 @@ func Test_client_matchNamespace(t *testing.T) {
 		},
 	}
 	bar := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Namespace",
-			APIVersion: corev1.SchemeGroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "bar",
 			Labels: map[string]string{
@@ -1457,10 +1773,6 @@ func registry(configs []runtimev1.ExtensionConfig) runtimeregistry.ExtensionRegi
 
 func fakeSuccessResponse(message string) *fakev1alpha1.FakeResponse {
 	return &fakev1alpha1.FakeResponse{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "FakeResponse",
-			APIVersion: "v1alpha1",
-		},
 		CommonResponse: runtimehooksv1.CommonResponse{
 			Message: message,
 			Status:  runtimehooksv1.ResponseStatusSuccess,
@@ -1470,10 +1782,6 @@ func fakeSuccessResponse(message string) *fakev1alpha1.FakeResponse {
 
 func fakeRetryableSuccessResponse(retryAfterSeconds int32, message string) *fakev1alpha1.RetryableFakeResponse {
 	return &fakev1alpha1.RetryableFakeResponse{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "FakeResponse",
-			APIVersion: "v1alpha1",
-		},
 		CommonResponse: runtimehooksv1.CommonResponse{
 			Message: message,
 			Status:  runtimehooksv1.ResponseStatusSuccess,
@@ -1564,3 +1872,79 @@ func TestExtensionNameFromHandlerName(t *testing.T) {
 		})
 	}
 }
+
+// The following certs were generated using openssl by the https://github.com/kubernetes/kubernetes/blob/481c2d8e03508dba2c28aeb4bba48ce48904183b/staging/src/k8s.io/apiserver/pkg/admission/plugin/webhook/testcerts/gencerts.sh
+// script and are used as certificates for the Runtime SDK unit tests.
+
+var testCACert = []byte(`-----BEGIN CERTIFICATE-----
+MIIDSzCCAjOgAwIBAgIUbnfp0PkokQadBOyXy4Os7NwQ90owDQYJKoZIhvcNAQEL
+BQAwNDEyMDAGA1UEAwwpZ2VuZXJpY193ZWJob29rX2FkbWlzc2lvbl9wbHVnaW5f
+dGVzdHNfY2EwIBcNMjYwMTA4MDgzNTE3WhgPMjI5OTEwMjQwODM1MTdaMDQxMjAw
+BgNVBAMMKWdlbmVyaWNfd2ViaG9va19hZG1pc3Npb25fcGx1Z2luX3Rlc3RzX2Nh
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkhzooe6GxCl8Isq6AEPo
+3cqohJkukNcPHv4L0NThfClkguR8xvZxTIi4KlBYCeYTlR89pZ93Zi6pQwmIadOx
+JsArM4bv+1rSn9e1jJhqZeq98mcpP5JbwjzWfn8Zc8tRLhkuvmvtgAfaay52czfL
+RzHfW7gTEIgBGhmloSIPJEyRcx1e62RYKpVZ0STkOIXiLJXG/31i6Rkr2jYO9gkK
+xoqN9NRh+e1QHSDa5bRNMZNoY5hXA4y4RL5jNFT+y7OhlBUZPC9Vf+7Wlbf7yKyJ
+Wi07owCEL+1kGLb2wbXKz0gIJvPNZVZbaubNM4rRmDvDnwYW0BCvk291fnvV6Csp
+ZQIDAQABo1MwUTAdBgNVHQ4EFgQUatgdaU6aZqIfwyH+wVJov6z38kYwHwYDVR0j
+BBgwFoAUatgdaU6aZqIfwyH+wVJov6z38kYwDwYDVR0TAQH/BAUwAwEB/zANBgkq
+hkiG9w0BAQsFAAOCAQEAWicoW4ewb63lk+aEfFyUIZ2al8tPOqTm4UbHOUebV9hc
+OQWX8bYVgUMPGim/xWp8cxDWTVLWK7fVW10C3it33/N04tr5ZbZyg6OF/ZnGVSaL
+VIsZJ7VL/oNtuHuwYGmqLRfLodEo3JZ+f2P0+vSHndNrZA9lRj2/JRTxnV+cmJQC
+z3zBHITNox004o3FNvieMYRYWR8DEEyDSxymC3FJE3/ICGxGsdGPdwrxe9qzzvmq
+Sa4jzY5JwNyPgBKqS7QU1BJfD1kHHKVAvxy+dfmCjB6FqdwVWr9/7sm6sKY52+3/
+iHAv6fww8ADsxGM7dj89x41gWjHWSagqNdVsVSJK4A==
+-----END CERTIFICATE-----`)
+
+var testClientKey = []byte(`-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC1FB39kw4XWCGA
+4yRcCpyLD0sFJADwzoCfkxxU1jjIRQTQ5BioeMWFLpqGA02ds0w4YhxvZ3pIPIyJ
+oVNPbtvgZDrNQdYEpxNPiva5Mq6/C09uhyHcGGOaL+TxjU211MHtyF5hZ3J6Um6j
+v5Lc+Ztw9E5JoH/K9RB1ZhvasGRFOLF3J5ENy9LH9sfvyct/ILii3rgeWYR9gU64
+BB8+h1oUA35eAnuM1oq6GJweg+GsntIXL7my2sruxQQgE6bpXfMP9IQ1G6QXZYbW
+BmZzQJCkOQzcEV6ZM2+uJ+SyhwpaOLR7kxakI17lAJT5aqnpGopPKAyRFeX2dDez
+qAm57z6RAgMBAAECggEAAhIVPLYph1akksTQ1d+bhiiPhvhwLVDDM5qa9z+4MwFn
+tRwinwyQf6h2hQ6fx4GfycDvdSOrCDfvCHozNG7pWJcffVjhzGL9C3VkmF4OFapY
+scQdp5a8ztbPiKaWa1Gf7RWT5LZqM/ViMAEBD4H9hyINYiCnIshAya2Npyd0t2jn
+XtvJfRVHU6j1xLKb9Mi67IqiOvgu68eqCC6Iu6pORSq2dBogUnVCDqigvS8/74ao
+5IuvoFan1jd3Imr7HWEDiQ9yMmjo4n8DVXmJb4gNZ9QVDGk+r1VXNVZFubp16xuP
+rbpbl2jRlOBfcq3ZAZ557/dc/nPkX1wUQBhKSsawlQKBgQDlV4Iv29AH/zQmxOyB
+YZI96ExDhvVK7yRgepidNH/rphS3iRpjTnOVB+8rgRva4dWdpr5BWAPVKlh7T5h/
+yBivIOtIwIbLOombnUJyLYWjIsQL8+MeDqNizSurQs0VckBfMePaW/gzgOLptWtU
+tGmM1Ki9CP6gMmxRln1Mlruk1QKBgQDKIHI4cm0QHw7xybFetGw4TxADmciiqtQ2
+gyP42PfEsUpel+dosJ/CV5p1bs92JQVaoM88vMhEsRsV4LIyMcQHIdrxb0AO8/Ow
+hx8FW4Levmh95/Apg3c93bfa0DFoxTDa+2OTeBvM9SsxlOmMq4uYIOyUOjd/3Y2u
+xbtx0htAzQKBgQCDBaBxuRG7T9g6gexf6h9DUPAo7/Q5EDBnEgMYZMLkHKjfReuW
+al5r+PFxmDwSq0x/2Z/98suVv7B3Gj0UW3uGqbbhhGQ9vL6a8ZfhZRJg5d68uWO6
+a0B6lJ5rJCnII9KU0ArNWBePTQXV4PhllwBqHaAdBwN4//WUEvaYh9DB1QKBgQCa
+Eb9e3YHarwHyNb54pOh0x3c6d2di7voRj0bFMYUzLby1e+6Nc0xjk+kNqGiE8tUw
+7rDo6DFzgthVhc/uyNZWZW0Bab6XZ0aSgXyY1ddcuCDoD/qVejtTMgUpylZPOTfz
+Q3n0d7IhOaQyCAM6Eay3SilrFzEkyxlrZhdqPDA/5QKBgDFeL019De6talEsJeHv
+WM++CHGGbOI32dvxxDVv3PxcU/r61enMcbhkwUd0qJgwQn42hweK0ckHdGVdeAvr
+gevHKRvAYepUlR4PzhEJQe0QeWr/q0TANoxnMCxHofSyovL9HIa4yrMjtFHZTHcb
+zJwtsqamfHeVw25siB81kRmQ
+-----END PRIVATE KEY-----`)
+
+var testClientCert = []byte(`-----BEGIN CERTIFICATE-----
+MIIDojCCAoqgAwIBAgIUZ5EwWWnN25m+D89JdWzUYS1mhm8wDQYJKoZIhvcNAQEL
+BQAwNDEyMDAGA1UEAwwpZ2VuZXJpY193ZWJob29rX2FkbWlzc2lvbl9wbHVnaW5f
+dGVzdHNfY2EwIBcNMjYwMTA4MDgzNTE4WhgPMjI5OTEwMjQwODM1MThaMDgxNjA0
+BgNVBAMMLWdlbmVyaWNfd2ViaG9va19hZG1pc3Npb25fcGx1Z2luX3Rlc3RzX2Ns
+aWVudDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALUUHf2TDhdYIYDj
+JFwKnIsPSwUkAPDOgJ+THFTWOMhFBNDkGKh4xYUumoYDTZ2zTDhiHG9nekg8jImh
+U09u2+BkOs1B1gSnE0+K9rkyrr8LT26HIdwYY5ov5PGNTbXUwe3IXmFncnpSbqO/
+ktz5m3D0Tkmgf8r1EHVmG9qwZEU4sXcnkQ3L0sf2x+/Jy38guKLeuB5ZhH2BTrgE
+Hz6HWhQDfl4Ce4zWiroYnB6D4aye0hcvubLayu7FBCATpuld8w/0hDUbpBdlhtYG
+ZnNAkKQ5DNwRXpkzb64n5LKHClo4tHuTFqQjXuUAlPlqqekaik8oDJEV5fZ0N7Oo
+CbnvPpECAwEAAaOBpTCBojAJBgNVHRMEAjAAMAsGA1UdDwQEAwIF4DAdBgNVHSUE
+FjAUBggrBgEFBQcDAgYIKwYBBQUHAwEwKQYDVR0RBCIwIIcEfwAAAYIYd2ViaG9v
+ay10ZXN0LmRlZmF1bHQuc3ZjMB0GA1UdDgQWBBQ5VoPKkOz4BYxMkse1cEkFcq0n
+jDAfBgNVHSMEGDAWgBRq2B1pTppmoh/DIf7BUmi/rPfyRjANBgkqhkiG9w0BAQsF
+AAOCAQEAII227bpDLQpfOvPNA3dNKJodqjHY+iyMRaifRU3syLR3ez3+eqb66dtq
+r89VhkRhBjki5aLrnP9baS48A47s/14/rVtKshzCy5PXjce8DuXEBLJH6yMTXogb
+JTkc96AzktJHMqef2WjMGyIDMpyaAf8ebYZPWXBIEMcAqH05svbH6RPQUPfLbD1v
+7KMKMpRtJ4bMw7gk3rPouApJ0Af/wvCu5gnLG3yZ0Pmni/ZJySrI0f4xt6wEq4F1
+iUgf+qDPz62c/QeC9HlNb15pn7YRRcOYry864zQb/ZFtqPj276KIkrGqbhft05D+
+MW5osM41axoAD70MpoMXdSRcAR7fUg==
+-----END CERTIFICATE-----`)

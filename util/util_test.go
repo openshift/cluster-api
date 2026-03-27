@@ -345,12 +345,8 @@ func TestIsOwnedByObject(t *testing.T) {
 	targetName := "fri3ndsh1p"
 
 	meta := fakeMeta{
-		metav1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: targetName,
-		},
-		metav1.TypeMeta{
-			APIVersion: "ponies.info/v1",
-			Kind:       targetKind,
 		},
 	}
 
@@ -437,7 +433,7 @@ func TestIsOwnedByObject(t *testing.T) {
 				OwnerReferences: test.refs,
 			}
 
-			g.Expect(IsOwnedByObject(pointer, &meta)).To(Equal(test.expected), "Could not find a ref to %+v in %+v", meta, test.refs)
+			g.Expect(IsOwnedByObject(pointer, &meta, schema.GroupKind{Group: "ponies.info", Kind: targetKind})).To(Equal(test.expected), "Could not find a ref to %+v in %+v", meta, test.refs)
 		})
 	}
 }
@@ -1055,6 +1051,130 @@ func TestUnstructuredUnmarshalField(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := UnstructuredUnmarshalField(tt.obj, tt.v, tt.fields...); (err != nil) != tt.wantErr {
 				t.Errorf("UnstructuredUnmarshalField() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestGetMachinePoolByLabels(t *testing.T) {
+	g := NewWithT(t)
+
+	longMachinePoolName := "this-is-a-very-long-machinepool-name-that-will-turned-into-a-hash-because-it-is-longer-than-63-characters"
+	namespace := "default"
+
+	testcases := []struct {
+		name                    string
+		labels                  map[string]string
+		machinePools            []client.Object
+		expectedMachinePoolName string
+		expectedError           string
+	}{
+		{
+			name: "returns a MachinePool with matching labels",
+			labels: map[string]string{
+				clusterv1.MachinePoolNameLabel: "test-pool",
+			},
+			machinePools: []client.Object{
+				&clusterv1.MachinePool{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pool",
+						Namespace: "default",
+					},
+				},
+				&clusterv1.MachinePool{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "other-pool",
+						Namespace: "default",
+					},
+				},
+			},
+			expectedMachinePoolName: "test-pool",
+		},
+		{
+			name: "returns a MachinePool with matching labels and cluster name is included",
+			labels: map[string]string{
+				clusterv1.MachinePoolNameLabel: "test-pool",
+				clusterv1.ClusterNameLabel:     "test-cluster",
+			},
+			machinePools: []client.Object{
+				&clusterv1.MachinePool{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pool",
+						Namespace: "default",
+						Labels: map[string]string{
+							clusterv1.ClusterNameLabel: "test-cluster",
+						},
+					},
+				},
+				&clusterv1.MachinePool{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "other-pool",
+						Namespace: "default",
+						Labels: map[string]string{
+							clusterv1.ClusterNameLabel: "test-cluster",
+						},
+					},
+				},
+			},
+			expectedMachinePoolName: "test-pool",
+		},
+		{
+			name: "returns a MachinePool where label is a hash",
+			labels: map[string]string{
+				clusterv1.MachinePoolNameLabel: format.MustFormatValue(longMachinePoolName),
+			},
+			machinePools: []client.Object{
+				&clusterv1.MachinePool{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      longMachinePoolName,
+						Namespace: "default",
+					},
+				},
+				&clusterv1.MachinePool{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "other-pool",
+						Namespace: "default",
+					},
+				},
+			},
+			expectedMachinePoolName: longMachinePoolName,
+		},
+		{
+			name:          "missing required key",
+			labels:        map[string]string{},
+			expectedError: fmt.Sprintf("labels missing required key `%s`", clusterv1.MachinePoolNameLabel),
+		},
+		{
+			name: "returns nil when no machine pool matches",
+			labels: map[string]string{
+				clusterv1.MachinePoolNameLabel: "test-pool",
+			},
+			machinePools:            []client.Object{},
+			expectedMachinePoolName: "",
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(*testing.T) {
+			fakeScheme := runtime.NewScheme()
+			_ = clusterv1.AddToScheme(fakeScheme)
+			clientFake := fake.NewClientBuilder().
+				WithScheme(fakeScheme).
+				WithObjects(
+					tc.machinePools...,
+				).Build()
+
+			mp, err := GetMachinePoolByLabels(ctx, clientFake, namespace, tc.labels)
+			if tc.expectedError != "" {
+				g.Expect(err).To(MatchError(tc.expectedError))
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+				if tc.expectedMachinePoolName != "" {
+					g.Expect(mp).ToNot(BeNil())
+					g.Expect(mp.Name).To(Equal(tc.expectedMachinePoolName))
+				} else {
+					g.Expect(mp).To(BeNil())
+				}
 			}
 		})
 	}

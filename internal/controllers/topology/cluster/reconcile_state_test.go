@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/gomega"
@@ -43,10 +44,12 @@ import (
 	. "sigs.k8s.io/controller-runtime/pkg/envtest/komega"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	"sigs.k8s.io/cluster-api/exp/topology/desiredstate"
@@ -62,6 +65,7 @@ import (
 	"sigs.k8s.io/cluster-api/internal/topology/selectors"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/internal/webhooks"
+	"sigs.k8s.io/cluster-api/util/cache"
 	"sigs.k8s.io/cluster-api/util/conversion"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
@@ -501,10 +505,9 @@ func TestReconcile_callAfterControlPlaneInitialized(t *testing.T) {
 				{
 					APIVersion: builder.InfrastructureGroupVersion.String(),
 					Manager:    "manager",
-					Operation:  "op",
+					Operation:  "Apply",
 					Time:       ptr.To(metav1.Now()),
 					FieldsType: "FieldsV1",
-					FieldsV1:   &metav1.FieldsV1{},
 				},
 			})
 			if tt.cluster.Annotations == nil {
@@ -557,13 +560,26 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 	}
 
 	successResponse := &runtimehooksv1.AfterClusterUpgradeResponse{
-		CommonResponse: runtimehooksv1.CommonResponse{
-			Status: runtimehooksv1.ResponseStatusSuccess,
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusSuccess,
+			},
 		},
 	}
 	failureResponse := &runtimehooksv1.AfterClusterUpgradeResponse{
-		CommonResponse: runtimehooksv1.CommonResponse{
-			Status: runtimehooksv1.ResponseStatusFailure,
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status: runtimehooksv1.ResponseStatusFailure,
+			},
+		},
+	}
+	blockingResponse := &runtimehooksv1.AfterClusterUpgradeResponse{
+		CommonRetryResponse: runtimehooksv1.CommonRetryResponse{
+			CommonResponse: runtimehooksv1.CommonResponse{
+				Status:  runtimehooksv1.ResponseStatusSuccess,
+				Message: "processing",
+			},
+			RetryAfterSeconds: 60,
 		},
 	}
 
@@ -577,7 +593,9 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 		hookResponse       *runtimehooksv1.AfterClusterUpgradeResponse
 		wantMarked         bool
 		wantHookToBeCalled bool
+		wantRetryAfter     time.Duration
 		wantError          bool
+		wantHookCacheEntry *cache.HookEntry
 	}{
 		{
 			name: "hook should not be called if it is not marked",
@@ -1061,6 +1079,80 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			wantError:          false,
 		},
 		{
+			name: "hook should not be called if AfterControlPlaneUpgrade did not completed - hook is marked",
+			s: &scope.Scope{
+				Blueprint: &scope.ClusterBlueprint{
+					Topology: clusterv1.Topology{
+						ControlPlane: clusterv1.ControlPlaneTopology{
+							Replicas: ptr.To[int32](2),
+						},
+					},
+				},
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-cluster",
+							Namespace: "test-ns",
+							Annotations: map[string]string{
+								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade,AfterControlPlaneUpgrade",
+							},
+						},
+						Spec: clusterv1.ClusterSpec{
+							Topology: clusterv1.Topology{
+								Version: topologyVersion,
+							},
+						},
+					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneObj,
+					},
+				},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+				UpgradeTracker:      scope.NewUpgradeTracker(),
+			},
+			wantMarked:         true,
+			hookResponse:       successResponse,
+			wantHookToBeCalled: false,
+			wantError:          false,
+		},
+		{
+			name: "hook should not be called if AfterWorkersUpgrade did not completed - hook is marked",
+			s: &scope.Scope{
+				Blueprint: &scope.ClusterBlueprint{
+					Topology: clusterv1.Topology{
+						ControlPlane: clusterv1.ControlPlaneTopology{
+							Replicas: ptr.To[int32](2),
+						},
+					},
+				},
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-cluster",
+							Namespace: "test-ns",
+							Annotations: map[string]string{
+								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade,AfterWorkersUpgrade",
+							},
+						},
+						Spec: clusterv1.ClusterSpec{
+							Topology: clusterv1.Topology{
+								Version: topologyVersion,
+							},
+						},
+					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneObj,
+					},
+				},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+				UpgradeTracker:      scope.NewUpgradeTracker(),
+			},
+			wantMarked:         true,
+			hookResponse:       successResponse,
+			wantHookToBeCalled: false,
+			wantError:          false,
+		},
+		{
 			name: "hook should be called if the control plane, MDs, and MPs are stable at the topology version - success response should unmark the hook",
 			s: &scope.Scope{
 				Blueprint: &scope.ClusterBlueprint{
@@ -1096,6 +1188,51 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			hookResponse:       successResponse,
 			wantHookToBeCalled: true,
 			wantError:          false,
+		},
+		{
+			name: "hook should be called if the control plane, MDs, and MPs are stable at the topology version - retry response should leave the hook marked",
+			s: &scope.Scope{
+				Blueprint: &scope.ClusterBlueprint{
+					Topology: clusterv1.Topology{
+						ControlPlane: clusterv1.ControlPlaneTopology{
+							Replicas: ptr.To[int32](2),
+						},
+					},
+				},
+				Current: &scope.ClusterState{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-cluster",
+							Namespace: "test-ns",
+							Annotations: map[string]string{
+								runtimev1.PendingHooksAnnotation: "AfterClusterUpgrade",
+							},
+						},
+						Spec: clusterv1.ClusterSpec{
+							Topology: clusterv1.Topology{
+								Version: topologyVersion,
+							},
+						},
+					},
+					ControlPlane: &scope.ControlPlaneState{
+						Object: controlPlaneObj,
+					},
+				},
+				HookResponseTracker: scope.NewHookResponseTracker(),
+				UpgradeTracker:      scope.NewUpgradeTracker(),
+			},
+			wantMarked:         true,
+			hookResponse:       blockingResponse,
+			wantHookToBeCalled: true,
+			wantRetryAfter:     time.Second * time.Duration(blockingResponse.RetryAfterSeconds),
+			wantError:          false,
+			wantHookCacheEntry: ptr.To(cache.NewHookEntry(&clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "test-cluster",
+				},
+			}, runtimehooksv1.AfterClusterUpgrade,
+				time.Now().Add(time.Duration(blockingResponse.RetryAfterSeconds)*time.Second), blockingResponse.Message)),
 		},
 		{
 			name: "hook should be called if the control plane, MDs, and MPs are stable at the topology version - failure response should leave the hook marked",
@@ -1145,10 +1282,9 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 				{
 					APIVersion: builder.InfrastructureGroupVersion.String(),
 					Manager:    "manager",
-					Operation:  "op",
+					Operation:  "Apply",
 					Time:       ptr.To(metav1.Now()),
 					FieldsType: "FieldsV1",
-					FieldsV1:   &metav1.FieldsV1{},
 				},
 			})
 			if tt.s.Current.Cluster.Annotations == nil {
@@ -1158,6 +1294,9 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			tt.s.Current.Cluster.Annotations[conversion.DataAnnotation] = "should be cleaned up"
 
 			fakeRuntimeClient := fakeruntimeclient.NewRuntimeClientBuilder().
+				WithGetAllExtensionResponses(map[runtimecatalog.GroupVersionHook][]string{
+					afterClusterUpgradeGVH: {"foo"},
+				}).
 				WithCallAllExtensionResponses(map[runtimecatalog.GroupVersionHook]runtimehooksv1.ResponseObject{
 					afterClusterUpgradeGVH: tt.hookResponse,
 				}).
@@ -1167,20 +1306,31 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 
 			fakeClient := fake.NewClientBuilder().WithObjects(tt.s.Current.Cluster).Build()
 
+			desiredStateGenerator, err := desiredstate.NewGenerator(
+				fakeClient,
+				clustercache.NewFakeEmptyClusterCache(),
+				fakeRuntimeClient,
+				cache.New[cache.HookEntry](cache.HookCacheDefaultTTL),
+				cache.New[desiredstate.GenerateUpgradePlanCacheEntry](10*time.Minute),
+			)
+			g.Expect(err).ToNot(HaveOccurred())
+
 			r := &Reconciler{
 				Client:                fakeClient,
 				APIReader:             fakeClient,
 				RuntimeClient:         fakeRuntimeClient,
-				desiredStateGenerator: desiredstate.NewGenerator(fakeClient, nil, fakeRuntimeClient),
+				hookCache:             cache.New[cache.HookEntry](cache.HookCacheDefaultTTL),
+				desiredStateGenerator: desiredStateGenerator,
 			}
 
-			err := r.callAfterClusterUpgrade(ctx, tt.s)
+			err = r.callAfterClusterUpgrade(ctx, tt.s)
 			if tt.wantError {
 				g.Expect(err).To(HaveOccurred())
 			} else {
 				g.Expect(err).ToNot(HaveOccurred())
 			}
 
+			g.Expect(tt.s.HookResponseTracker.AggregateRetryAfter()).To(Equal(tt.wantRetryAfter))
 			if tt.wantHookToBeCalled {
 				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterClusterUpgrade)).To(Equal(1), "Expected hook to be called once")
 			} else {
@@ -1188,6 +1338,26 @@ func TestReconcile_callAfterClusterUpgrade(t *testing.T) {
 			}
 
 			g.Expect(hooks.IsPending(runtimehooksv1.AfterClusterUpgrade, tt.s.Current.Cluster)).To(Equal(tt.wantMarked))
+
+			if tt.wantHookCacheEntry != nil {
+				// Verify the cache entry.
+				cacheEntry, ok := r.hookCache.Has(tt.wantHookCacheEntry.Key())
+				g.Expect(ok).To(BeTrue())
+				g.Expect(cacheEntry.ObjectKey).To(Equal(tt.wantHookCacheEntry.ObjectKey))
+				g.Expect(cacheEntry.HookName).To(Equal(tt.wantHookCacheEntry.HookName))
+				g.Expect(cacheEntry.ReconcileAfter).To(BeTemporally("~", tt.wantHookCacheEntry.ReconcileAfter, 5*time.Second))
+				g.Expect(cacheEntry.ResponseMessage).To(Equal(tt.wantHookCacheEntry.ResponseMessage))
+
+				// Call callAfterClusterUpgrade again and verify the cache hit.
+				g.Expect(r.callAfterClusterUpgrade(ctx, tt.s)).To(Succeed())
+				g.Expect(fakeRuntimeClient.CallAllCount(runtimehooksv1.AfterClusterUpgrade)).To(Equal(1))
+				g.Expect(tt.s.HookResponseTracker.AggregateMessage("upgrade")).To(Equal(
+					fmt.Sprintf("Following hooks are blocking upgrade: AfterClusterUpgrade: %s", tt.wantHookCacheEntry.ResponseMessage)))
+				// RequeueAfter should be now < then the previous RequeueAfter.
+				g.Expect(tt.s.HookResponseTracker.AggregateRetryAfter()).To(BeNumerically("<=", tt.wantRetryAfter))
+			} else {
+				g.Expect(r.hookCache.Len()).To(Equal(0))
+			}
 		})
 	}
 }
@@ -1900,6 +2070,13 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 					TimeoutSeconds: ptr.To(int32(5 * 60)),
 				},
 			},
+			UnhealthyMachineConditions: []clusterv1.UnhealthyMachineCondition{
+				{
+					Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+					Status:         metav1.ConditionUnknown,
+					TimeoutSeconds: ptr.To(int32(5 * 60)),
+				},
+			},
 		},
 	}
 	maxUnhealthy := intstr.Parse("45%")
@@ -1920,6 +2097,7 @@ func TestReconcileControlPlaneMachineHealthCheck(t *testing.T) {
 	mhcBuilder := builder.MachineHealthCheck(metav1.NamespaceDefault, "cp1").
 		WithSelector(*selectors.ForControlPlaneMHC()).
 		WithUnhealthyNodeConditions(mhcClass.Checks.UnhealthyNodeConditions).
+		WithUnhealthyMachineConditions(mhcClass.Checks.UnhealthyMachineConditions).
 		WithClusterName("cluster1")
 
 	tests := []struct {
@@ -3415,6 +3593,13 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 				TimeoutSeconds: ptr.To(int32(5 * 60)),
 			},
 		}).
+		WithUnhealthyMachineConditions([]clusterv1.UnhealthyMachineCondition{
+			{
+				Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+				Status:         metav1.ConditionUnknown,
+				TimeoutSeconds: ptr.To(int32(5 * 60)),
+			},
+		}).
 		WithClusterName("cluster1")
 
 	infrastructureMachineTemplate := builder.TestInfrastructureMachineTemplate(metav1.NamespaceDefault, "infrastructure-machine-1").Build()
@@ -3583,6 +3768,7 @@ func TestReconcileMachineDeploymentMachineHealthCheck(t *testing.T) {
 							ref.UID = ""
 							actual.OwnerReferences[i] = ref
 						}
+						actual.SetGroupVersionKind(schema.GroupVersionKind{}) // set GVK to empty for comparison
 						g.Expect(wantMHC).To(EqualObject(&actual, IgnoreAutogeneratedMetadata))
 					}
 				}
@@ -3858,6 +4044,13 @@ func TestReconciler_reconcileMachineHealthCheck(t *testing.T) {
 				TimeoutSeconds: ptr.To(int32(5 * 60)),
 			},
 		}).
+		WithUnhealthyMachineConditions([]clusterv1.UnhealthyMachineCondition{
+			{
+				Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+				Status:         metav1.ConditionUnknown,
+				TimeoutSeconds: ptr.To(int32(5 * 60)),
+			},
+		}).
 		WithClusterName("cluster1")
 	tests := []struct {
 		name    string
@@ -3882,11 +4075,23 @@ func TestReconciler_reconcileMachineHealthCheck(t *testing.T) {
 					Status:         corev1.ConditionUnknown,
 					TimeoutSeconds: ptr.To(int32(1000 * 60)),
 				},
+			}).WithUnhealthyMachineConditions([]clusterv1.UnhealthyMachineCondition{
+				{
+					Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+					Status:         metav1.ConditionUnknown,
+					TimeoutSeconds: ptr.To(int32(1000 * 60)),
+				},
 			}).Build(),
 			want: mhcBuilder.DeepCopy().WithUnhealthyNodeConditions([]clusterv1.UnhealthyNodeCondition{
 				{
 					Type:           corev1.NodeReady,
 					Status:         corev1.ConditionUnknown,
+					TimeoutSeconds: ptr.To(int32(1000 * 60)),
+				},
+			}).WithUnhealthyMachineConditions([]clusterv1.UnhealthyMachineCondition{
+				{
+					Type:           controlplanev1.KubeadmControlPlaneMachineEtcdPodHealthyCondition,
+					Status:         metav1.ConditionUnknown,
 					TimeoutSeconds: ptr.To(int32(1000 * 60)),
 				},
 			}).Build(),

@@ -75,6 +75,9 @@ func TestKubeadmControlPlaneReconciler_setControlPlaneInitialized(t *testing.T) 
 		controlPlane := &internal.ControlPlane{
 			Cluster: &clusterv1.Cluster{},
 			KCP:     &controlplanev1.KubeadmControlPlane{},
+			Machines: collections.FromMachines(
+				&clusterv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: "m1"}},
+			),
 		}
 		controlPlane.InjectTestManagementCluster(&fakeManagementCluster{
 			Workload: &fakeWorkloadCluster{
@@ -96,6 +99,85 @@ func TestKubeadmControlPlaneReconciler_setControlPlaneInitialized(t *testing.T) 
 			Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
 			Status: metav1.ConditionTrue,
 			Reason: controlplanev1.KubeadmControlPlaneInitializedReason,
+		}, conditions.IgnoreLastTransitionTime(true)))
+	})
+	t.Run("kubeadm config exists is ignored if there is a single CP machine and it is marked for remediation", func(t *testing.T) {
+		g := NewWithT(t)
+		controlPlane := &internal.ControlPlane{
+			Cluster: &clusterv1.Cluster{},
+			KCP:     &controlplanev1.KubeadmControlPlane{},
+			Machines: collections.FromMachines(
+				&clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+					Status: clusterv1.MachineStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   clusterv1.MachineHealthCheckSucceededCondition,
+								Status: metav1.ConditionFalse,
+								Reason: clusterv1.MachineHealthCheckNodeDeletedReason,
+							},
+							{
+								Type:    clusterv1.MachineOwnerRemediatedCondition,
+								Status:  metav1.ConditionFalse,
+								Reason:  clusterv1.MachineOwnerRemediatedWaitingForRemediationReason,
+								Message: "Waiting for remediation",
+							},
+						},
+					},
+				},
+			),
+		}
+		controlPlane.InjectTestManagementCluster(&fakeManagementCluster{
+			Workload: &fakeWorkloadCluster{
+				Status: internal.ClusterStatus{
+					HasKubeadmConfig: true,
+				},
+			},
+		})
+
+		err := setControlPlaneInitialized(ctx, controlPlane)
+		g.Expect(err).ToNot(HaveOccurred())
+
+		g.Expect(ptr.Deref(controlPlane.KCP.Status.Initialization.ControlPlaneInitialized, false)).To(BeFalse())
+
+		setInitializedCondition(ctx, controlPlane.KCP)
+		c := conditions.Get(controlPlane.KCP, controlplanev1.KubeadmControlPlaneInitializedCondition)
+		g.Expect(c).ToNot(BeNil())
+		g.Expect(*c).To(conditions.MatchCondition(metav1.Condition{
+			Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
+			Status: metav1.ConditionFalse,
+			Reason: controlplanev1.KubeadmControlPlaneNotInitializedReason,
+		}, conditions.IgnoreLastTransitionTime(true)))
+	})
+	t.Run("kubeadm config exists is ignored if there is a single CP machine and it is deleting", func(t *testing.T) {
+		g := NewWithT(t)
+		controlPlane := &internal.ControlPlane{
+			Cluster: &clusterv1.Cluster{},
+			KCP:     &controlplanev1.KubeadmControlPlane{},
+			Machines: collections.FromMachines(
+				&clusterv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: "m1", DeletionTimestamp: ptr.To(metav1.Now())}},
+			),
+		}
+		controlPlane.InjectTestManagementCluster(&fakeManagementCluster{
+			Workload: &fakeWorkloadCluster{
+				Status: internal.ClusterStatus{
+					HasKubeadmConfig: true,
+				},
+			},
+		})
+
+		err := setControlPlaneInitialized(ctx, controlPlane)
+		g.Expect(err).ToNot(HaveOccurred())
+
+		g.Expect(ptr.Deref(controlPlane.KCP.Status.Initialization.ControlPlaneInitialized, false)).To(BeFalse())
+
+		setInitializedCondition(ctx, controlPlane.KCP)
+		c := conditions.Get(controlPlane.KCP, controlplanev1.KubeadmControlPlaneInitializedCondition)
+		g.Expect(c).ToNot(BeNil())
+		g.Expect(*c).To(conditions.MatchCondition(metav1.Condition{
+			Type:   controlplanev1.KubeadmControlPlaneInitializedCondition,
+			Status: metav1.ConditionFalse,
+			Reason: controlplanev1.KubeadmControlPlaneNotInitializedReason,
 		}, conditions.IgnoreLastTransitionTime(true)))
 	})
 }
@@ -451,7 +533,7 @@ func Test_setScalingUpCondition(t *testing.T) {
 				Status: metav1.ConditionTrue,
 				Reason: controlplanev1.KubeadmControlPlaneScalingUpReason,
 				Message: "Scaling up from 3 to 5 replicas is blocked because:\n" +
-					"* waiting for a version upgrade to v1.32.0 to be propagated from Cluster.spec.topology\n" +
+					"* waiting for a version upgrade to v1.32.0 to be propagated\n" +
 					"* waiting for a control plane Machine to complete deletion\n" +
 					"* waiting for control plane components to become healthy\n" +
 					"* waiting for etcd cluster to become healthy",
@@ -645,7 +727,7 @@ After above Pods have been removed from the Node, the following Pods will be evi
 				Status: metav1.ConditionTrue,
 				Reason: controlplanev1.KubeadmControlPlaneScalingDownReason,
 				Message: "Scaling down from 3 to 1 replicas is blocked because:\n" +
-					"* waiting for a version upgrade to v1.32.0 to be propagated from Cluster.spec.topology\n" +
+					"* waiting for a version upgrade to v1.32.0 to be propagated\n" +
 					"* waiting for a control plane Machine to complete deletion\n" +
 					"* waiting for control plane components to become healthy\n" +
 					"* waiting for etcd cluster to become healthy",
@@ -1971,10 +2053,6 @@ func TestKubeadmControlPlaneReconciler_updateStatusNoMachines(t *testing.T) {
 	}
 
 	kcp := &controlplanev1.KubeadmControlPlane{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmControlPlane",
-			APIVersion: controlplanev1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
 			Name:      "foo",
@@ -2123,10 +2201,6 @@ func TestKubeadmControlPlaneReconciler_updateStatusAllMachinesNotReady(t *testin
 	}
 
 	kcp := &controlplanev1.KubeadmControlPlane{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmControlPlane",
-			APIVersion: controlplanev1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
 			Name:      "foo",
@@ -2195,10 +2269,6 @@ func TestKubeadmControlPlaneReconciler_updateStatusAllMachinesReady(t *testing.T
 	}
 
 	kcp := &controlplanev1.KubeadmControlPlane{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmControlPlane",
-			APIVersion: controlplanev1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
 			Name:      "foo",
@@ -2274,10 +2344,6 @@ func TestKubeadmControlPlaneReconciler_updateStatusMachinesReadyMixed(t *testing
 	}
 
 	kcp := &controlplanev1.KubeadmControlPlane{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmControlPlane",
-			APIVersion: controlplanev1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
 			Name:      "foo",
@@ -2352,10 +2418,6 @@ func TestKubeadmControlPlaneReconciler_machinesCreatedIsIsTrueEvenWhenTheNodesAr
 	}
 
 	kcp := &controlplanev1.KubeadmControlPlane{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmControlPlane",
-			APIVersion: controlplanev1.GroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
 			Name:      "foo",
