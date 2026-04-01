@@ -1,0 +1,13 @@
+# Add the adopt-existing annotation to IPAM CRDs.
+#
+# The IPAM CRDs were previously installed by CVO. When cluster-capi-operator
+# takes over management of these CRDs, it needs to adopt the existing resources.
+# This annotation instructs the operator to skip collision protection.
+#
+# Targets (specified in kustomization.yaml):
+#   - ipaddresses.ipam.cluster.x-k8s.io
+#   - ipaddressclaims.ipam.cluster.x-k8s.io
+
+- op: add
+  path: /metadata/annotations/capi-operator.openshift.io~1adopt-existing
+  value: "always"
