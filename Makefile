@@ -39,7 +39,7 @@ export GO111MODULE=on
 #
 # Kubebuilder.
 #
-export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.23.3
+export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.23.5
 export KUBEBUILDER_CONTROLPLANE_START_TIMEOUT ?= 60s
 export KUBEBUILDER_CONTROLPLANE_STOP_TIMEOUT ?= 60s
 
@@ -79,7 +79,7 @@ endif
 #
 # Note: Need to use abspath so we can invoke these from subdirectories
 KUSTOMIZE := $(abspath $(TOOLS_BIN_DIR)/kustomize)
-SETUP_ENVTEST := $(abspath $(TOOLS_BIN_DIR)/setup-envtest)
+ENVTEST_ASSETS_DIR ?= /tmp/controller-tools/envtest
 CONTROLLER_GEN := $(abspath $(TOOLS_BIN_DIR)/controller-gen)
 GOTESTSUM := $(abspath $(TOOLS_BIN_DIR)/gotestsum)
 GOLANGCI_LINT := $(abspath $(TOOLS_BIN_DIR)/golangci-lint)
@@ -434,19 +434,28 @@ e2e-framework: ## Builds the CAPI e2e framework
 
 ARTIFACTS ?= ${ROOT_DIR}/_artifacts
 
-KUBEBUILDER_ASSETS ?= $(shell $(SETUP_ENVTEST) use --use-env -p path $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION))
+.PHONY: envtest
+envtest: ## Download envtest binaries if not present
+	@[ -f $(ENVTEST_ASSETS_DIR)/kube-apiserver ] || { \
+	set -e ;\
+	ARCH=$$(go env GOARCH) ;\
+	OS=$$(go env GOOS) ;\
+	echo "Downloading envtest binaries for k8s $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION) ($${OS}/$${ARCH})..." ;\
+	curl -fSL "https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-v$(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION)/envtest-v$(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION)-$${OS}-$${ARCH}.tar.gz" -o /tmp/envtest.tar.gz ;\
+	tar -xzf /tmp/envtest.tar.gz -C /tmp/ ;\
+	}
 
 .PHONY: test
-test: $(SETUP_ENVTEST) ## Run unit and integration tests
-	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test ./... $(TEST_ARGS)
+test: envtest ## Run unit and integration tests
+	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS_DIR)" go test ./... $(TEST_ARGS)
 
 .PHONY: test-e2e
 test-e2e: ## Run the e2e tests
 	$(MAKE) -C $(TEST_DIR)/e2e run
 
 .PHONY: test-junit
-test-junit: $(SETUP_ENVTEST) $(GOTESTSUM) ## Run tests with verbose setting and generate a junit report
-	set +o errexit; (KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test -json ./... $(TEST_ARGS); echo $$? > $(ARTIFACTS)/junit.exitcode) | tee $(ARTIFACTS)/junit.stdout
+test-junit: envtest $(GOTESTSUM) ## Run tests with verbose setting and generate a junit report
+	set +o errexit; (KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS_DIR)" go test -json ./... $(TEST_ARGS); echo $$? > $(ARTIFACTS)/junit.exitcode) | tee $(ARTIFACTS)/junit.stdout
 	$(GOTESTSUM) --junitfile $(ARTIFACTS)/junit.xml --raw-command cat $(ARTIFACTS)/junit.stdout
 	exit $$(cat $(ARTIFACTS)/junit.exitcode)
 
@@ -720,12 +729,8 @@ go-apidiff: $(GO_APIDIFF) ## Build a local copy of apidiff
 golangci-lint: $(GOLANGCI_LINT) ## Build a local copy of golangci-lint
 envsubst: $(ENVSUBST) ## Build a local copy of envsubst
 kustomize: $(KUSTOMIZE) ## Build a local copy of kustomize
-setup-envtest: $(SETUP_ENVTEST) ## Build a local copy of setup-envtest
 tilt-prepare: $(TILT_PREPARE) ## Build a local copy of tilt-prepare
 kpromo: $(KPROMO)  ## Build a local copy of kpromo
-
-$(SETUP_ENVTEST): $(TOOLS_DIR)/go.mod # Build setup-envtest from tools folder.
-	cd $(TOOLS_DIR); go build -tags=tools -o $(BIN_DIR)/setup-envtest sigs.k8s.io/controller-runtime/tools/setup-envtest
 
 $(CONTROLLER_GEN): $(TOOLS_DIR)/go.mod # Build controller-gen from tools folder.
 	cd $(TOOLS_DIR); go build -tags=tools -o $(BIN_DIR)/controller-gen sigs.k8s.io/controller-tools/cmd/controller-gen

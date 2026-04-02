@@ -11,10 +11,10 @@ if [ $HOME == "/" ]; then
   export HOME=/tmp/kubebuilder/testing
 fi
 
-export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION=1.22.0
-
-make setup-envtest
-export KUBEBUILDER_ASSETS=$(./hack/tools/bin/setup-envtest use --use-env -p path $KUBEBUILDER_ENVTEST_KUBERNETES_VERSION)
+# Match Makefile `test` / `envtest`: download envtest assets (no setup-envtest binary).
+export ENVTEST_ASSETS_DIR="${ENVTEST_ASSETS_DIR:-/tmp/controller-tools/envtest}"
+make envtest
+export KUBEBUILDER_ASSETS="$ENVTEST_ASSETS_DIR"
 go test ./api/...
 go test ./bootstrap/...
 go test ./cmd/...
