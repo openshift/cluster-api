@@ -427,7 +427,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, controller.Options{
 		MaxConcurrentReconciles: concurrency,
-		ReconciliationTimeout:   5 * time.Minute, // increase reconciliation timeout because the DockerMachineReconciler performs long operations like kubeadm init/join, image copy, etc.
+		ReconciliationTimeout:   6 * time.Minute, // increase reconciliation timeout because the DockerMachineReconciler performs long operations like kubeadm init/join, image copy, etc.
 	}); err != nil {
 		setupLog.Error(err, "Unable to create controller", "controller", "DockerMachine")
 		os.Exit(1)

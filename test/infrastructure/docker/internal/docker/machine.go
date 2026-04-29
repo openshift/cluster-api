@@ -268,6 +268,16 @@ func (m *Machine) Create(ctx context.Context, image string, role string, version
 		default:
 			return errors.Errorf("unable to create machine for role %s", role)
 		}
+
+		containerRuntime, err := container.RuntimeFrom(ctx)
+		if err != nil {
+			return errors.Wrap(err, "failed to connect to container runtime")
+		}
+
+		if err := m.WaitForMultiUserTarget(ctx, containerRuntime); err != nil {
+			return errors.Wrap(err, "waiting for multi-user target after container creation")
+		}
+
 		// After creating a node we need to wait a small amount of time until crictl does not return an error.
 		// This fixes an issue where we try to kubeadm init too quickly after creating the container.
 		err = wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 4*time.Second, true, func(ctx context.Context) (bool, error) {
@@ -406,7 +416,7 @@ func (m *Machine) ExecBootstrap(ctx context.Context, data string, format bootstr
 	var outErr bytes.Buffer
 	var outStd bytes.Buffer
 	for _, command := range commands {
-		log.Info("Running command", "instance", m.Name(), "command", command)
+		log.Info("Running command", "instance", m.Name(), "command", command.Cmd)
 		cmd := m.container.Commander.Command(command.Cmd, command.Args...)
 		cmd.SetStderr(&outErr)
 		cmd.SetStdout(&outStd)
