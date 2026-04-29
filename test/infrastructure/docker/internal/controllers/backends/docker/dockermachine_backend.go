@@ -209,13 +209,6 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 		}
 	}
 
-	// Preload images into the container
-	if len(dockerMachine.Spec.Backend.Docker.PreLoadImages) > 0 {
-		if err := externalMachine.PreloadLoadImages(ctx, dockerMachine.Spec.Backend.Docker.PreLoadImages); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to pre-load images into the DockerMachine")
-		}
-	}
-
 	// if the machine is a control plane update the load balancer configuration
 	// we should only do this once, as reconfiguration more or less ensures
 	// node ref setting fails
@@ -262,7 +255,7 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 		if dockerMachine.Spec.Backend.Docker.BootstrapTimeout != nil {
 			bootstrapTimeout = *dockerMachine.Spec.Backend.Docker.BootstrapTimeout
 		} else {
-			bootstrapTimeout = metav1.Duration{Duration: 3 * time.Minute}
+			bootstrapTimeout = metav1.Duration{Duration: 5 * time.Minute}
 		}
 		timeoutCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout.Duration)
 		defer cancel()
@@ -309,6 +302,20 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 					Message: fmt.Sprintf("Waiting for multi-user target: %s", err.Error()),
 				})
 				return ctrl.Result{}, errors.Wrap(err, "waiting for multi-user target")
+			}
+
+			// Preload images into the container
+			if len(dockerMachine.Spec.Backend.Docker.PreLoadImages) > 0 {
+				if err := externalMachine.PreloadLoadImages(timeoutCtx, dockerMachine.Spec.Backend.Docker.PreLoadImages); err != nil {
+					v1beta1conditions.MarkFalse(dockerMachine, infrav1.BootstrapExecSucceededV1Beta1Condition, infrav1.BootstrapFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "Pre-loading images: %s", err.Error())
+					conditions.Set(dockerMachine, metav1.Condition{
+						Type:    infrav1.DevMachineDockerContainerBootstrapExecSucceededCondition,
+						Status:  metav1.ConditionFalse,
+						Reason:  infrav1.DevMachineDockerContainerBootstrapExecWaitingForMultiUserTargetReason,
+						Message: fmt.Sprintf("Pre-loading images: %s", err.Error()),
+					})
+					return ctrl.Result{}, errors.Wrap(err, "failed to pre-load images into the DockerMachine")
+				}
 			}
 
 			// Run the bootstrap script. Simulates cloud-init/Ignition.
