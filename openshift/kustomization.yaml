@@ -39,3 +39,15 @@ patches:
     version: v1
     kind: CustomResourceDefinition
     name: ipaddressclaims.ipam.cluster.x-k8s.io
+
+# Add TLS configuration args (substituted by cluster-capi-operator revisiongenerator)
+- target:
+    kind: Deployment
+    name: capi-controller-manager
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: "--tls-min-version=${TLS_MIN_VERSION}"
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: "--tls-cipher-suites=${TLS_CIPHER_SUITES}"
