@@ -55,13 +55,13 @@ import (
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/controllers/machine/drain"
-	capicontrollerutil "sigs.k8s.io/cluster-api/internal/util/controller"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/cache"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -296,9 +296,6 @@ func (r *Reconciler) getOwnerMachineSet(ctx context.Context, m *clusterv1.Machin
 	}
 	ms := &clusterv1.MachineSet{}
 	if err := r.Client.Get(ctx, *machineSetKey, ms); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("failed to retrieve owner MachineSet for Machine %s: %w", klog.KObj(m), err)
 	}
 	return ms, nil
@@ -316,9 +313,6 @@ func (r *Reconciler) getOwnerMachineDeployment(ctx context.Context, ms *clusterv
 
 	md := &clusterv1.MachineDeployment{}
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: ms.Namespace, Name: mdName}, md); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("failed to retrieve owner MachineDeployment for MachineSet %s: %w", klog.KObj(ms), err)
 	}
 	return md, nil

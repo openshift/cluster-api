@@ -28,7 +28,9 @@ import (
 	"github.com/spf13/pflag"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -55,8 +57,6 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
-	infrav1alpha3 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha3"
-	infrav1alpha4 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha4"
 	infrav1beta1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta1"
 	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1beta2"
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/controllers"
@@ -104,8 +104,6 @@ var (
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = apiextensionsv1.AddToScheme(scheme)
-	_ = infrav1alpha3.AddToScheme(scheme)
-	_ = infrav1alpha4.AddToScheme(scheme)
 	_ = infrav1beta1.AddToScheme(scheme)
 	_ = infrav1.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
@@ -115,6 +113,9 @@ func init() {
 	_ = corev1.AddToScheme(inmemoryScheme)
 	_ = appsv1.AddToScheme(inmemoryScheme)
 	_ = rbacv1.AddToScheme(inmemoryScheme)
+	_ = storagev1.AddToScheme(inmemoryScheme)
+	_ = apiextensionsv1.AddToScheme(inmemoryScheme)
+	_ = policyv1.AddToScheme(inmemoryScheme)
 }
 
 // InitFlags initializes the flags.
@@ -145,7 +146,7 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&enableContentionProfiling, "contention-profiling", false,
 		"Enable block profiling")
 
-	fs.IntVar(&concurrency, "concurrency", 10,
+	fs.IntVar(&concurrency, "concurrency", 100,
 		"The number of docker machines to process simultaneously")
 
 	fs.IntVar(&clusterCacheConcurrency, "clustercache-concurrency", 100,
@@ -157,10 +158,10 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&syncPeriod, "sync-period", 10*time.Minute,
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 
-	fs.Float32Var(&restConfigQPS, "kube-api-qps", 20,
+	fs.Float32Var(&restConfigQPS, "kube-api-qps", 100,
 		"Maximum queries per second from the controller client to the Kubernetes API server.")
 
-	fs.IntVar(&restConfigBurst, "kube-api-burst", 30,
+	fs.IntVar(&restConfigBurst, "kube-api-burst", 200,
 		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server.")
 
 	fs.Float32Var(&clusterCacheClientQPS, "clustercache-client-qps", 20,
@@ -194,10 +195,10 @@ func InitFlags(fs *pflag.FlagSet) {
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 // ADD CRD RBAC for CRD Migrator.
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions;customresourcedefinitions/status,verbs=update;patch,resourceNames=devclusters.infrastructure.cluster.x-k8s.io;devclustertemplates.infrastructure.cluster.x-k8s.io;devmachines.infrastructure.cluster.x-k8s.io;devmachinetemplates.infrastructure.cluster.x-k8s.io;dockerclusters.infrastructure.cluster.x-k8s.io;dockerclustertemplates.infrastructure.cluster.x-k8s.io;dockermachinepools.infrastructure.cluster.x-k8s.io;dockermachinepooltemplates.infrastructure.cluster.x-k8s.io;dockermachines.infrastructure.cluster.x-k8s.io;dockermachinetemplates.infrastructure.cluster.x-k8s.io
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions;customresourcedefinitions/status,verbs=update;patch,resourceNames=devclusters.infrastructure.cluster.x-k8s.io;devclustertemplates.infrastructure.cluster.x-k8s.io;devmachinepools.infrastructure.cluster.x-k8s.io;devmachinepooltemplates.infrastructure.cluster.x-k8s.io;devmachines.infrastructure.cluster.x-k8s.io;devmachinetemplates.infrastructure.cluster.x-k8s.io;dockerclusters.infrastructure.cluster.x-k8s.io;dockerclustertemplates.infrastructure.cluster.x-k8s.io;dockermachinepools.infrastructure.cluster.x-k8s.io;dockermachinepooltemplates.infrastructure.cluster.x-k8s.io;dockermachines.infrastructure.cluster.x-k8s.io;dockermachinetemplates.infrastructure.cluster.x-k8s.io
 // ADD CR RBAC for CRD Migrator.
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=dockerclustertemplates;dockermachinetemplates;dockermachinepooltemplates,verbs=get;list;watch;patch;update
-// +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devclustertemplates;devmachinetemplates,verbs=get;list;watch;patch;update
+// +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devclustertemplates;devmachinepooltemplates,verbs=get;list;watch;patch;update
 
 func main() {
 	if _, err := os.ReadDir("/tmp/"); err != nil {
@@ -219,6 +220,10 @@ func main() {
 		fmt.Printf("Unable to start manager: %v\n", err)
 		os.Exit(1)
 	}
+
+	pflag.CommandLine.VisitAll(func(flag *pflag.Flag) {
+		klog.V(1).Infof("FLAG: --%s=%q", flag.Name, flag.Value)
+	})
 
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
@@ -254,6 +259,9 @@ func main() {
 	ctrlOptions := ctrl.Options{
 		Controller: config.Controller{
 			UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+			// Give the manager more time to sync the caches during startup. This is required
+			// in high scale environments when they are more objects in the system (default is 3m).
+			CacheSyncTimeout: 5 * time.Minute,
 		},
 		Scheme:                     scheme,
 		LeaderElection:             enableLeaderElection,
@@ -388,6 +396,8 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	if feature.Gates.Enabled(feature.MachinePool) {
 		crdMigratorConfig[&infrav1.DockerMachinePool{}] = crdmigrator.ByObjectConfig{UseCache: true}
 		crdMigratorConfig[&infrav1.DockerMachinePoolTemplate{}] = crdmigrator.ByObjectConfig{UseCache: false}
+		crdMigratorConfig[&infrav1.DevMachinePool{}] = crdmigrator.ByObjectConfig{UseCache: true}
+		crdMigratorConfig[&infrav1.DevMachinePoolTemplate{}] = crdmigrator.ByObjectConfig{UseCache: false}
 	}
 	crdMigratorSkipPhases := []crdmigrator.Phase{}
 	for _, p := range skipCRDMigrationPhases {
@@ -496,9 +506,25 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		setupLog.Error(err, "Unable to create controller", "controller", "DevMachineTemplate")
 		os.Exit(1)
 	}
+
+	if feature.Gates.Enabled(feature.MachinePool) {
+		if err := (&controllers.DevMachinePoolReconciler{
+			Client:           mgr.GetClient(),
+			ContainerRuntime: runtimeClient,
+			WatchFilterValue: watchFilterValue,
+		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: concurrency}); err != nil {
+			setupLog.Error(err, "Unable to create controller", "controller", "DevMachinePool")
+			os.Exit(1)
+		}
+	}
 }
 
 func setupWebhooks(mgr ctrl.Manager) {
+	if err := (&infrawebhooks.DockerMachine{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create webhook", "webhook", "DockerMachine")
+		os.Exit(1)
+	}
+
 	if err := (&infrawebhooks.DockerMachineTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "Unable to create webhook", "webhook", "DockerMachineTemplate")
 		os.Exit(1)
@@ -512,13 +538,6 @@ func setupWebhooks(mgr ctrl.Manager) {
 	if err := (&infrawebhooks.DockerClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "Unable to create webhook", "webhook", "DockerClusterTemplate")
 		os.Exit(1)
-	}
-
-	if feature.Gates.Enabled(feature.MachinePool) {
-		if err := (&infrawebhooks.DockerMachinePool{}).SetupWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Unable to create webhook", "webhook", "DockerMachinePool")
-			os.Exit(1)
-		}
 	}
 
 	if err := (&infrawebhooks.DevMachine{}).SetupWebhookWithManager(mgr); err != nil {

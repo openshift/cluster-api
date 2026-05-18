@@ -9,7 +9,7 @@ workflow that offers easy deployments and rapid iterative builds.
 
 1. [Docker](https://docs.docker.com/install/): v19.03 or newer (on MacOS e.g. via [Lima](https://github.com/lima-vm/lima))
 2. [kind](https://kind.sigs.k8s.io): v0.31.0 or newer
-3. [Tilt](https://docs.tilt.dev/install.html): v0.30.8 or newer
+3. [Tilt](https://docs.tilt.dev/install.html): v0.33.18 or newer
 4. [kustomize](https://github.com/kubernetes-sigs/kustomize): provided via `make kustomize`
 5. [envsubst](https://github.com/drone/envsubst): provided via `make envsubst`
 6. [helm](https://github.com/helm/helm): v3.7.1 or newer
@@ -176,6 +176,8 @@ NB: the default is dynamic and will be "podman" if the string "Podman Engine" is
 for more details.
 
 **enable_core_provider** (bool, default=true): By default, the `core` provider is enabled. This allows to disable it.
+
+**preload_images** (bool, default=true): By default, images are preloaded into the kind cluster. This works on most platforms but can fail on Apple Silicon or Docker v29+. Set this to false to skip preloading and let the kubelet pull images on demand.
 
 **template_dirs** (Map{String: Array[]String}, default={"docker": [
 "./test/infrastructure/docker/templates"]}): A map of providers to directories containing cluster templates. An example of the field is given below. See [Deploying a workload cluster](#deploying-a-workload-cluster) for how this is used.
@@ -536,6 +538,10 @@ provider abbreviation should be used (CAPD, KCP etc.).
 
 **additional_resources** ([]string, default=[]): A list of paths to yaml file to be loaded into the tilt cluster;
 e.g. use this to deploy an ExtensionConfig object for a RuntimeExtension provider.
+
+**additional_uncategorized_resources** ([]string, default=[]): A list of paths to yaml file to be loaded into the tilt cluster;
+e.g. use this to deploy CustomResourceDefinitions. The difference compared to additional_resources is that it is deployed
+as part of uncategorized and accordingly not re-created together with providers.
 
 **resource_deps** ([]string, default=[]): A list of tilt resource names to be installed before the current provider;
 e.g. set this to ["capi_controller"] to ensure that this provider gets installed after Cluster API.
