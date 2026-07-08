@@ -24516,7 +24516,7 @@ spec:
             fieldRef:
               fieldPath: metadata.uid
         image: registry.ci.openshift.org/openshift:cluster-capi-controllers
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:
             path: /healthz
