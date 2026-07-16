@@ -35,9 +35,11 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -60,6 +62,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/yaml"
 
 	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
@@ -128,8 +131,8 @@ func registerSchemes(s *runtime.Scheme) {
 // RunInput is the input for Run.
 type RunInput struct {
 	M                           *testing.M
-	ManagerUncachedObjs         []client.Object
 	ManagerCacheOptions         cache.Options
+	ManagerClientOptions        client.Options
 	SetupIndexes                func(ctx context.Context, mgr ctrl.Manager)
 	SetupReconcilers            func(ctx context.Context, mgr ctrl.Manager)
 	SetupEnv                    func(e *Environment)
@@ -163,13 +166,14 @@ func Run(ctx context.Context, input RunInput) int {
 	utilruntime.Must(appsv1.AddToScheme(scheme))
 	utilruntime.Must(corev1.AddToScheme(scheme))
 	utilruntime.Must(rbacv1.AddToScheme(scheme))
+	utilruntime.Must(storagev1.AddToScheme(scheme))
 	// Register additionally passed schemes.
 	if input.AdditionalSchemeBuilder != nil {
 		utilruntime.Must(input.AdditionalSchemeBuilder.AddToScheme(scheme))
 	}
 
 	// Bootstrapping test environment
-	env := newEnvironment(ctx, scheme, input.AdditionalCRDDirectoryPaths, input.ManagerCacheOptions, input.ManagerUncachedObjs...)
+	env := newEnvironment(ctx, scheme, input.AdditionalCRDDirectoryPaths, input.ManagerCacheOptions, input.ManagerClientOptions)
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	env.cancelManager = cancel
@@ -254,7 +258,7 @@ type Environment struct {
 //
 // This function should be called only once for each package you're running tests within,
 // usually the environment is initialized in a suite_test.go file within a `BeforeSuite` ginkgo block.
-func newEnvironment(ctx context.Context, scheme *runtime.Scheme, additionalCRDDirectoryPaths []string, managerCacheOptions cache.Options, uncachedObjs ...client.Object) *Environment {
+func newEnvironment(ctx context.Context, scheme *runtime.Scheme, additionalCRDDirectoryPaths []string, managerCacheOptions cache.Options, managerClientOptions client.Options) *Environment {
 	// Get the root of the current file to use in CRD paths.
 	_, filename, _, _ := goruntime.Caller(0) //nolint:dogsled
 	root := path.Join(path.Dir(filename), "..", "..", "..")
@@ -356,13 +360,8 @@ func newEnvironment(ctx context.Context, scheme *runtime.Scheme, additionalCRDDi
 		Metrics: metricsserver.Options{
 			BindAddress: "0",
 		},
-		Client: client.Options{
-			Cache: &client.CacheOptions{
-				DisableFor: uncachedObjs,
-				// Use the cache for all Unstructured get/list calls.
-				Unstructured: true,
-			},
-		},
+		Cache:  managerCacheOptions,
+		Client: managerClientOptions,
 		WebhookServer: webhook.NewServer(
 			webhook.Options{
 				Port:    env.WebhookInstallOptions.LocalServingPort,
@@ -370,7 +369,9 @@ func newEnvironment(ctx context.Context, scheme *runtime.Scheme, additionalCRDDi
 				Host:    host,
 			},
 		),
-		Cache: managerCacheOptions,
+		// Increase GracefulShutdownTimeout to 90s from the 30s default to tolerate if tests like
+		// TestClusterCacheConcurrency need more time because informers are stuck.
+		GracefulShutdownTimeout: ptr.To(90 * time.Second),
 	}
 
 	mgr, err := ctrl.NewManager(env.Config, options)
@@ -476,6 +477,11 @@ func (e *Environment) start(ctx context.Context) {
 	go func() {
 		fmt.Println("Starting the test environment manager")
 		if err := e.Start(ctx); err != nil {
+			// Print all goroutines to enable debugging in case the manager timed out during shutdown
+			buf := make([]byte, 1<<20)
+			stackLen := goruntime.Stack(buf, true)
+			_, _ = os.Stdout.Write(buf[:stackLen])
+
 			panic(fmt.Sprintf("Failed to start the test environment manager: %v", err))
 		}
 	}()
@@ -561,7 +567,8 @@ func (e *Environment) CleanupAndWait(ctx context.Context, objs ...client.Object)
 				}
 				return false, nil
 			})
-		errs = append(errs, errors.Wrapf(err, "key %s, %s is not being deleted from the testenv client cache", o.GetObjectKind().GroupVersionKind().String(), key))
+		oBytes, _ := yaml.Marshal(oCopy)
+		errs = append(errs, errors.Wrapf(err, "Object %s is not being deleted from the testenv client cache:\n%s", klog.KObj(o), oBytes))
 	}
 	return kerrors.NewAggregate(errs)
 }
@@ -627,7 +634,7 @@ func (e *Environment) DeleteAndWait(ctx context.Context, obj client.Object, opts
 // PatchAndWait creates or updates the given object using server-side apply and waits for the cache to be updated accordingly.
 //
 // NOTE: Waiting for the cache to be updated helps in preventing test flakes due to the cache sync delays.
-func (e *Environment) PatchAndWait(ctx context.Context, obj client.Object, opts ...client.PatchOption) error {
+func (e *Environment) PatchAndWait(ctx context.Context, obj client.Object, opts ...client.ApplyOption) error {
 	objGVK, err := apiutil.GVKForObject(obj, e.Scheme())
 	if err != nil {
 		return errors.Wrapf(err, "failed to get GVK to set GVK on object")
@@ -646,8 +653,24 @@ func (e *Environment) PatchAndWait(ctx context.Context, obj client.Object, opts 
 	// Store old resource version, empty string if not found.
 	oldResourceVersion := objCopy.GetResourceVersion()
 
-	if err := e.Patch(ctx, obj, client.Apply, opts...); err != nil {
+	// Convert to Unstructured because Apply only works with ApplyConfigurations and Unstructured.
+	objUnstructured := &unstructured.Unstructured{}
+	switch obj.(type) {
+	case *unstructured.Unstructured:
+		objUnstructured = obj.DeepCopyObject().(*unstructured.Unstructured)
+	default:
+		if err := e.Scheme().Convert(obj, objUnstructured, nil); err != nil {
+			return errors.Wrap(err, "failed to convert object to Unstructured")
+		}
+	}
+
+	if err := e.Apply(ctx, client.ApplyConfigurationFromUnstructured(objUnstructured), opts...); err != nil {
 		return err
+	}
+
+	// Write back the modified object so callers can access the patched object.
+	if err := e.Scheme().Convert(objUnstructured, obj, ctx); err != nil {
+		return errors.Wrapf(err, "failed to write object")
 	}
 
 	// Makes sure the cache is updated with the new object

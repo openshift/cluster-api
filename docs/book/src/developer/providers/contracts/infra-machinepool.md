@@ -143,6 +143,15 @@ labels:
 
 An example of this is in the [AWS infrastructure provider](https://github.com/kubernetes-sigs/cluster-api-provider-aws/blob/main/config/crd/kustomization.yaml).
 
+<aside  class="note warning">
+
+<h1>Important</h1>
+
+If the provider implements the [clusterctl provider contract], the contract version defined in the
+label above must be consistent with the contract version defined in the `metadata.yaml` file.
+
+</aside>
+
 ### InfraMachinePool, InfraMachinePoolList resource definition
 
 You MUST define a InfraMachinePool resource if you provider supports MachinePools.
@@ -330,7 +339,7 @@ Once `status.initialization.provisioned` is set, the MachinePool "core" controll
 
 <h1>Compatibility with the deprecated v1beta1 contract</h1>
 
-In order to ease the transition for providers, the v1beta2 version of the Cluster API contract _temporarily_ preserves compatibility with the deprecated v1beta1 contract; compatibility will be removed tentatively in August 2026.
+In order to ease the transition for providers, the v1beta2 version of the Cluster API contract _temporarily_ preserves compatibility with the deprecated v1beta1 contract; compatibility will be removed tentatively in April 2027.
 
 With regard to initialization completed:
 
@@ -375,7 +384,7 @@ See [Improving status in CAPI resources] for more context.
 <h1>Compatibility with the deprecated v1beta1 contract</h1>
 
 In order to ease the transition for providers, the v1beta2 version of the Cluster API contract _temporarily_
-preserves compatibility with the deprecated v1beta1 contract; compatibility will be removed tentatively in August 2026.
+preserves compatibility with the deprecated v1beta1 contract; compatibility will be removed tentatively in April 2027.
 
 With regards to conditions:
 
@@ -415,7 +424,7 @@ See [Improving status in CAPI resources] for more context.
 
 <h1>Compatibility with the deprecated v1beta1 contract</h1>
 
-In order to ease the transition for providers, the v1beta2 version of the Cluster API contract _temporarily_ preserves compatibility with the deprecated v1beta1 contract; compatibility will be removed tentatively in August 2026.
+In order to ease the transition for providers, the v1beta2 version of the Cluster API contract _temporarily_ preserves compatibility with the deprecated v1beta1 contract; compatibility will be removed tentatively in April 2027.
 
 With regards to terminal failures:
 

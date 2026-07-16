@@ -41,10 +41,10 @@ import (
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/desiredstate"
 	"sigs.k8s.io/cluster-api/feature"
-	capicontrollerutil "sigs.k8s.io/cluster-api/internal/util/controller"
 	"sigs.k8s.io/cluster-api/internal/util/ssa"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
@@ -97,13 +97,9 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 		managementCluster: &fakeManagementCluster{
 			Management: &internal.Management{Client: env},
 			Workload: &fakeWorkloadCluster{
-				Status: internal.ClusterStatus{Nodes: 1},
-			},
-		},
-		managementClusterUncached: &fakeManagementCluster{
-			Management: &internal.Management{Client: env},
-			Workload: &fakeWorkloadCluster{
-				Status: internal.ClusterStatus{Nodes: 1},
+				Workload: &internal.Workload{
+					Client: env,
+				},
 			},
 		},
 		ssaCache: ssa.NewCache("test-controller"),
@@ -116,7 +112,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	controlPlane.InjectTestManagementCluster(r.managementCluster)
 
 	result, err := r.initializeControlPlane(ctx, controlPlane)
-	g.Expect(result).To(BeComparableTo(ctrl.Result{Requeue: true}))
+	g.Expect(result.RequeueAfter).To(Equal(time.Duration(0)))
 	g.Expect(err).ToNot(HaveOccurred())
 
 	// initial setup
@@ -142,7 +138,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 		machinesUpToDateResults[m.Name] = internal.UpToDateResult{EligibleForInPlaceUpdate: false}
 	}
 	result, err = r.updateControlPlane(ctx, controlPlane, needingUpgrade, machinesUpToDateResults)
-	g.Expect(result).To(BeComparableTo(ctrl.Result{Requeue: true}))
+	g.Expect(result.IsZero()).To(BeTrue())
 	g.Expect(err).ToNot(HaveOccurred())
 	bothMachines := &clusterv1.MachineList{}
 	g.Eventually(func(g Gomega) {
@@ -173,7 +169,6 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	}, timeout).Should(Succeed())
 
 	// manually increase number of nodes, make control plane healthy again
-	r.managementCluster.(*fakeManagementCluster).Workload.Status.Nodes++
 	for i := range bothMachines.Items {
 		setMachineHealthy(&bothMachines.Items[i])
 	}
@@ -193,7 +188,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleUp(t *testing.T) {
 	// run upgrade the second time, expect we scale down
 	result, err = r.updateControlPlane(ctx, controlPlane, machinesRequireUpgrade, machinesUpToDateResults)
 	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(result).To(BeComparableTo(ctrl.Result{Requeue: true}))
+	g.Expect(result.IsZero()).To(BeTrue())
 	finalMachine := &clusterv1.MachineList{}
 	g.Eventually(func(g Gomega) {
 		g.Expect(env.List(ctx, finalMachine, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -216,9 +211,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 
 	fmc := &fakeManagementCluster{
 		Machines: collections.Machines{},
-		Workload: &fakeWorkloadCluster{
-			Status: internal.ClusterStatus{Nodes: 3},
-		},
+		Workload: &fakeWorkloadCluster{},
 	}
 	objs := []client.Object{builder.GenericInfrastructureMachineTemplateCRD, cluster.DeepCopy(), kcp.DeepCopy(), tmpl.DeepCopy()}
 	for i := range 3 {
@@ -251,11 +244,11 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 	}
 	fakeClient := newFakeClient(objs...)
 	fmc.Reader = fakeClient
+	fmc.Workload.Workload = &internal.Workload{Client: fakeClient}
 	r := &KubeadmControlPlaneReconciler{
-		Client:                    fakeClient,
-		SecretCachingClient:       fakeClient,
-		managementCluster:         fmc,
-		managementClusterUncached: fmc,
+		Client:              fakeClient,
+		SecretCachingClient: fakeClient,
+		managementCluster:   fmc,
 	}
 
 	controlPlane := &internal.ControlPlane{
@@ -287,7 +280,7 @@ func TestKubeadmControlPlaneReconciler_RolloutStrategy_ScaleDown(t *testing.T) {
 		machinesUpToDateResults[m.Name] = internal.UpToDateResult{EligibleForInPlaceUpdate: false}
 	}
 	result, err = r.updateControlPlane(ctx, controlPlane, needingUpgrade, machinesUpToDateResults)
-	g.Expect(result).To(BeComparableTo(ctrl.Result{Requeue: true}))
+	g.Expect(result.IsZero()).To(BeTrue())
 	g.Expect(err).ToNot(HaveOccurred())
 	remainingMachines := &clusterv1.MachineList{}
 	g.Expect(fakeClient.List(ctx, remainingMachines, client.InNamespace(cluster.Namespace))).To(Succeed())

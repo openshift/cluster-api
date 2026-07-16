@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest/fake"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -135,8 +136,6 @@ func TestConnect(t *testing.T) {
 	defer cacheSyncCtxCancel()
 	g.Expect(accessor.lockedState.connection.cache.WaitForCacheSync(cacheSyncCtx)).To(BeTrue())
 
-	g.Expect(accessor.lockedState.clientCertificatePrivateKey).ToNot(BeNil())
-
 	g.Expect(accessor.lockedState.healthChecking.lastProbeTime.IsZero()).To(BeFalse())
 	g.Expect(accessor.lockedState.healthChecking.lastProbeSuccessTime.IsZero()).To(BeFalse())
 	g.Expect(accessor.lockedState.healthChecking.consecutiveFailures).To(Equal(0))
@@ -222,9 +221,6 @@ func TestDisconnect(t *testing.T) {
 	// Disconnect again (no-op)
 	accessor.Disconnect(ctx)
 	g.Expect(accessor.Connected(ctx)).To(BeFalse())
-
-	// Verify health checking state was preserved
-	g.Expect(accessor.lockedState.clientCertificatePrivateKey).ToNot(BeNil())
 
 	g.Expect(accessor.lockedState.healthChecking.lastProbeTime.IsZero()).To(BeFalse())
 	g.Expect(accessor.lockedState.healthChecking.lastProbeSuccessTime.IsZero()).To(BeFalse())
@@ -412,6 +408,66 @@ func TestWatch(t *testing.T) {
 	// Disconnect
 	accessor.Disconnect(ctx)
 	g.Expect(accessor.Connected(ctx)).To(BeFalse())
+}
+
+func TestConnectWithDefaultTransform(t *testing.T) {
+	g := NewWithT(t)
+
+	testCluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster-transform",
+			Namespace: metav1.NamespaceDefault,
+		},
+		Spec: clusterv1.ClusterSpec{
+			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: builder.ControlPlaneGroupVersion.Group,
+				Kind:     builder.GenericControlPlaneKind,
+				Name:     "cp1",
+			},
+		},
+	}
+	clusterKey := client.ObjectKeyFromObject(testCluster)
+	g.Expect(env.CreateAndWait(ctx, testCluster)).To(Succeed())
+	defer func() { g.Expect(env.CleanupAndWait(ctx, testCluster)).To(Succeed()) }()
+
+	kubeconfigSecret := kubeconfig.GenerateSecret(testCluster, kubeconfig.FromEnvTestConfig(env.Config, testCluster))
+	g.Expect(env.CreateAndWait(ctx, kubeconfigSecret)).To(Succeed())
+	defer func() { g.Expect(env.CleanupAndWait(ctx, kubeconfigSecret)).To(Succeed()) }()
+
+	config := buildClusterAccessorConfig(env.GetScheme(), Options{
+		SecretClient: env.GetClient(),
+		Client: ClientOptions{
+			UserAgent: remote.DefaultClusterAPIUserAgent("test-controller-manager"),
+			Timeout:   10 * time.Second,
+		},
+		Cache: CacheOptions{
+			DefaultTransform: cache.TransformStripManagedFields(),
+		},
+	}, nil)
+	accessor := newClusterAccessor(context.Background(), clusterKey, config)
+	g.Expect(accessor.Connect(ctx)).To(Succeed())
+	defer accessor.Disconnect(ctx)
+
+	// Wait for the per-cluster cache to sync.
+	cacheSyncCtx, cacheSyncCtxCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cacheSyncCtxCancel()
+	g.Expect(accessor.lockedState.connection.cache.WaitForCacheSync(cacheSyncCtx)).To(BeTrue())
+
+	// Get the default Namespace via the uncached client: managedFields should be present
+	// because the uncached client fetches directly from the API server.
+	uncachedClient, err := accessor.GetUncachedClient(ctx)
+	g.Expect(err).ToNot(HaveOccurred())
+	nsUncached := &corev1.Namespace{}
+	g.Expect(uncachedClient.Get(ctx, client.ObjectKey{Name: metav1.NamespaceDefault}, nsUncached)).To(Succeed())
+	g.Expect(nsUncached.ManagedFields).ToNot(BeEmpty())
+
+	// Get the same Namespace via the cached client: managedFields should be empty
+	// because DefaultTransform: cache.TransformStripManagedFields() was set.
+	cachedClient, err := accessor.GetClient(ctx)
+	g.Expect(err).ToNot(HaveOccurred())
+	nsCached := &corev1.Namespace{}
+	g.Expect(cachedClient.Get(ctx, client.ObjectKey{Name: metav1.NamespaceDefault}, nsCached)).To(Succeed())
+	g.Expect(nsCached.ManagedFields).To(BeEmpty())
 }
 
 type testWatcher struct {

@@ -22,9 +22,11 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
@@ -454,6 +456,7 @@ func TestStatusToLogKeyAndValues(t *testing.T) {
 		Status: clusterv1.MachineStatus{
 			NodeRef: clusterv1.MachineNodeReference{Name: "healthy-node"},
 			Conditions: []metav1.Condition{
+				{Type: controlplanev1.KubeadmControlPlaneMachineNodeKubeadmLabelsAndTaintsSetCondition, Status: metav1.ConditionTrue},
 				{Type: controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition, Status: metav1.ConditionTrue},
 				{Type: controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition, Status: metav1.ConditionTrue},
 				{Type: controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition, Status: metav1.ConditionTrue},
@@ -468,6 +471,7 @@ func TestStatusToLogKeyAndValues(t *testing.T) {
 		Status: clusterv1.MachineStatus{
 			// NodeRef is not set
 			Conditions: []metav1.Condition{
+				{Type: controlplanev1.KubeadmControlPlaneMachineNodeKubeadmLabelsAndTaintsSetCondition, Status: metav1.ConditionUnknown},
 				{Type: controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition, Status: metav1.ConditionUnknown},
 				{Type: controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition, Status: metav1.ConditionUnknown},
 				{Type: controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition, Status: metav1.ConditionUnknown},
@@ -510,11 +514,181 @@ func TestStatusToLogKeyAndValues(t *testing.T) {
 		"just-deleted (just deleted)",
 		"marked-for-remediation (marked for remediation)",
 		"not-up-to-date (not up-to-date)",
-		"without-node (status.nodeRef not set, APIServerPod health unknown, ControllerManagerPod health unknown, SchedulerPod health unknown, EtcdPod health unknown, EtcdMember not healthy)",
+		"without-node (status.nodeRef not set, kubeadm labels and taints unknown, APIServerPod health unknown, ControllerManagerPod health unknown, SchedulerPod health unknown, EtcdPod health unknown, EtcdMember not healthy)",
 	}, ", ")
 	g.Expect(got[1]).To(Equal(machines), cmp.Diff(got[1], machines))
 	g.Expect(got[2]).To(Equal("etcdMembers"))
 	g.Expect(got[3]).To(Equal("m1, m2, m3"))
+}
+
+func TestDefaultTaintIsMissing(t *testing.T) {
+	tests := []struct {
+		name          string
+		machine       *clusterv1.Machine
+		kubeadmConfig *bootstrapv1.KubeadmConfig
+		node          *Node
+		want          bool
+	}{
+		{
+			name: "taint exists",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{},
+			node: &Node{
+				Spec: NodeSpec{
+					Taints: []corev1.Taint{
+						{
+							Key:    labelNodeRoleControlPlane,
+							Effect: corev1.TaintEffectNoSchedule,
+						},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "taint is missing if defined at machine level, but not present on the node",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+				Spec: clusterv1.MachineSpec{
+					Taints: []clusterv1.MachineTaint{
+						{
+							Key:    labelNodeRoleControlPlane,
+							Effect: corev1.TaintEffectNoSchedule,
+						},
+					},
+				},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{},
+			node:          &Node{},
+			want:          true,
+		},
+		{
+			name: "taint is missing if kubeadm default taints must be applied on init (taint not set), but not present on the node",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					// if join configuration is not defined, init configuration is used.
+				},
+			},
+			node: &Node{},
+			want: true,
+		},
+		{
+			name: "taint is missing if kubeadm default taints must be applied on join (taint not set), but not present on the node",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+					},
+				},
+			},
+			node: &Node{},
+			want: true,
+		},
+		{
+			name: "taint is missing if kubeadm init taints includes the default taint, but not present on the node",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Taints: &[]corev1.Taint{
+								{
+									Key:    labelNodeRoleControlPlane,
+									Effect: corev1.TaintEffectNoSchedule,
+								},
+							},
+						},
+					},
+				},
+			},
+			node: &Node{},
+			want: true,
+		},
+		{
+			name: "taint is missing if kubeadm join taints includes the default taint, but not present on the node",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Taints: &[]corev1.Taint{
+								{
+									Key:    labelNodeRoleControlPlane,
+									Effect: corev1.TaintEffectNoSchedule,
+								},
+							},
+						},
+					},
+				},
+			},
+			node: &Node{},
+			want: true,
+		},
+		{
+			name: "taint is not missing if kubeadm init taints does not include the default taint",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					InitConfiguration: bootstrapv1.InitConfiguration{
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Taints: &[]corev1.Taint{},
+						},
+					},
+				},
+			},
+			node: &Node{},
+			want: false,
+		},
+		{
+			name: "taint is not missing if kubeadm join taints does not include the default taint",
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "m1"},
+			},
+			kubeadmConfig: &bootstrapv1.KubeadmConfig{
+				Spec: bootstrapv1.KubeadmConfigSpec{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
+						ControlPlane: &bootstrapv1.JoinControlPlane{},
+						NodeRegistration: bootstrapv1.NodeRegistrationOptions{
+							Taints: &[]corev1.Taint{},
+						},
+					},
+				},
+			},
+			node: &Node{},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			c := ControlPlane{
+				Machines: collections.FromMachines(tt.machine),
+				KubeadmConfigs: map[string]*bootstrapv1.KubeadmConfig{
+					tt.machine.Name: tt.kubeadmConfig,
+				},
+			}
+
+			got := c.DefaultTaintIsMissing(tt.machine, tt.node)
+			g.Expect(got).To(Equal(tt.want))
+		})
+	}
 }
 
 type machineOpt func(*clusterv1.Machine)
