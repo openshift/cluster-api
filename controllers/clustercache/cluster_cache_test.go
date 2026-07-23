@@ -34,10 +34,12 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest/fake"
+	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -57,6 +59,9 @@ func TestReconcile(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: metav1.NamespaceDefault,
+			Labels: map[string]string{
+				"cluster.x-k8s.io/included-in-clustercache-tests": "true",
+			},
 		},
 		Spec: clusterv1.ClusterSpec{
 			ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
@@ -87,6 +92,9 @@ func TestReconcile(t *testing.T) {
 		clusterAccessorConfig: accessorConfig,
 		clusterAccessors:      make(map[client.ObjectKey]*clusterAccessor),
 		cacheCtx:              context.Background(),
+		clusterFilter: func(cluster *clusterv1.Cluster) bool {
+			return (cluster.ObjectMeta.Labels["cluster.x-k8s.io/included-in-clustercache-tests"] == "true")
+		},
 	}
 
 	// Add a Cluster source and start it (queue will be later used to verify the source works correctly)
@@ -109,6 +117,31 @@ func TestReconcile(t *testing.T) {
 	patch := client.MergeFrom(testCluster.DeepCopy())
 	testCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	g.Expect(env.Status().Patch(ctx, testCluster, patch)).To(Succeed())
+
+	// Exclude from clustercache by changing the label
+	patch = client.MergeFrom(testCluster.DeepCopy())
+	testCluster.ObjectMeta.Labels = map[string]string{
+		"cluster.x-k8s.io/included-in-clustercache-tests": "false",
+	}
+	g.Expect(env.Patch(ctx, testCluster, patch)).To(Succeed())
+	// Sanity check that the clusterFIlter does not include the cluster now
+	g.Expect(cc.clusterFilter(testCluster)).To((BeFalse()))
+
+	// Reconcile, cluster should be ignored now
+	// => no requeue, no cluster accessor created
+	res, err = cc.Reconcile(ctx, reconcile.Request{NamespacedName: clusterKey})
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(res).To(Equal(ctrl.Result{}))
+	g.Expect(res.IsZero()).To(BeTrue())
+
+	// Put the label back
+	patch = client.MergeFrom(testCluster.DeepCopy())
+	testCluster.ObjectMeta.Labels = map[string]string{
+		"cluster.x-k8s.io/included-in-clustercache-tests": "true",
+	}
+	g.Expect(env.Patch(ctx, testCluster, patch)).To(Succeed())
+	// Sanity check that the clusterFIlter does include the cluster now
+	g.Expect(cc.clusterFilter(testCluster)).To((BeTrue()))
 
 	// Reconcile, kubeconfig Secret doesn't exist
 	// => accessor.Connect will fail so we expect a retry with ConnectionCreationRetryInterval.
@@ -304,6 +337,40 @@ func TestMinDurationOrDefault(t *testing.T) {
 
 			gotDuration := minDurationOrDefault(tt.durations, tt.defaultDuration)
 			g.Expect(gotDuration).To(Equal(tt.wantDuration))
+		})
+	}
+}
+
+func TestBuildClusterAccessorConfigDefaultTransform(t *testing.T) {
+	transform := cache.TransformStripManagedFields()
+	tests := []struct {
+		name      string
+		transform toolscache.TransformFunc
+		wantNil   bool
+	}{
+		{
+			name:      "nil transform is preserved as nil",
+			transform: nil,
+			wantNil:   true,
+		},
+		{
+			name:      "non-nil transform is propagated",
+			transform: transform,
+			wantNil:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			got := buildClusterAccessorConfig(scheme.Scheme, Options{
+				Cache: CacheOptions{DefaultTransform: tt.transform},
+			}, nil)
+			if tt.wantNil {
+				g.Expect(got.Cache.DefaultTransform).To(BeNil())
+			} else {
+				g.Expect(got.Cache.DefaultTransform).ToNot(BeNil())
+			}
 		})
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,6 +39,7 @@ import (
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	"sigs.k8s.io/cluster-api/internal/hooks"
 	"sigs.k8s.io/cluster-api/internal/util/inplace"
+	"sigs.k8s.io/cluster-api/internal/util/taints"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/failuredomains"
@@ -52,6 +54,15 @@ type ControlPlane struct {
 	Cluster              *clusterv1.Cluster
 	Machines             collections.Machines
 	machinesPatchHelpers map[string]*patch.Helper
+
+	// Nodes is the list of nodes corresponding to control plane machines.
+	// Please note that:
+	// - The list is set while computing control plane conditions
+	// - The list includes existing nodes referenced from control plane machines, no matter
+	//   if they have the control plane label or not.
+	// - Once the list is set, it is used as input to methods accessing etcd via port-forward.
+	Nodes         []*Node
+	NodeListError error
 
 	// MachinesNotUpToDate is the source of truth for Machines that are not up-to-date.
 	// It should be used to check if a Machine is up-to-date (not machinesUpToDateResults).
@@ -80,6 +91,7 @@ type ControlPlane struct {
 	// NOTE: Those info are specifically designed for computing KCP's Available condition.
 	EtcdMembers                       []*etcd.Member
 	EtcdMembersAndMachinesAreMatching bool
+	EtcdMembersAlarms                 []etcd.MemberAlarm
 
 	managementCluster ManagementCluster
 	workloadCluster   WorkloadCluster
@@ -95,6 +107,8 @@ type ControlPlane struct {
 type PreflightCheckResults struct {
 	// HasDeletingMachine reports true if preflight check detected a deleting machine.
 	HasDeletingMachine bool
+	// CertificateMissing reports true if preflight check detected a certificate missing.
+	CertificateMissing bool
 	// ControlPlaneComponentsNotHealthy reports true if preflight check detected that the control plane components are not fully healthy.
 	ControlPlaneComponentsNotHealthy bool
 	// EtcdClusterNotHealthy reports true if preflight check detected that the etcd cluster is not fully healthy.
@@ -358,6 +372,7 @@ func (c *ControlPlane) PatchMachines(ctx context.Context) error {
 				controlplanev1.MachineEtcdMemberHealthyV1Beta1Condition,
 			}}, patch.WithOwnedConditions{Conditions: []string{
 				clusterv1.MachineUpToDateCondition,
+				controlplanev1.KubeadmControlPlaneMachineNodeKubeadmLabelsAndTaintsSetCondition,
 				controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 				controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 				controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
@@ -420,6 +435,7 @@ func (c *ControlPlane) InjectTestManagementCluster(managementCluster ManagementC
 // - etcdMembers list as reported by etcd.
 func (c *ControlPlane) StatusToLogKeyAndValues(newMachine, deletedMachine *clusterv1.Machine) []any {
 	controlPlaneMachineHealthConditions := []string{
+		controlplanev1.KubeadmControlPlaneMachineNodeKubeadmLabelsAndTaintsSetCondition,
 		controlplanev1.KubeadmControlPlaneMachineAPIServerPodHealthyCondition,
 		controlplanev1.KubeadmControlPlaneMachineControllerManagerPodHealthyCondition,
 		controlplanev1.KubeadmControlPlaneMachineSchedulerPodHealthyCondition,
@@ -445,10 +461,10 @@ func (c *ControlPlane) StatusToLogKeyAndValues(newMachine, deletedMachine *clust
 
 		for _, condition := range controlPlaneMachineHealthConditions {
 			if conditions.IsUnknown(m, condition) {
-				notes = append(notes, strings.ReplaceAll(condition, "Healthy", " health unknown"))
+				notes = append(notes, strings.ReplaceAll(strings.ReplaceAll(condition, "Healthy", " health unknown"), "NodeKubeadmLabelsAndTaintsSet", "kubeadm labels and taints unknown"))
 			}
 			if conditions.IsFalse(m, condition) {
-				notes = append(notes, strings.ReplaceAll(condition, "Healthy", " not healthy"))
+				notes = append(notes, strings.ReplaceAll(strings.ReplaceAll(condition, "Healthy", " not healthy"), "NodeKubeadmLabelsAndTaintsSet", "kubeadm labels and taints not set"))
 			}
 		}
 
@@ -493,4 +509,50 @@ func (c *ControlPlane) GetKeyEncryptionAlgorithm() bootstrapv1.EncryptionAlgorit
 		return bootstrapv1.EncryptionAlgorithmRSA2048
 	}
 	return c.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.EncryptionAlgorithm
+}
+
+// DefaultTaintIsMissing reports true if the default control plane taint is missing.
+func (c *ControlPlane) DefaultTaintIsMissing(machine *clusterv1.Machine, node *Node) bool {
+	shouldHaveTaint := func() bool {
+		// If the default taint is in the list of taints at machine level, the node should have the default kubeadm taint.
+		// Note: If the taint is defined with propagation OnInitialization only, KCP cannot determine if the user intent
+		// is to leave the taint there indefinitely or to remove it at some point.
+		// However, this func assumes that once the default taint is added it should remain because this is what makes most sense in KCP.
+		for _, t := range machine.Spec.Taints {
+			if t.Key == labelNodeRoleControlPlane && t.Effect == corev1.TaintEffectNoSchedule {
+				return true
+			}
+		}
+
+		// Otherwise look at machine's KubeadmConfigs.
+		// Note: kubeadm adds the default taint on node creation; KCP cannot determine if the user intent is to leave
+		// the taint there indefinitely or to remove it at some point.
+		// However, this func assumes that once the default taint is added it should remain because this is what makes most sense in KCP.
+		if kubeadmConfig, ok := c.KubeadmConfigs[machine.Name]; ok {
+			var kubeadmTaints *[]corev1.Taint
+			if isKubeadmConfigForJoin(kubeadmConfig) {
+				kubeadmTaints = kubeadmConfig.Spec.JoinConfiguration.NodeRegistration.Taints
+			} else {
+				kubeadmTaints = kubeadmConfig.Spec.InitConfiguration.NodeRegistration.Taints
+			}
+
+			// If node registration taints are nil, the node should have the default kubeadm taint (kubeadm adds it by default when nothing else is specified).
+			if kubeadmTaints == nil {
+				return true
+			}
+
+			// If the default taint is in the list of taints at node registration level, the node should have the default kubeadm taint.
+			for _, t := range *kubeadmTaints {
+				if t.Key == labelNodeRoleControlPlane && t.Effect == corev1.TaintEffectNoSchedule {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if shouldHaveTaint() && !taints.HasTaint(node.Spec.Taints, corev1.Taint{Key: labelNodeRoleControlPlane, Effect: corev1.TaintEffectNoSchedule}) {
+		return true
+	}
+	return false
 }

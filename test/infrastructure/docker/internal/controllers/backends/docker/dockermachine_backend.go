@@ -118,6 +118,7 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 		// ensure ready state is set.
 		// This is required after move, because status is not moved to the target cluster.
 		dockerMachine.Status.Initialization.Provisioned = ptr.To(true)
+		dockerMachine.Status.FailureDomain = machine.Spec.FailureDomain
 
 		if externalMachine.Exists() {
 			v1beta1conditions.MarkTrue(dockerMachine, infrav1.ContainerProvisionedV1Beta1Condition)
@@ -276,19 +277,20 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 			// (either because canceled intentionally due to machine deletion or canceled by the defer cancel()
 			// call when exiting from this func).
 			go func() {
+				ticker := time.NewTicker(5 * time.Second)
 				for {
 					select {
 					case <-timeoutCtx.Done():
 						return
-					default:
-						updatedDockerMachine := &infrav1.DockerMachine{}
-						if err := r.Get(ctx, client.ObjectKeyFromObject(dockerMachine), updatedDockerMachine); err == nil &&
-							!updatedDockerMachine.DeletionTimestamp.IsZero() {
-							log.Info("Cancelling Bootstrap because the underlying machine has been deleted")
-							cancel()
-							return
-						}
-						time.Sleep(5 * time.Second)
+					case <-ticker.C:
+					}
+
+					updatedDockerMachine := &infrav1.DockerMachine{}
+					if err := r.Get(ctx, client.ObjectKeyFromObject(dockerMachine), updatedDockerMachine); err == nil &&
+						!updatedDockerMachine.DeletionTimestamp.IsZero() {
+						log.Info("Cancelling Bootstrap because the underlying machine has been deleted")
+						cancel()
+						return
 					}
 				}
 			}()
@@ -386,6 +388,7 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 	// Set ProviderID so the Cluster API Machine Controller can pull it
 	dockerMachine.Spec.ProviderID = externalMachine.ProviderID()
 	dockerMachine.Status.Initialization.Provisioned = ptr.To(true)
+	dockerMachine.Status.FailureDomain = machine.Spec.FailureDomain
 
 	return ctrl.Result{}, nil
 }
