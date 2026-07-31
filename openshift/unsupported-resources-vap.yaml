@@ -1,0 +1,48 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: openshift-cluster-api-deny-unsupported-resources
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - cluster.x-k8s.io
+      apiVersions:
+      - '*'
+      operations:
+      - CREATE
+      - UPDATE
+      - DELETE
+      resources:
+      - machinedeployments
+      - machinedrainrules
+      - machinehealthchecks
+    - apiGroups:
+      - addons.cluster.x-k8s.io
+      apiVersions:
+      - '*'
+      operations:
+      - CREATE
+      - UPDATE
+      - DELETE
+      resources:
+      - clusterresourcesets
+      - clusterresourcesetbindings
+  validations:
+  - expression: "false"
+    message: This resource type is not supported in OpenShift and cannot be created,
+      updated, or deleted.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: openshift-cluster-api-deny-unsupported-resources
+spec:
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: openshift-cluster-api
+  policyName: openshift-cluster-api-deny-unsupported-resources
+  validationActions:
+  - Deny

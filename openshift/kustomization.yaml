@@ -8,6 +8,7 @@ resources:
 - ../config/default
 - exclude-resources-config.yaml
 - rename-resources-config.yaml
+- unsupported-resources-vap.yaml
 
 # Transformers run in order.
 transformers:
