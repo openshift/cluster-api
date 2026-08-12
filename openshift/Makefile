@@ -45,4 +45,5 @@ ocp-manifests: ipam-manifests $(MANIFESTS_GEN) | $(RELEASE_DIR) ## Builds opensh
 		-install-order=10 \
 		-attribute version="${PROVIDER_VERSION}" \
 		-self-image-ref registry.ci.openshift.org/openshift:cluster-capi-controllers \
-		-protect-cluster-resource cluster
+		-protect-cluster-resource cluster \
+		-manifests-summary
