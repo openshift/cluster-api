@@ -1,6 +1,6 @@
 TOOLS_DIR := tools
 REPO_OWNER ?= openshift
-REPO_NAME ?= cluster-api-provider-aws
+REPO_NAME ?= cluster-api
 PULL_BASE_SHA ?= main
 
 include provider-version.mk
