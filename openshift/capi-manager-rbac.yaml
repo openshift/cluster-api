@@ -1,0 +1,69 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: "ClusterAPIMachineManagement"
+    capability.openshift.io/name: ClusterAPI
+  # Aggregate this role into CAPI's existing manager role. The existing
+  # capi-manager-rolebinding then grants these permissions to capi-manager.
+  labels:
+    cluster.x-k8s.io/aggregate-to-manager: "true"
+  name: openshift-capi-manager-local-cluster
+rules:
+# CAPI normally uses a workload-cluster identity for Node access. On
+# OpenShift, ClusterCache detects the local cluster and switches to the
+# capi-manager in-cluster identity, so it needs narrowly scoped Node access.
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  annotations:
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: "ClusterAPIMachineManagement"
+    capability.openshift.io/name: ClusterAPI
+  name: openshift-capi-kubeconfig-consumers
+  namespace: openshift-cluster-api
+# CAPI ClusterCache uses the management kubeconfig to identify the local
+# controller Pod before switching to in-cluster configuration. Keep this
+# permission separate because projected tokens authenticate as each
+# consumer's own ServiceAccount.
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  annotations:
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: "ClusterAPIMachineManagement"
+    capability.openshift.io/name: ClusterAPI
+  name: openshift-capi-kubeconfig-consumers
+  namespace: openshift-cluster-api
+roleRef:
+  kind: Role
+  name: openshift-capi-kubeconfig-consumers
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  namespace: openshift-cluster-api
+  name: capi-manager
