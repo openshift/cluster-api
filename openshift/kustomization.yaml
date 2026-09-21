@@ -6,6 +6,7 @@ components:
 
 resources:
 - ../config/default
+- capi-manager-rbac.yaml
 - exclude-resources-config.yaml
 - rename-resources-config.yaml
 - unsupported-resources-vap.yaml
