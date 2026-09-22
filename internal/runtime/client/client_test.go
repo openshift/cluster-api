@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,9 +45,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimecatalog "sigs.k8s.io/cluster-api/api/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
-	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimeclient "sigs.k8s.io/cluster-api/exp/runtime/client"
 	runtimeregistry "sigs.k8s.io/cluster-api/internal/runtime/registry"
 	fakev1alpha1 "sigs.k8s.io/cluster-api/internal/runtime/test/v1alpha1"
@@ -58,11 +59,12 @@ func TestClient_httpCall(t *testing.T) {
 	g := NewWithT(t)
 
 	tableTests := []struct {
-		name     string
-		request  runtime.Object
-		response runtime.Object
-		opts     *httpCallOptions
-		wantErr  bool
+		name            string
+		request         runtime.Object
+		response        runtime.Object
+		responseHandler func(w http.ResponseWriter, _ *http.Request)
+		opts            *httpCallOptions
+		wantErr         bool
 	}{
 		{
 			name:     "error if request, response and options are nil",
@@ -190,6 +192,31 @@ func TestClient_httpCall(t *testing.T) {
 			}(),
 			wantErr: false,
 		},
+		{
+			name:     "error if response is too large",
+			request:  &fakev1alpha1.FakeRequest{},
+			response: &fakev1alpha1.FakeResponse{},
+			responseHandler: func(w http.ResponseWriter, _ *http.Request) {
+				respBody := "{}" + strings.Repeat(" ", maxExtensionResponseBodyBytes+1)
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(respBody))
+			},
+			opts: func() *httpCallOptions {
+				c := runtimecatalog.New()
+				g.Expect(fakev1alpha1.AddToCatalog(c)).To(Succeed())
+
+				// get same gvh for hook by using the FakeHook and catalog
+				gvh, err := c.GroupVersionHook(fakev1alpha1.FakeHook)
+				g.Expect(err).To(Succeed())
+
+				return &httpCallOptions{
+					catalog:         c,
+					registrationGVH: gvh,
+					hookGVH:         gvh,
+				}
+			}(),
+			wantErr: true,
+		},
 	}
 	for _, tt := range tableTests {
 		t.Run(tt.name, func(*testing.T) {
@@ -197,7 +224,11 @@ func TestClient_httpCall(t *testing.T) {
 			if tt.opts != nil && tt.opts.catalog != nil {
 				// create http server with fakeHookHandler
 				mux := http.NewServeMux()
-				mux.HandleFunc("/", fakeHookHandler)
+				if tt.responseHandler != nil {
+					mux.HandleFunc("/", tt.responseHandler)
+				} else {
+					mux.HandleFunc("/", fakeHookHandler)
+				}
 
 				srv := newUnstartedTLSServer(mux)
 				srv.StartTLS()
@@ -799,7 +830,7 @@ func TestClient_CallExtension(t *testing.T) {
 				WithObjects(ns).
 				Build()
 
-			c, _, err := New(Options{
+			c, _, err := New(t.Context(), Options{
 				Catalog:  cat,
 				Registry: registry(tt.registeredExtensionConfigs),
 				Client:   fakeClient,
@@ -822,7 +853,7 @@ func TestClient_CallExtension(t *testing.T) {
 
 			// Call again with caching.
 			serverCallCount = 0
-			cache := cache.New[runtimeclient.CallExtensionCacheEntry](cache.DefaultTTL)
+			cache := cache.New[runtimeclient.CallExtensionCacheEntry](t.Context(), cache.DefaultTTL)
 			err = c.CallExtension(context.Background(), tt.args.hook, obj, tt.args.name, tt.args.request, tt.args.response,
 				runtimeclient.WithCaching{Cache: cache, CacheKeyFunc: cacheKeyFunc})
 			if tt.wantErr {
@@ -929,7 +960,7 @@ func TestClient_CallExtensionWithClientAuthentication(t *testing.T) {
 		WithObjects(ns).
 		Build()
 
-	c, certWatcher, err := New(Options{
+	c, certWatcher, err := New(t.Context(), Options{
 		// Add client authentication credentials to the client
 		CertFile: clientCertFile,
 		KeyFile:  clientKeyFile,
@@ -1066,7 +1097,7 @@ func TestClient_GetHttpClient(t *testing.T) {
 		},
 	}
 
-	c, _, err := New(Options{})
+	c, _, err := New(t.Context(), Options{})
 	g.Expect(err).ToNot(HaveOccurred())
 
 	internalClient := c.(*client)
@@ -1109,6 +1140,19 @@ func TestClient_GetHttpClient(t *testing.T) {
 	g.Expect(ok).To(BeTrue())
 	_, ok = internalClient.httpClientsCache.Has(newHTTPClientEntryKey("serverB.example.com", extension2.Spec.ClientConfig.CABundle))
 	g.Expect(ok).To(BeTrue())
+}
+
+func TestCreateHTTPClient_doesNotFollowRedirects(t *testing.T) {
+	g := NewWithT(t)
+
+	httpClient, err := createHTTPClient("", "", testcerts.CACert, "extension.example.com")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(httpClient.CheckRedirect).ToNot(BeNil())
+
+	// A redirect returned by an extension server must not be followed, otherwise
+	// the response could reroute the call to an arbitrary host. ErrUseLastResponse
+	// makes the client stop at the redirect rather than following it.
+	g.Expect(httpClient.CheckRedirect(&http.Request{}, nil)).To(MatchError(http.ErrUseLastResponse))
 }
 
 func cacheKeyFunc(extensionName, extensionConfigResourceVersion string, request runtimehooksv1.RequestObject) string {
@@ -1331,7 +1375,7 @@ func TestClient_GetAllExtensions(t *testing.T) {
 				WithScheme(scheme).
 				WithObjects(ns, nsDifferent).
 				Build()
-			c, _, err := New(Options{
+			c, _, err := New(t.Context(), Options{
 				Catalog:  cat,
 				Registry: registry(tt.registeredExtensionConfigs),
 				Client:   fakeClient,
@@ -1531,7 +1575,7 @@ func TestClient_CallAllExtensions(t *testing.T) {
 				WithScheme(scheme).
 				WithObjects(ns).
 				Build()
-			c, _, err := New(Options{
+			c, _, err := New(t.Context(), Options{
 				Catalog:  cat,
 				Registry: registry(tt.registeredExtensionConfigs),
 				Client:   fakeClient,
