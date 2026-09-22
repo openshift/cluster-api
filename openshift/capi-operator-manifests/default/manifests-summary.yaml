@@ -3,6 +3,9 @@
   name: capi-aggregated-manager-role
 - apiVersion: rbac.authorization.k8s.io/v1
   kind: ClusterRole
+  name: openshift-capi-manager-local-cluster
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
   name: openshift-capi-manager-role
 - apiVersion: rbac.authorization.k8s.io/v1
   kind: ClusterRoleBinding
@@ -49,8 +52,16 @@
   name: capi-leader-election-role
   namespace: openshift-cluster-api
 - apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  name: openshift-capi-kubeconfig-consumers
+  namespace: openshift-cluster-api
+- apiVersion: rbac.authorization.k8s.io/v1
   kind: RoleBinding
   name: capi-leader-election-rolebinding
+  namespace: openshift-cluster-api
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  name: openshift-capi-kubeconfig-consumers
   namespace: openshift-cluster-api
 - apiVersion: v1
   kind: Service
