@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
@@ -51,20 +51,22 @@ import (
 // DevMachineReconciler reconciles a DevMachine object.
 type DevMachineReconciler struct {
 	client.Client
+	controller capicontrollerutil.Controller
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
 
-	ContainerRuntime container.Runtime
-	ClusterCache     clustercache.ClusterCache
-	InMemoryManager  inmemoryruntime.Manager
-	APIServerMux     *inmemoryserver.WorkloadClustersMux
+	ContainerRuntime         container.Runtime
+	ClusterCache             clustercache.ClusterCache
+	InMemoryManager          inmemoryruntime.Manager
+	APIServerMux             *inmemoryserver.WorkloadClustersMux
+	DockerMachineTaskManager *dockerbackend.TaskManager
 }
 
 // SetupWithManager will add watches for this controller.
 func (r *DevMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	if r.Client == nil || r.InMemoryManager == nil || r.APIServerMux == nil || r.ContainerRuntime == nil || r.ClusterCache == nil {
-		return errors.New("Client, InMemoryManager and APIServerMux, ContainerRuntime and ClusterCache must not be nil")
+		return pkgerrors.New("Client, InMemoryManager and APIServerMux, ContainerRuntime and ClusterCache must not be nil")
 	}
 
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "devmachine")
@@ -73,7 +75,8 @@ func (r *DevMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 		return err
 	}
 
-	err = capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
+	r.DockerMachineTaskManager = dockerbackend.NewTaskManager()
+	c, err := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 		For(&infrav1.DevMachine{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
@@ -91,17 +94,20 @@ func (r *DevMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 			predicates.ClusterPausedTransitionsOrInfrastructureProvisioned(mgr.GetScheme(), predicateLog),
 		).
 		WatchesRawSource(r.ClusterCache.GetClusterSource("devmachine", clusterToDevMachines)).
-		Complete(r)
+		WatchesRawSource(r.DockerMachineTaskManager.GetSource()).
+		Build(ctx, r)
 	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
+		return pkgerrors.Wrap(err, "failed setting up with a controller manager")
 	}
+
+	r.controller = c
 	return nil
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devmachines,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devmachines/status;devmachines/finalizers,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machinesets;machines,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets;,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets;,verbs=get;list;watch;patch;
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // Reconcile handles DevMachine events.
@@ -114,11 +120,6 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		return ctrl.Result{}, err
-	}
-
-	// Add finalizer first if not set to avoid the race condition between init and delete.
-	if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.Client, devMachine, infrav1.MachineFinalizer); err != nil || finalizerAdded {
 		return ctrl.Result{}, err
 	}
 
@@ -135,12 +136,15 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	if machine == nil {
+		// Note: If ownerRef was not set, there is nothing to delete. Remove finalizer so deletion can succeed.
+		// Note: This should not be necessary anymore as we nowadays only set the finalizer after the ownerRef
+		// is set, but keeping this as a safeguard.
 		if !devMachine.DeletionTimestamp.IsZero() {
 			if controllerutil.ContainsFinalizer(devMachine, infrav1.MachineFinalizer) {
 				devMachineWithoutFinalizer := devMachine.DeepCopy()
 				controllerutil.RemoveFinalizer(devMachineWithoutFinalizer, infrav1.MachineFinalizer)
 				if err := r.Client.Patch(ctx, devMachineWithoutFinalizer, client.MergeFrom(devMachine)); err != nil {
-					return ctrl.Result{}, errors.Wrapf(err, "failed to patch DevMachine %s", klog.KObj(devMachine))
+					return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to patch DevMachine %s", klog.KObj(devMachine))
 				}
 			}
 			return ctrl.Result{}, nil
@@ -166,6 +170,13 @@ func (r *DevMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	log = log.WithValues("Cluster", klog.KObj(cluster))
 	ctx = ctrl.LoggerInto(ctx, log)
+
+	// Add finalizer first if not set to avoid the race condition between init and delete.
+	// Note: Only add finalizer after the Machine has an ownerRef to avoid unnecessary retries
+	// because of conflicts in core CAPI ssa.RemoveManagedFieldsForLabelsAndAnnotations.
+	if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.Client, devMachine, infrav1.MachineFinalizer); err != nil || finalizerAdded {
+		return ctrl.Result{}, err
+	}
 
 	// Initialize the patch helper
 	patchHelper, err := patch.NewHelper(devMachine, r)
@@ -220,9 +231,11 @@ func (r *DevMachineReconciler) backendReconcilerFactory(_ context.Context, devMa
 		}
 	}
 	return &dockerbackend.MachineBackendReconciler{
-		Client:           r.Client,
-		ContainerRuntime: r.ContainerRuntime,
-		ClusterCache:     r.ClusterCache,
+		Client:                      r.Client,
+		ContainerRuntime:            r.ContainerRuntime,
+		ClusterCache:                r.ClusterCache,
+		TaskManager:                 r.DockerMachineTaskManager,
+		DeferNextReconcileForObject: r.controller.DeferNextReconcileForObject,
 	}
 }
 
