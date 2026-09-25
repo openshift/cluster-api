@@ -1,7 +1,4 @@
 TOOLS_DIR := tools
-REPO_OWNER ?= openshift
-REPO_NAME ?= cluster-api
-PULL_BASE_SHA ?= main
 
 include provider-version.mk
 
@@ -15,19 +12,12 @@ $(TOOLS_DIR)/bin/%:
 	$(MAKE) -C $(TOOLS_DIR) bin/$*
 
 .PHONY: verify
-verify: verify-ocp-manifests  verify-gh-summary
+verify: verify-ocp-manifests
 
 .PHONY: verify-%
 verify-%: ## Ensure no diff after running some other target
 	$(MAKE) $*
 	./verify-diff.sh
-
-.PHONY: gh-summary
-gh-summary: gh-summary-default
-
-.PHONY: gh-summary-%
-gh-summary-%:
-	curl --connect-timeout 10 --max-time 120 --retry 3 -fsSL "https://raw.githubusercontent.com/$(REPO_OWNER)/$(REPO_NAME)/$(PULL_BASE_SHA)/openshift/capi-operator-manifests/$*/manifests-summary.yaml" -o "capi-operator-manifests/$*/manifests-summary.yaml"
 
 .PHONY: update-manifests-gen
 update-manifests-gen:
