@@ -1,6 +1,6 @@
 attributes:
   type: core
-  version: release-1.14
+  version: v1.14.2-30-e987eabc86957d
 installOrder: 10
 name: cluster-api
 selfImageRef: registry.ci.openshift.org/openshift:cluster-capi-controllers
