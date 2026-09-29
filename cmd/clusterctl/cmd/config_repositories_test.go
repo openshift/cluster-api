@@ -135,6 +135,7 @@ ibmcloud                   InfrastructureProvider     https://github.com/kuberne
 ionoscloud-ionoscloud      InfrastructureProvider     https://github.com/ionos-cloud/cluster-api-provider-ionoscloud/releases/latest/                   infrastructure-components.yaml
 k0sproject-k0smotron       InfrastructureProvider     https://github.com/k0sproject/k0smotron/releases/latest/                                          infrastructure-components.yaml
 kubekey                    InfrastructureProvider     https://github.com/kubesphere/kubekey/releases/latest/                                            infrastructure-components.yaml
+kubeswift-io               InfrastructureProvider     https://github.com/kubeswift-io/cluster-api-provider-kubeswift/releases/latest/                   infrastructure-components.yaml
 kubevirt                   InfrastructureProvider     https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/releases/latest/                 infrastructure-components.yaml
 linode-linode              InfrastructureProvider     https://github.com/linode/cluster-api-provider-linode/releases/latest/                            infrastructure-components.yaml
 maas                       InfrastructureProvider     https://github.com/spectrocloud/cluster-api-provider-maas/releases/latest/                        infrastructure-components.yaml
@@ -147,6 +148,7 @@ oci                        InfrastructureProvider     https://github.com/oracle/
 opennebula                 InfrastructureProvider     https://github.com/OpenNebula/cluster-api-provider-opennebula/releases/latest/                    infrastructure-components.yaml
 openstack                  InfrastructureProvider     https://github.com/kubernetes-sigs/cluster-api-provider-openstack/releases/latest/                infrastructure-components.yaml
 outscale                   InfrastructureProvider     https://github.com/outscale/cluster-api-provider-outscale/releases/latest/                        infrastructure-components.yaml
+oxide                      InfrastructureProvider     https://github.com/oxidecomputer/cluster-api-provider-oxide/releases/latest/                      infrastructure-components.yaml
 proxmox                    InfrastructureProvider     https://github.com/ionos-cloud/cluster-api-provider-proxmox/releases/latest/                      infrastructure-components.yaml
 scaleway                   InfrastructureProvider     https://github.com/scaleway/cluster-api-provider-scaleway/releases/latest/                        infrastructure-components.yaml
 sidero                     InfrastructureProvider     https://github.com/siderolabs/sidero/releases/latest/                                             infrastructure-components.yaml
@@ -310,6 +312,10 @@ var expectedOutputYaml = `- File: core_components.yaml
   ProviderType: InfrastructureProvider
   URL: https://github.com/kubesphere/kubekey/releases/latest/
 - File: infrastructure-components.yaml
+  Name: kubeswift-io
+  ProviderType: InfrastructureProvider
+  URL: https://github.com/kubeswift-io/cluster-api-provider-kubeswift/releases/latest/
+- File: infrastructure-components.yaml
   Name: kubevirt
   ProviderType: InfrastructureProvider
   URL: https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/releases/latest/
@@ -357,6 +363,10 @@ var expectedOutputYaml = `- File: core_components.yaml
   Name: outscale
   ProviderType: InfrastructureProvider
   URL: https://github.com/outscale/cluster-api-provider-outscale/releases/latest/
+- File: infrastructure-components.yaml
+  Name: oxide
+  ProviderType: InfrastructureProvider
+  URL: https://github.com/oxidecomputer/cluster-api-provider-oxide/releases/latest/
 - File: infrastructure-components.yaml
   Name: proxmox
   ProviderType: InfrastructureProvider

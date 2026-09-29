@@ -19,9 +19,8 @@ package controllers
 
 import (
 	"context"
-	"sync"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
@@ -58,15 +57,12 @@ type DevClusterReconciler struct {
 	ContainerRuntime container.Runtime
 	InMemoryManager  inmemoryruntime.Manager
 	APIServerMux     *inmemoryserver.WorkloadClustersMux
-
-	hotRestartDone bool
-	hotRestartLock sync.RWMutex
 }
 
 // SetupWithManager will add watches for this controller.
 func (r *DevClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	if r.Client == nil || r.InMemoryManager == nil || r.APIServerMux == nil || r.ContainerRuntime == nil {
-		return errors.New("Client, InMemoryManager and APIServerMux, ContainerRuntime must not be nil")
+		return pkgerrors.New("Client, InMemoryManager and APIServerMux, ContainerRuntime must not be nil")
 	}
 
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "devcluster")
@@ -78,9 +74,9 @@ func (r *DevClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1.GroupVersion.WithKind("DevCluster"), mgr.GetClient(), &infrav1.DevCluster{})),
 			predicates.ClusterPausedTransitions(mgr.GetScheme(), predicateLog),
-		).Complete(r)
+		).Complete(ctx, r)
 	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
+		return pkgerrors.Wrap(err, "failed setting up with a controller manager")
 	}
 	return nil
 }
@@ -88,6 +84,7 @@ func (r *DevClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=devclusters/status;devclusters/finalizers,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines,verbs=get;list;watch;update;patch
 
 func (r *DevClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, rerr error) {
 	log := ctrl.LoggerFrom(ctx)
@@ -120,7 +117,7 @@ func (r *DevClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				devClusterWithoutFinalizer := devCluster.DeepCopy()
 				controllerutil.RemoveFinalizer(devClusterWithoutFinalizer, infrav1.ClusterFinalizer)
 				if err := r.Client.Patch(ctx, devClusterWithoutFinalizer, client.MergeFrom(devCluster)); err != nil {
-					return ctrl.Result{}, errors.Wrapf(err, "failed to patch DevCluster %s", klog.KObj(devCluster))
+					return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to patch DevCluster %s", klog.KObj(devCluster))
 				}
 			}
 			return ctrl.Result{}, nil
@@ -150,13 +147,6 @@ func (r *DevClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	backendReconciler := r.backendReconcilerFactory(ctx, devCluster)
 
-	// If the selected backend has to perform specific tasks when restarting, do it!
-	if restarter, ok := backendReconciler.(backends.DevClusterBackendHotRestarter); ok {
-		if err := r.reconcileHotRestart(ctx, restarter); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
 	// Always attempt to Patch the DevCluster object and status after each reconciliation.
 	defer func() {
 		if err := backendReconciler.PatchDevCluster(ctx, patchHelper, devCluster); err != nil {
@@ -185,30 +175,4 @@ func (r *DevClusterReconciler) backendReconcilerFactory(_ context.Context, devCl
 		Client:           r.Client,
 		ContainerRuntime: r.ContainerRuntime,
 	}
-}
-
-func (r *DevClusterReconciler) reconcileHotRestart(ctx context.Context, restarter backends.DevClusterBackendHotRestarter) error {
-	r.hotRestartLock.RLock()
-	if r.hotRestartDone {
-		// Return if the hot restart was already done.
-		r.hotRestartLock.RUnlock()
-		return nil
-	}
-	r.hotRestartLock.RUnlock()
-
-	r.hotRestartLock.Lock()
-	defer r.hotRestartLock.Unlock()
-
-	// Check again if another go routine did the hot restart before we got the write lock.
-	if r.hotRestartDone {
-		return nil
-	}
-
-	if err := restarter.HotRestart(ctx); err != nil {
-		return err
-	}
-
-	r.hotRestartDone = true
-
-	return nil
 }

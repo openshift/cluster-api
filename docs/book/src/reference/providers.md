@@ -40,6 +40,7 @@ source of inspiration and ideas for others.
 
 ## Infrastructure
 - [Akamai (Linode)](https://linode.github.io/cluster-api-provider-linode/)
+- [Alibaba Cloud (unofficial)](https://github.com/SammZhu/openshift-capi-alicloud)
 - [AWS](https://cluster-api-aws.sigs.k8s.io/)
 - [Azure](https://github.com/kubernetes-sigs/cluster-api-provider-azure)
 - [Azure Stack HCI](https://github.com/microsoft/cluster-api-provider-azurestackhci)
@@ -56,6 +57,7 @@ source of inspiration and ideas for others.
 - [IONOS Cloud](https://github.com/ionos-cloud/cluster-api-provider-ionoscloud)
 - [KubeKey](https://github.com/kubesphere/kubekey)
 - [k0smotron RemoteMachine (SSH)](https://github.com/k0sproject/k0smotron)
+- [KubeSwift](https://github.com/kubeswift-io/cluster-api-provider-kubeswift)
 - [KubeVirt](https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt)
 - [MAAS](https://github.com/spectrocloud/cluster-api-provider-maas)
 - [Metal3](https://github.com/metal3-io/cluster-api-provider-metal3)
@@ -67,6 +69,7 @@ source of inspiration and ideas for others.
 - [OpenNebula](https://github.com/OpenNebula/cluster-api-provider-opennebula)
 - [OpenStack](https://github.com/kubernetes-sigs/cluster-api-provider-openstack)
 - [Outscale](https://github.com/outscale/cluster-api-provider-outscale)
+- [Oxide](https://github.com/oxidecomputer/cluster-api-provider-oxide)
 - [Proxmox](https://github.com/ionos-cloud/cluster-api-provider-proxmox)
 - [Scaleway](https://github.com/scaleway/cluster-api-provider-scaleway)
 - [Sidero](https://github.com/siderolabs/sidero)
