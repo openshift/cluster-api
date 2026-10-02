@@ -6,11 +6,9 @@ kind: Kustomization
 # when CAPI reaches GA: they will be installed via the CAPI Operator manifests
 # along with all other CAPI CRDs.
 #
-# In 4.21 we bumped CAPI to a version which includes v1beta2, and therefore
-# requires a conversion webhook. This would break production vsphere clusters
-# using IPAM, because we are not yet deploying this webhook in production
-# clusters. As MAPV does not require the v1beta2 IPAM CRDs, we pin them at the
-# versions shipped in 4.20 for now.
+# Start serving the new v1beta2 while keeping v1beta1 as storage for rollback compatibility.
+# This is now possible as the CAPI conversion webhook is now available in clusters
+# also at bootstrap time via Konnectivity (see: CORS-4334).
 
 commonAnnotations:
   # Boilerplate annotations
@@ -22,15 +20,41 @@ commonAnnotations:
   # feature gate is NOT enabled.
   release.openshift.io/feature-gate: -ClusterAPIMachineManagement
 
-resources:
-# Pinned at 4.20, as that was the last release which didn't have v1beta2
-- https://github.com/openshift/cluster-api/config/crd?ref=de1db2970e7fede7101e5a8188e74942ab6665e3
+  # Inject the CA for the conversion webhook.
+  service.beta.openshift.io/inject-cabundle: "true"
 
-# Together these 2 patches remove all CRDs except those with the name suffix
-# '.ipam.cluster.x-k8s.io'
+resources:
+- ../../config/crd
+
 patches:
 
-# First add the local-config annotation to all CRDs.
+# Match the storage version used by the CAPI Operator manifests.
+# Version order is v1alpha1 (0), v1beta1 (1), v1beta2 (2).
+- target:
+    kind: CustomResourceDefinition
+    name: '.*\.ipam\.cluster\.x-k8s\.io$'
+  patch: |
+    - op: replace
+      path: /spec/versions/1/storage
+      value: true
+    - op: replace
+      path: /spec/versions/2/storage
+      value: false
+
+# Use the same conversion webhook service as the CAPI Operator manifests.
+- target:
+    kind: CustomResourceDefinition
+    name: '.*\.ipam\.cluster\.x-k8s\.io$'
+  patch: |
+    - op: replace
+      path: /spec/conversion/webhook/clientConfig/service/name
+      value: capi-webhook-service
+    - op: replace
+      path: /spec/conversion/webhook/clientConfig/service/namespace
+      value: openshift-cluster-api
+
+# Together these 2 patches remove all CRDs except those with the name suffix
+# '.ipam.cluster.x-k8s.io'. First add the local-config annotation to all CRDs.
 # kustomize will not emit resources with this annotation
 - target:
     kind: CustomResourceDefinition
