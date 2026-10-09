@@ -86,8 +86,9 @@ The domain for Cluster API resources is `cluster.x-k8s.io`, and infrastructure p
 generally use `infrastructure.cluster.x-k8s.io` as API group.
 
 If your provider uses a different API group, you MUST grant full read/write RBAC permissions for resources in your API group
-to the Cluster API core controllers. The canonical way to do so is via a `ClusterRole` resource with the [aggregation label]
-`cluster.x-k8s.io/aggregate-to-manager: "true"`.
+to the Cluster API core controllers. If any resource sets another resource as the owner with `blockOwnerDeletion` set,
+additional RBAC to update finalizers on the **owner resource** is required.
+The canonical way to do so is via a `ClusterRole` resource with the [aggregation label] `cluster.x-k8s.io/aggregate-to-manager: "true"`.
 
 The following is an example ClusterRole for a `FooMachine` resource in the `infrastructure.foo.com` API group:
 
@@ -492,12 +493,12 @@ However, in case you immutability checks for your InfraMachineTemplate, this can
 
 In order to avoid this InfraMachineTemplate MUST specifically implement support for SSA dry run calls from the topology controller. 
 
-The implementation requires to use controller runtime's `CustomValidator`, available in CR versions >= v0.12.3.
+The implementation requires to use controller runtime's `Validator`.
 
 This will allow to skip the immutability check only when the topology controller is dry running while preserving the
 validation behavior for all other cases.
 
-See [the DockerMachineTemplate webhook] as a reference for a compatible implementation.
+See [the DevMachineTemplate webhook] as a reference for a compatible implementation.
 
 ### Multi tenancy
 
@@ -671,8 +672,8 @@ is implemented in InfraMachine controllers:
 [implementation best practices]: ../best-practices.md
 [infrastructure Provider Security Guidance]: ../security-guidelines.md
 [Server Side Apply]: https://kubernetes.io/docs/reference/using-api/server-side-apply/
-[the DockerMachineTemplate webhook]: https://github.com/kubernetes-sigs/cluster-api/blob/main/test/infrastructure/docker/internal/webhooks/dockermachinetemplate.go
-[Cluster API v1.11 migration notes]: ../migrations/v1.10-to-v1.11.md
+[the DevMachineTemplate webhook]: https://github.com/kubernetes-sigs/cluster-api/blob/main/test/infrastructure/docker/webhooks/admission/devmachinetemplate.go
+[Cluster API v1.11 migration notes]: https://release-1-11.cluster-api.sigs.k8s.io/developer/providers/migrations/v1.10-to-v1.11
 [Opt-in Autoscaling from Zero]: https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20210310-opt-in-autoscaling-from-zero.md
 [InfraMachine: pausing]: #inframachine-pausing
 [InfraMachineTemplate: support cluster autoscaling from zero]: #inframachinetemplate-support-cluster-autoscaling-from-zero
