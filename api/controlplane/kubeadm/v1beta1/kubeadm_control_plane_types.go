@@ -25,7 +25,7 @@ import (
 
 	bootstrapv1beta1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta1"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
-	"sigs.k8s.io/cluster-api/errors"
+	"sigs.k8s.io/cluster-api/api/deprecated/errors"
 )
 
 // RolloutStrategyType defines the rollout strategies for a KubeadmControlPlane.
@@ -387,6 +387,14 @@ type KubeadmControlPlaneStatus struct {
 	// lastRemediation stores info about last remediation performed.
 	// +optional
 	LastRemediation *LastRemediationStatus `json:"lastRemediation,omitempty"`
+
+	// versions is the aggregated Kubernetes versions in this KubeadmControlPlane.
+	// +optional
+	// +listType=map
+	// +listMapKey=version
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=100
+	Versions []clusterv1beta1.StatusVersion `json:"versions,omitempty"`
 
 	// v1beta2 groups all the fields that will be added or modified in KubeadmControlPlane's status with the V1Beta2 version.
 	// +optional
