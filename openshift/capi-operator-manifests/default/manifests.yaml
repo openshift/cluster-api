@@ -2,7 +2,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -1122,7 +1122,7 @@ spec:
                                     deletePolicy:
                                       description: |-
                                         deletePolicy defines the policy used by the MachineDeployment to identify nodes to delete when downscaling.
-                                        Valid values are "Random", "Newest", "Oldest"
+                                        Valid values are "Random, "Newest", "Oldest"
                                         When no value is supplied, the default DeletePolicy of MachineSet is used
                                       enum:
                                       - Random
@@ -1732,56 +1732,6 @@ spec:
                           up-to-date when Machine's UpToDate condition is true.
                         format: int32
                         type: integer
-                      upgradePlan:
-                        description: |-
-                          upgradePlan reports the list of versions that would be applied to the control plane object according to the upgrade plan.
-                          Note:
-                          - This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.
-                          - Once a version is applied to the control plane object, it is removed from the list (after a version
-                            is applied to a control plane object, it might take some time for the actual upgrade to complete)
-                          - During a chained upgrade, the upgrade plan is continuously re-computed, and this field will
-                            report only the last known upgrade plan.
-                        items:
-                          description: StatusUpgradePlanVersion groups upgrade plan
-                            version-related status information.
-                          properties:
-                            version:
-                              description: version is the Kubernetes version.
-                              maxLength: 256
-                              minLength: 1
-                              type: string
-                          required:
-                          - version
-                          type: object
-                        maxItems: 32
-                        minItems: 1
-                        type: array
-                        x-kubernetes-list-type: atomic
-                      versions:
-                        description: versions is the aggregated Kubernetes versions
-                          in this control plane.
-                        items:
-                          description: StatusVersion groups version-related status
-                            information.
-                          properties:
-                            replicas:
-                              description: replicas is the number of replicas at this
-                                version.
-                              format: int32
-                              minimum: 1
-                              type: integer
-                            version:
-                              description: version is the Kubernetes version.
-                              maxLength: 256
-                              minLength: 1
-                              type: string
-                          required:
-                          - version
-                          type: object
-                        maxItems: 32
-                        minItems: 1
-                        type: array
-                        x-kubernetes-list-type: atomic
                     type: object
                   workers:
                     description: workers groups all the observations about Cluster's
@@ -1816,56 +1766,6 @@ spec:
                           up-to-date when Machine's UpToDate condition is true.
                         format: int32
                         type: integer
-                      upgradePlan:
-                        description: |-
-                          upgradePlan reports the list of versions that would be applied to the worker objects (all MachineDeployments and MachinePools).
-                          Note:
-                          - This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.
-                          - Once a version is applied to the worker objects, it is removed from the list (after a version
-                            is applied to a worker object, it might take some time for the actual upgrade to complete)
-                          - During a chained upgrade, the upgrade plan is continuously re-computed, and this field will
-                            report only the last known upgrade plan.
-                        items:
-                          description: StatusUpgradePlanVersion groups upgrade plan
-                            version-related status information.
-                          properties:
-                            version:
-                              description: version is the Kubernetes version.
-                              maxLength: 256
-                              minLength: 1
-                              type: string
-                          required:
-                          - version
-                          type: object
-                        maxItems: 32
-                        minItems: 1
-                        type: array
-                        x-kubernetes-list-type: atomic
-                      versions:
-                        description: versions is the aggregated Kubernetes versions
-                          in cluster workers.
-                        items:
-                          description: StatusVersion groups version-related status
-                            information.
-                          properties:
-                            replicas:
-                              description: replicas is the number of replicas at this
-                                version.
-                              format: int32
-                              minimum: 1
-                              type: integer
-                            version:
-                              description: version is the Kubernetes version.
-                              maxLength: 256
-                              minLength: 1
-                              type: string
-                          required:
-                          - version
-                          type: object
-                        maxItems: 32
-                        minItems: 1
-                        type: array
-                        x-kubernetes-list-type: atomic
                     type: object
                 type: object
             type: object
@@ -2735,7 +2635,7 @@ spec:
                                 order:
                                   description: |-
                                     order defines the order in which Machines are deleted when downscaling.
-                                    Defaults to "Random". Valid values are "Random", "Newest", "Oldest"
+                                    Defaults to "Random".  Valid values are "Random, "Newest", "Oldest"
                                   enum:
                                   - Random
                                   - Newest
@@ -3608,55 +3508,6 @@ spec:
                       when Machine's UpToDate condition is true.
                     format: int32
                     type: integer
-                  upgradePlan:
-                    description: |-
-                      upgradePlan reports the list of versions that would be applied to the control plane object according to the upgrade plan.
-                      Note:
-                      - This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.
-                      - Once a version is applied to the control plane object, it is removed from the list (after a version
-                        is applied to a control plane object, it might take some time for the actual upgrade to complete)
-                      - During a chained upgrade, the upgrade plan is continuously re-computed, and this field will
-                        report only the last known upgrade plan.
-                    items:
-                      description: StatusUpgradePlanVersion groups upgrade plan version-related
-                        status information.
-                      properties:
-                        version:
-                          description: version is the Kubernetes version.
-                          maxLength: 256
-                          minLength: 1
-                          type: string
-                      required:
-                      - version
-                      type: object
-                    maxItems: 32
-                    minItems: 1
-                    type: array
-                    x-kubernetes-list-type: atomic
-                  versions:
-                    description: versions is the aggregated Kubernetes versions in
-                      this control plane.
-                    items:
-                      description: StatusVersion groups version-related status information.
-                      properties:
-                        replicas:
-                          description: replicas is the number of replicas at this
-                            version.
-                          format: int32
-                          minimum: 1
-                          type: integer
-                        version:
-                          description: version is the Kubernetes version.
-                          maxLength: 256
-                          minLength: 1
-                          type: string
-                      required:
-                      - version
-                      type: object
-                    maxItems: 32
-                    minItems: 1
-                    type: array
-                    x-kubernetes-list-type: atomic
                 type: object
               deprecated:
                 description: deprecated groups all the status fields that are deprecated
@@ -3846,55 +3697,6 @@ spec:
                       when Machine's UpToDate condition is true.
                     format: int32
                     type: integer
-                  upgradePlan:
-                    description: |-
-                      upgradePlan reports the list of versions that would be applied to the worker objects (all MachineDeployments and MachinePools).
-                      Note:
-                      - This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.
-                      - Once a version is applied to the worker objects, it is removed from the list (after a version
-                        is applied to a worker object, it might take some time for the actual upgrade to complete)
-                      - During a chained upgrade, the upgrade plan is continuously re-computed, and this field will
-                        report only the last known upgrade plan.
-                    items:
-                      description: StatusUpgradePlanVersion groups upgrade plan version-related
-                        status information.
-                      properties:
-                        version:
-                          description: version is the Kubernetes version.
-                          maxLength: 256
-                          minLength: 1
-                          type: string
-                      required:
-                      - version
-                      type: object
-                    maxItems: 32
-                    minItems: 1
-                    type: array
-                    x-kubernetes-list-type: atomic
-                  versions:
-                    description: versions is the aggregated Kubernetes versions in
-                      cluster workers.
-                    items:
-                      description: StatusVersion groups version-related status information.
-                      properties:
-                        replicas:
-                          description: replicas is the number of replicas at this
-                            version.
-                          format: int32
-                          minimum: 1
-                          type: integer
-                        version:
-                          description: version is the Kubernetes version.
-                          maxLength: 256
-                          minLength: 1
-                          type: string
-                      required:
-                      - version
-                      type: object
-                    maxItems: 32
-                    minItems: 1
-                    type: array
-                    x-kubernetes-list-type: atomic
                 type: object
             type: object
         required:
@@ -3909,7 +3711,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -4372,20 +4174,6 @@ spec:
                       Detaching volumes from nodes is usually done by CSI implementations and the current state
                       is observed from the node's `.Status.VolumesAttached` field.
                       Only present when the Machine has a deletionTimestamp and waiting for volume detachments had been started.
-                    format: date-time
-                    type: string
-                  waitForPreDrainHookStartTime:
-                    description: |-
-                      waitForPreDrainHookStartTime is the time when waiting for pre-drain hooks started
-                      and is used to determine if the pre-drain hooks are taking too long.
-                      Only present when the Machine has a deletionTimestamp and waiting for pre-drain hooks had been started.
-                    format: date-time
-                    type: string
-                  waitForPreTerminateHookStartTime:
-                    description: |-
-                      waitForPreTerminateHookStartTime is the time when waiting for pre-terminate hooks started
-                      and is used to determine if the pre-terminate hooks are taking too long.
-                      Only present when the Machine has a deletionTimestamp and waiting for pre-terminate hooks had been started.
                     format: date-time
                     type: string
                 type: object
@@ -5134,20 +4922,6 @@ spec:
                       Only present when the Machine has a deletionTimestamp and waiting for volume detachments had been started.
                     format: date-time
                     type: string
-                  waitForPreDrainHookStartTime:
-                    description: |-
-                      waitForPreDrainHookStartTime is the time when waiting for pre-drain hooks started
-                      and is used to determine if the pre-drain hooks are taking too long.
-                      Only present when the Machine has a deletionTimestamp and waiting for pre-drain hooks had been started.
-                    format: date-time
-                    type: string
-                  waitForPreTerminateHookStartTime:
-                    description: |-
-                      waitForPreTerminateHookStartTime is the time when waiting for pre-terminate hooks started
-                      and is used to determine if the pre-terminate hooks are taking too long.
-                      Only present when the Machine has a deletionTimestamp and waiting for pre-terminate hooks had been started.
-                    format: date-time
-                    type: string
                 type: object
               deprecated:
                 description: deprecated groups all the status fields that are deprecated
@@ -5403,7 +5177,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -5496,7 +5270,7 @@ spec:
               deletePolicy:
                 description: |-
                   deletePolicy defines the policy used to identify nodes to delete when downscaling.
-                  Defaults to "Random". Valid values are "Random", "Newest", "Oldest"
+                  Defaults to "Random".  Valid values are "Random, "Newest", "Oldest"
                 enum:
                 - Random
                 - Newest
@@ -6133,31 +5907,6 @@ spec:
                     format: int32
                     type: integer
                 type: object
-              versions:
-                description: versions is the aggregated Kubernetes versions in this
-                  MachineSet.
-                items:
-                  description: StatusVersion groups version-related status information.
-                  properties:
-                    replicas:
-                      description: replicas is the number of replicas at this version.
-                      format: int32
-                      minimum: 1
-                      type: integer
-                    version:
-                      description: version is the Kubernetes version.
-                      maxLength: 256
-                      minLength: 1
-                      type: string
-                  required:
-                  - version
-                  type: object
-                maxItems: 100
-                minItems: 1
-                type: array
-                x-kubernetes-list-map-keys:
-                - version
-                x-kubernetes-list-type: map
             type: object
         type: object
     served: true
@@ -6245,7 +5994,7 @@ spec:
                   order:
                     description: |-
                       order defines the order in which Machines are deleted when downscaling.
-                      Defaults to "Random". Valid values are "Random", "Newest", "Oldest"
+                      Defaults to "Random".  Valid values are "Random, "Newest", "Oldest"
                     enum:
                     - Random
                     - Newest
@@ -6898,31 +6647,6 @@ spec:
                   UpToDate condition is true.
                 format: int32
                 type: integer
-              versions:
-                description: versions is the aggregated Kubernetes versions in this
-                  MachineSet.
-                items:
-                  description: StatusVersion groups version-related status information.
-                  properties:
-                    replicas:
-                      description: replicas is the number of replicas at this version.
-                      format: int32
-                      minimum: 1
-                      type: integer
-                    version:
-                      description: version is the Kubernetes version.
-                      maxLength: 256
-                      minLength: 1
-                      type: string
-                  required:
-                  - version
-                  type: object
-                maxItems: 100
-                minItems: 1
-                type: array
-                x-kubernetes-list-map-keys:
-                - version
-                x-kubernetes-list-type: map
             type: object
         required:
         - spec
@@ -6940,7 +6664,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -7214,7 +6938,7 @@ spec:
                       deletePolicy:
                         description: |-
                           deletePolicy defines the policy used by the MachineDeployment to identify nodes to delete when downscaling.
-                          Valid values are "Random", "Newest", "Oldest"
+                          Valid values are "Random, "Newest", "Oldest"
                           When no value is supplied, the default DeletePolicy of MachineSet is used
                         enum:
                         - Random
@@ -7778,31 +7502,6 @@ spec:
                     format: int32
                     type: integer
                 type: object
-              versions:
-                description: versions is the aggregated Kubernetes versions in this
-                  MachineDeployment.
-                items:
-                  description: StatusVersion groups version-related status information.
-                  properties:
-                    replicas:
-                      description: replicas is the number of replicas at this version.
-                      format: int32
-                      minimum: 1
-                      type: integer
-                    version:
-                      description: version is the Kubernetes version.
-                      maxLength: 256
-                      minLength: 1
-                      type: string
-                  required:
-                  - version
-                  type: object
-                maxItems: 100
-                minItems: 1
-                type: array
-                x-kubernetes-list-map-keys:
-                - version
-                x-kubernetes-list-type: map
             type: object
         type: object
     served: true
@@ -7898,7 +7597,7 @@ spec:
                   order:
                     description: |-
                       order defines the order in which Machines are deleted when downscaling.
-                      Defaults to "Random". Valid values are "Random", "Newest", "Oldest"
+                      Defaults to "Random".  Valid values are "Random, "Newest", "Oldest"
                     enum:
                     - Random
                     - Newest
@@ -8641,31 +8340,6 @@ spec:
                   when Machine's UpToDate condition is true.
                 format: int32
                 type: integer
-              versions:
-                description: versions is the aggregated Kubernetes versions in this
-                  MachineDeployment.
-                items:
-                  description: StatusVersion groups version-related status information.
-                  properties:
-                    replicas:
-                      description: replicas is the number of replicas at this version.
-                      format: int32
-                      minimum: 1
-                      type: integer
-                    version:
-                      description: version is the Kubernetes version.
-                      maxLength: 256
-                      minLength: 1
-                      type: string
-                  required:
-                  - version
-                  type: object
-                maxItems: 100
-                minItems: 1
-                type: array
-                x-kubernetes-list-map-keys:
-                - version
-                x-kubernetes-list-type: map
             type: object
         required:
         - spec
@@ -8683,7 +8357,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -9471,7 +9145,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -10033,7 +9707,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -10283,7 +9957,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -11232,7 +10906,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     capi-operator.openshift.io/adopt-existing: always
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -11271,7 +10945,7 @@ spec:
       jsonPath: .spec.poolRef.kind
       name: Pool Kind
       type: string
-    - description: Time duration since creation of IPAddress
+    - description: Time duration since creation of IPAdress
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -11373,7 +11047,7 @@ spec:
       jsonPath: .spec.poolRef.kind
       name: Pool Kind
       type: string
-    - description: Time duration since creation of IPAddress
+    - description: Time duration since creation of IPAdress
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -11476,7 +11150,7 @@ spec:
       jsonPath: .spec.poolRef.kind
       name: Pool Kind
       type: string
-    - description: Time duration since creation of IPAddress
+    - description: Time duration since creation of IPAdress
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -11588,7 +11262,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     capi-operator.openshift.io/adopt-existing: always
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.20.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: cluster-api
@@ -11623,7 +11297,7 @@ spec:
       jsonPath: .spec.poolRef.kind
       name: Pool Kind
       type: string
-    - description: Time duration since creation of IPAddressClaim
+    - description: Time duration since creation of IPAdressClaim
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -11761,7 +11435,7 @@ spec:
       jsonPath: .spec.poolRef.kind
       name: Pool Kind
       type: string
-    - description: Time duration since creation of IPAddressClaim
+    - description: Time duration since creation of IPAdressClaim
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -11974,7 +11648,7 @@ spec:
       jsonPath: .spec.poolRef.kind
       name: Pool Kind
       type: string
-    - description: Time duration since creation of IPAddressClaim
+    - description: Time duration since creation of IPAdressClaim
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

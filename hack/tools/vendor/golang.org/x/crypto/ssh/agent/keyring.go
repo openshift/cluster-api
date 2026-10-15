@@ -104,7 +104,7 @@ func (r *keyring) Unlock(passphrase []byte) error {
 	if !r.locked {
 		return errors.New("agent: not locked")
 	}
-	if subtle.ConstantTimeCompare(passphrase, r.passphrase) != 1 {
+	if 1 != subtle.ConstantTimeCompare(passphrase, r.passphrase) {
 		return fmt.Errorf("agent: incorrect passphrase")
 	}
 

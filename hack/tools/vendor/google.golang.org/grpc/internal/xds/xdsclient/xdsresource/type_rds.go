@@ -166,12 +166,14 @@ type WeightedCluster struct {
 	HTTPFilterConfigOverride map[string]httpfilter.FilterConfig
 }
 
-// HeaderMatcher represents header matchers. Exact, prefix, suffix and contains
-// matches are represented as a StringMatch.
+// HeaderMatcher represents header matchers.
 type HeaderMatcher struct {
 	Name         string
 	InvertMatch  *bool
+	ExactMatch   *string
 	RegexMatch   *regexp.Regexp
+	PrefixMatch  *string
+	SuffixMatch  *string
 	RangeMatch   *Int64Range
 	PresentMatch *bool
 	StringMatch  *matcher.StringMatcher

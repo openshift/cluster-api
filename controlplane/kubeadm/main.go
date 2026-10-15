@@ -25,7 +25,7 @@ import (
 	goruntime "runtime"
 	"time"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.uber.org/zap/zapcore"
@@ -51,18 +51,17 @@ import (
 	controlplanev1beta1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	runtimecatalog "sigs.k8s.io/cluster-api/api/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/crdmigrator"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/pkg/etcd"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/reconcilers/kubeadmcontrolplane"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/setup"
-	controlplaneadmission "sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks/admission"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks/conversion"
-	"sigs.k8s.io/cluster-api/core/reconcilers/extensionconfig"
+	kubeadmcontrolplanecontrollers "sigs.k8s.io/cluster-api/controlplane/kubeadm/controllers"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/setup"
+	kcpwebhooks "sigs.k8s.io/cluster-api/controlplane/kubeadm/webhooks"
+	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	runtimeclient "sigs.k8s.io/cluster-api/exp/runtime/client"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
@@ -263,7 +262,7 @@ func main() {
 		// In the worst case the ClusterCache will take FailureThreshold x (Interval + Timeout) = 5x(10s+5s) = 75s to drop a
 		// connection. There might be some additional delays in health checking under high load. So we use 2m as a minimum
 		// to have some buffer.
-		setupLog.Error(pkgerrors.Errorf("--remote-conditions-grace-period must be at least 2m"), "Unable to start manager")
+		setupLog.Error(errors.Errorf("--remote-conditions-grace-period must be at least 2m"), "Unable to start manager")
 		os.Exit(1)
 	}
 
@@ -294,7 +293,7 @@ func main() {
 		HealthProbeBindAddress:     healthAddr,
 		PprofBindAddress:           profilerAddress,
 		Metrics:                    *metricsOptions,
-		Cache:                      setup.ManagerCacheOptions(scheme, controllerName, watchNamespace, syncPeriod),
+		Cache:                      setup.ManagerCacheOptions(watchNamespace, syncPeriod),
 		Client:                     setup.ManagerClientOptions(),
 		WebhookServer: webhook.NewServer(
 			webhook.Options{
@@ -357,7 +356,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		os.Exit(1)
 	}
 
-	crdMigratorSkipPhases := make([]crdmigrator.Phase, 0, len(skipCRDMigrationPhases))
+	crdMigratorSkipPhases := []crdmigrator.Phase{}
 	for _, p := range skipCRDMigrationPhases {
 		crdMigratorSkipPhases = append(crdMigratorSkipPhases, crdmigrator.Phase(p))
 	}
@@ -368,7 +367,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		// Note: The kubebuilder RBAC markers above has to be kept in sync
 		// with the CRDs that should be migrated by this provider.
 		Config: map[client.Object]crdmigrator.ByObjectConfig{
-			&controlplanev1.KubeadmControlPlane{}:         {UseCache: false, UseStatusForStorageVersionMigration: true},
+			&controlplanev1.KubeadmControlPlane{}:         {UseCache: true, UseStatusForStorageVersionMigration: true},
 			&controlplanev1.KubeadmControlPlaneTemplate{}: {UseCache: false},
 		},
 		// The CRDMigrator is run with only concurrency 1 to ensure we don't overwhelm the apiserver by patching a
@@ -393,7 +392,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	if feature.Gates.Enabled(feature.InPlaceUpdates) {
 		// This is the creation of the runtimeClient for the controllers, embedding a shared catalog and registry instance.
 		var certWatcher *certwatcher.CertWatcher
-		runtimeClient, certWatcher, err = internalruntimeclient.New(ctx, internalruntimeclient.Options{
+		runtimeClient, certWatcher, err = internalruntimeclient.New(internalruntimeclient.Options{
 			CertFile: runtimeExtensionCertFile,
 			KeyFile:  runtimeExtensionKeyFile,
 			Catalog:  catalog,
@@ -412,7 +411,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 			}
 		}
 
-		if err = (&extensionconfig.Reconciler{
+		if err = (&controllers.ExtensionConfigReconciler{
 			Client:           mgr.GetClient(),
 			APIReader:        mgr.GetAPIReader(),
 			RuntimeClient:    runtimeClient,
@@ -424,7 +423,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		}
 	}
 
-	if err := (&kubeadmcontrolplane.Reconciler{
+	if err := (&kubeadmcontrolplanecontrollers.KubeadmControlPlaneReconciler{
 		Client:                      mgr.GetClient(),
 		APIReader:                   mgr.GetAPIReader(),
 		SecretCachingClient:         secretCachingClient,
@@ -444,25 +443,26 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	}
 }
 
-func setupWebhooks(_ context.Context, mgr ctrl.Manager) {
+func setupWebhooks(ctx context.Context, mgr ctrl.Manager) {
 	// Setup the func to retrieve apiVersion for a GroupKind for conversion webhooks.
-	conversion.SetAPIVersionGetter(func(ctx context.Context, gk schema.GroupKind) (string, error) {
+	apiVersionGetter := func(gk schema.GroupKind) (string, error) {
 		return contract.GetAPIVersion(ctx, mgr.GetClient(), gk)
-	})
+	}
+	controlplanev1beta1.SetAPIVersionGetter(apiVersionGetter)
 
-	if err := (&controlplaneadmission.KubeadmControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&kcpwebhooks.KubeadmControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "KubeadmControlPlane")
 		os.Exit(1)
 	}
 
-	if err := (&controlplaneadmission.ScaleValidator{
+	if err := (&kcpwebhooks.ScaleValidator{
 		Client: mgr.GetClient(),
 	}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "KubeadmControlPlane scale")
 		os.Exit(1)
 	}
 
-	if err := (&controlplaneadmission.KubeadmControlPlaneTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&kcpwebhooks.KubeadmControlPlaneTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "KubeadmControlPlaneTemplate")
 		os.Exit(1)
 	}

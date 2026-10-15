@@ -19,7 +19,6 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -110,7 +109,7 @@ func Test_getManifestObjs(t *testing.T) {
 			name: "successfully gets the cert-manager components for a custom release",
 			fields: fields{
 				configClient: func() config.Client {
-					configClient, err := config.New(context.Background(), "", config.InjectReader(test.NewFakeReader().WithImageMeta(config.CertManagerImageComponent, "bar-repository.io", "", "").WithCertManager("", "v1.0.0", "", false)))
+					configClient, err := config.New(context.Background(), "", config.InjectReader(test.NewFakeReader().WithImageMeta(config.CertManagerImageComponent, "bar-repository.io", "", "").WithCertManager("", "v1.0.0", "")))
 					g.Expect(err).ToNot(HaveOccurred())
 					return configClient
 				}(),
@@ -185,12 +184,12 @@ func Test_GetTimeout(t *testing.T) {
 		},
 		{
 			name:   "a custom value of timeout is set",
-			config: newFakeConfig().WithCertManager("", "", "5m", false),
+			config: newFakeConfig().WithCertManager("", "", "5m"),
 			want:   5 * time.Minute,
 		},
 		{
 			name:   "invalid custom value of timeout is set",
-			config: newFakeConfig().WithCertManager("", "", "foo", false),
+			config: newFakeConfig().WithCertManager("", "", "foo"),
 			want:   10 * time.Minute,
 		},
 	}
@@ -208,15 +207,6 @@ func Test_GetTimeout(t *testing.T) {
 }
 
 func Test_shouldUpgrade(t *testing.T) {
-	g := NewWithT(t)
-	certManagerObjs, err := utilyaml.ToUnstructured(certManagerDeploymentYaml)
-	g.Expect(err).ToNot(HaveOccurred())
-	certManagerObjs = addCerManagerAnnotations(certManagerObjs, config.CertManagerDefaultVersion)
-
-	overriddenCertManagerObjs, err := utilyaml.ToUnstructured([]byte(strings.ReplaceAll(string(certManagerDeploymentYaml), "quay.io/jetstack/cert-manager:v1.1.0", "myorg.io/local-repo/cert-manager:v1.1.0")))
-	g.Expect(err).ToNot(HaveOccurred())
-	overriddenCertManagerObjs = addCerManagerAnnotations(overriddenCertManagerObjs, config.CertManagerDefaultVersion)
-
 	type args struct {
 		objs []unstructured.Unstructured
 	}
@@ -226,7 +216,6 @@ func Test_shouldUpgrade(t *testing.T) {
 		args               args
 		wantFromVersion    string
 		hasDiffInstallObjs bool
-		installObjs        []unstructured.Unstructured
 		want               bool
 		wantErr            bool
 	}{
@@ -386,17 +375,6 @@ func Test_shouldUpgrade(t *testing.T) {
 			wantErr:            false,
 		},
 		{
-			name:          "Version is equal, but should upgrade because images differ",
-			configVersion: config.CertManagerDefaultVersion,
-			args: args{
-				objs: certManagerObjs,
-			},
-			wantFromVersion: config.CertManagerDefaultVersion,
-			installObjs:     overriddenCertManagerObjs,
-			want:            true,
-			wantErr:         false,
-		},
-		{
 			name:          "Version is older, should upgrade",
 			configVersion: config.CertManagerDefaultVersion,
 			args: args{
@@ -464,7 +442,7 @@ func Test_shouldUpgrade(t *testing.T) {
 			g := NewWithT(t)
 
 			proxy := test.NewFakeProxy()
-			fakeConfigClient := newFakeConfig().WithCertManager("", tt.configVersion, "", false)
+			fakeConfigClient := newFakeConfig().WithCertManager("", tt.configVersion, "")
 			pollImmediateWaiter := func(context.Context, time.Duration, time.Duration, wait.ConditionWithContextFunc) error {
 				return nil
 			}
@@ -477,9 +455,6 @@ func Test_shouldUpgrade(t *testing.T) {
 				installObjs = make([]unstructured.Unstructured, len(tt.args.objs))
 				copy(installObjs, tt.args.objs)
 				installObjs = append(installObjs, unstructured.Unstructured{})
-			}
-			if tt.installObjs != nil {
-				installObjs = tt.installObjs
 			}
 
 			fromVersion, got, err := cm.shouldUpgrade(tt.configVersion, tt.args.objs, installObjs)
@@ -724,16 +699,6 @@ func Test_certManagerClient_PlanUpgrade(t *testing.T) {
 						Labels:      map[string]string{clusterctlv1.ClusterctlCoreLabel: clusterctlv1.ClusterctlCoreLabelCertManagerValue},
 						Annotations: map[string]string{clusterctlv1.CertManagerVersionAnnotation: config.CertManagerDefaultVersion},
 					},
-					Spec: appsv1.DeploymentSpec{
-						Template: corev1.PodTemplateSpec{
-							Spec: corev1.PodSpec{
-								Containers: []corev1.Container{{
-									Name:  "manager",
-									Image: "quay.io/jetstack/cert-manager:v1.1.0",
-								}},
-							},
-						},
-					},
 				},
 			},
 			expectErr: false,
@@ -886,7 +851,7 @@ func (f *fakeConfigClient) WithProvider(provider config.Provider) *fakeConfigCli
 	return f
 }
 
-func (f *fakeConfigClient) WithCertManager(url, version, timeout string, externallyProvisioned bool) *fakeConfigClient {
-	f.fakeReader.WithCertManager(url, version, timeout, externallyProvisioned)
+func (f *fakeConfigClient) WithCertManager(url, version, timeout string) *fakeConfigClient {
+	f.fakeReader.WithCertManager(url, version, timeout)
 	return f
 }

@@ -53,25 +53,16 @@ func TestGetManagerOptions(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid tls curve preferences",
-			managerOptions: ManagerOptions{
-				TLSCurvePreferences: []int32{-1},
-			},
-			wantErr: true,
-		},
-		{
 			name: "valid tls + insecure diagnostics + diagnostics address",
 			managerOptions: ManagerOptions{
 				TLSMinVersion:       "VersionTLS13",
 				TLSCipherSuites:     []string{"TLS_AES_256_GCM_SHA384"},
-				TLSCurvePreferences: []int32{int32(tls.X25519MLKEM768)},
 				InsecureDiagnostics: true,
 				DiagnosticsAddress:  ":8443",
 			},
 			wantTLSConfig: &tls.Config{
-				MinVersion:       tls.VersionTLS13,
-				CipherSuites:     []uint16{tls.TLS_AES_256_GCM_SHA384},
-				CurvePreferences: []tls.CurveID{tls.X25519MLKEM768},
+				MinVersion:   tls.VersionTLS13,
+				CipherSuites: []uint16{tls.TLS_AES_256_GCM_SHA384},
 			},
 			wantMetricsOptions: &metricsserver.Options{
 				BindAddress: ":8443",
@@ -81,15 +72,13 @@ func TestGetManagerOptions(t *testing.T) {
 		{
 			name: "valid tls + diagnostics address",
 			managerOptions: ManagerOptions{
-				TLSMinVersion:       "VersionTLS13",
-				TLSCipherSuites:     []string{"TLS_AES_256_GCM_SHA384"},
-				TLSCurvePreferences: []int32{int32(tls.X25519MLKEM768)},
-				DiagnosticsAddress:  ":8443",
+				TLSMinVersion:      "VersionTLS13",
+				TLSCipherSuites:    []string{"TLS_AES_256_GCM_SHA384"},
+				DiagnosticsAddress: ":8443",
 			},
 			wantTLSConfig: &tls.Config{
-				MinVersion:       tls.VersionTLS13,
-				CipherSuites:     []uint16{tls.TLS_AES_256_GCM_SHA384},
-				CurvePreferences: []tls.CurveID{tls.X25519MLKEM768},
+				MinVersion:   tls.VersionTLS13,
+				CipherSuites: []uint16{tls.TLS_AES_256_GCM_SHA384},
 			},
 			wantMetricsOptions: &metricsserver.Options{
 				BindAddress:    ":8443",
@@ -107,9 +96,8 @@ func TestGetManagerOptions(t *testing.T) {
 				},
 			},
 			wantMetricsOptionsTLSConfig: &tls.Config{
-				MinVersion:       tls.VersionTLS13,
-				CipherSuites:     []uint16{tls.TLS_AES_256_GCM_SHA384},
-				CurvePreferences: []tls.CurveID{tls.X25519MLKEM768},
+				MinVersion:   tls.VersionTLS13,
+				CipherSuites: []uint16{tls.TLS_AES_256_GCM_SHA384},
 			},
 			wantErr: false,
 		},
@@ -120,13 +108,13 @@ func TestGetManagerOptions(t *testing.T) {
 
 			tlsOpts, metricsOptions, err := GetManagerOptions(tt.managerOptions)
 
-			tlsConfig := &tls.Config{}
+			tlsConfig := &tls.Config{} //nolint:gosec // it's fine to not set a TLS min version here.
 			for _, opt := range tlsOpts {
 				opt(tlsConfig)
 			}
 			var metricsOptionsTLSConfig *tls.Config
 			if metricsOptions != nil && metricsOptions.TLSOpts != nil {
-				metricsOptionsTLSConfig = &tls.Config{}
+				metricsOptionsTLSConfig = &tls.Config{} //nolint:gosec // it's fine to not set a TLS min version here.
 				for _, opt := range metricsOptions.TLSOpts {
 					opt(metricsOptionsTLSConfig)
 				}

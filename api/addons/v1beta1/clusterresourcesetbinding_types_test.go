@@ -17,10 +17,11 @@ limitations under the License.
 package v1beta1
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -83,9 +84,8 @@ func TestIsResourceApplied(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.resourceSetBinding.IsApplied(tt.resourceRef) != tt.isApplied {
-				t.Fatalf("Expected %t to equal %t", tt.resourceSetBinding.IsApplied(tt.resourceRef), tt.isApplied)
-			}
+			gs := NewWithT(t)
+			gs.Expect(tt.resourceSetBinding.IsApplied(tt.resourceRef)).To(BeEquivalentTo(tt.isApplied))
 		})
 	}
 }
@@ -144,9 +144,8 @@ func TestResourceSetBindingGetResourceBinding(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if !reflect.DeepEqual(tt.resourceSetBinding.GetResource(tt.resourceRef), tt.want) {
-				t.Fatalf("Expected %+v to equal %+v", tt.resourceSetBinding.GetResource(tt.resourceRef), tt.want)
-			}
+			gs := NewWithT(t)
+			gs.Expect(tt.resourceSetBinding.GetResource(tt.resourceRef)).To(BeComparableTo(tt.want))
 		})
 	}
 }
@@ -204,19 +203,16 @@ func TestSetResourceBinding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			gs := NewWithT(t)
 			tt.resourceSetBinding.SetBinding(tt.resourceBinding)
 			exist := false
 			for _, b := range tt.resourceSetBinding.Resources {
-				if b.ResourceRef == tt.resourceBinding.ResourceRef {
-					if tt.resourceBinding.Applied != b.Applied {
-						t.Fatalf("Expected %t to equal %t", tt.resourceBinding.Applied, b.Applied)
-					}
+				if cmp.Equal(b.ResourceRef, tt.resourceBinding.ResourceRef) {
+					gs.Expect(tt.resourceBinding.Applied).To(BeEquivalentTo(b.Applied))
 					exist = true
 				}
 			}
-			if !exist {
-				t.Fatalf("Expected %t to be true", exist)
-			}
+			gs.Expect(exist).To(BeTrue())
 		})
 	}
 }

@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/rest"
 
@@ -65,7 +65,7 @@ var moveCmd = &cobra.Command{
 		Read Cluster API objects and all dependencies from a directory into a management cluster.
 		clusterctl move --from-directory /tmp/backup-directory
 	`),
-	Args: helpOnErrorArgs(cobra.NoArgs),
+	Args: cobra.NoArgs,
 	RunE: func(*cobra.Command, []string) error {
 		return runMove()
 	},
@@ -105,7 +105,7 @@ func runMove() error {
 		mo.fromDirectory == "" &&
 		mo.toKubeconfig == "" &&
 		!mo.dryRun {
-		return pkgerrors.New("please specify a target cluster using the --to-kubeconfig flag when not using --dry-run, --to-directory or --from-directory")
+		return errors.New("please specify a target cluster using the --to-kubeconfig flag when not using --dry-run, --to-directory or --from-directory")
 	}
 
 	configClient, err := config.New(ctx, cfgFile)

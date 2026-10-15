@@ -17,7 +17,6 @@ limitations under the License.
 package desiredstate
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -41,12 +40,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	runtimecatalog "sigs.k8s.io/cluster-api/api/runtime/catalog"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
-	"sigs.k8s.io/cluster-api/core/webhooks/conversion"
+	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
 	"sigs.k8s.io/cluster-api/exp/topology/scope"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/contract"
@@ -56,7 +55,7 @@ import (
 	"sigs.k8s.io/cluster-api/internal/topology/ownerrefs"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/cache"
-	conversionutil "sigs.k8s.io/cluster-api/util/conversion"
+	"sigs.k8s.io/cluster-api/util/conversion"
 	"sigs.k8s.io/cluster-api/util/test/builder"
 )
 
@@ -182,7 +181,7 @@ func TestComputeInfrastructureCluster(t *testing.T) {
 		obj, err := computeInfrastructureCluster(ctx, scope)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(obj).ToNot(BeNil())
-		g.Expect(ownerrefs.HasOwnerReferenceFrom(obj, shim, corev1.SchemeGroupVersion.WithKind("Secret"))).To(BeTrue())
+		g.Expect(ownerrefs.HasOwnerReferenceFrom(obj, shim)).To(BeTrue())
 	})
 }
 
@@ -506,7 +505,6 @@ func TestComputeControlPlane(t *testing.T) {
 		assertNestedField(g, obj, int64(replicas), contract.ControlPlane().Replicas().Path()...)
 		assertNestedField(g, obj, rolloutAfter.ToUnstructured(), contract.ControlPlane().RolloutAfter().Path()...)
 		assertNestedField(g, obj, expectedReadinessGates, contract.ControlPlane().MachineTemplate().ReadinessGates("v1beta1").Path()...)
-		assertNestedField(g, obj, expectedTaints, contract.ControlPlane().MachineTemplate().Taints("v1beta1").Path()...)
 		assertNestedField(g, obj, (time.Duration(topologyDuration) * time.Second).String(), contract.ControlPlane().MachineTemplate().NodeDrainTimeout().Path()...)
 		assertNestedField(g, obj, (time.Duration(topologyDuration) * time.Second).String(), contract.ControlPlane().MachineTemplate().NodeVolumeDetachTimeout().Path()...)
 		assertNestedField(g, obj, (time.Duration(topologyDuration) * time.Second).String(), contract.ControlPlane().MachineTemplate().NodeDeletionTimeout().Path()...)
@@ -548,7 +546,7 @@ func TestComputeControlPlane(t *testing.T) {
 		assertNestedField(g, obj, int64(replicas), contract.ControlPlane().Replicas().Path()...)
 		assertNestedField(g, obj, rolloutAfter.ToUnstructured(), contract.ControlPlane().RolloutAfter().Path()...)
 		assertNestedField(g, obj, expectedReadinessGates, contract.ControlPlane().MachineTemplate().ReadinessGates("v1beta2").Path()...)
-		assertNestedField(g, obj, expectedTaints, contract.ControlPlane().MachineTemplate().Taints("v1beta2").Path()...)
+		assertNestedField(g, obj, expectedTaints, contract.ControlPlane().MachineTemplate().Taints().Path()...)
 		assertNestedField(g, obj, int64(topologyDuration), contract.ControlPlane().MachineTemplate().NodeDrainTimeoutSeconds().Path()...)
 		assertNestedField(g, obj, int64(topologyDuration), contract.ControlPlane().MachineTemplate().NodeVolumeDetachTimeoutSeconds().Path()...)
 		assertNestedField(g, obj, int64(topologyDuration), contract.ControlPlane().MachineTemplate().NodeDeletionTimeoutSeconds().Path()...)
@@ -598,7 +596,6 @@ func TestComputeControlPlane(t *testing.T) {
 
 		// checking only values from CC defaults
 		assertNestedField(g, obj, expectedClusterClassReadinessGates, contract.ControlPlane().MachineTemplate().ReadinessGates("v1beta1").Path()...)
-		assertNestedField(g, obj, expectedClusterClassTaints, contract.ControlPlane().MachineTemplate().Taints("v1beta1").Path()...)
 		assertNestedField(g, obj, (time.Duration(clusterClassDuration) * time.Second).String(), contract.ControlPlane().MachineTemplate().NodeDrainTimeout().Path()...)
 		assertNestedField(g, obj, (time.Duration(clusterClassDuration) * time.Second).String(), contract.ControlPlane().MachineTemplate().NodeVolumeDetachTimeout().Path()...)
 		assertNestedField(g, obj, (time.Duration(clusterClassDuration) * time.Second).String(), contract.ControlPlane().MachineTemplate().NodeDeletionTimeout().Path()...)
@@ -644,7 +641,7 @@ func TestComputeControlPlane(t *testing.T) {
 
 		// checking only values from CC defaults
 		assertNestedField(g, obj, expectedClusterClassReadinessGates, contract.ControlPlane().MachineTemplate().ReadinessGates("v1beta2").Path()...)
-		assertNestedField(g, obj, expectedClusterClassTaints, contract.ControlPlane().MachineTemplate().Taints("v1beta2").Path()...)
+		assertNestedField(g, obj, expectedClusterClassTaints, contract.ControlPlane().MachineTemplate().Taints().Path()...)
 		assertNestedField(g, obj, int64(clusterClassDuration), contract.ControlPlane().MachineTemplate().NodeDrainTimeoutSeconds().Path()...)
 		assertNestedField(g, obj, int64(clusterClassDuration), contract.ControlPlane().MachineTemplate().NodeVolumeDetachTimeoutSeconds().Path()...)
 		assertNestedField(g, obj, int64(clusterClassDuration), contract.ControlPlane().MachineTemplate().NodeDeletionTimeoutSeconds().Path()...)
@@ -739,8 +736,7 @@ func TestComputeControlPlane(t *testing.T) {
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(obj).ToNot(BeNil())
 
-		assertNestedFieldUnset(g, obj, contract.ControlPlane().MachineTemplate().Taints("v1beta1").Path()...)
-		assertNestedFieldUnset(g, obj, contract.ControlPlane().MachineTemplate().Taints("v1beta2").Path()...)
+		assertNestedFieldUnset(g, obj, contract.ControlPlane().MachineTemplate().Taints().Path()...)
 	})
 	t.Run("Generates the ControlPlane from the template and adds the infrastructure machine template if required (v1beta1 contract)", func(t *testing.T) {
 		g := NewWithT(t)
@@ -1084,7 +1080,7 @@ func TestComputeControlPlane(t *testing.T) {
 		obj, err := (&generator{Client: clientWithV1Beta2ContractCRD}).computeControlPlane(ctx, s, nil)
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(obj).ToNot(BeNil())
-		g.Expect(ownerrefs.HasOwnerReferenceFrom(obj, shim, corev1.SchemeGroupVersion.WithKind("Secret"))).To(BeTrue())
+		g.Expect(ownerrefs.HasOwnerReferenceFrom(obj, shim)).To(BeTrue())
 	})
 }
 
@@ -1097,7 +1093,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 		},
 	}
 
-	t.Cleanup(conversion.SwapAPIVersionGetter(func(_ context.Context, gk schema.GroupKind) (string, error) {
+	apiVersionGetter := func(gk schema.GroupKind) (string, error) {
 		for _, gvk := range testGVKs {
 			if gvk.GroupKind() == gk {
 				return schema.GroupVersion{
@@ -1107,7 +1103,8 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 			}
 		}
 		return "", fmt.Errorf("unknown GroupVersionKind: %v", gk)
-	}))
+	}
+	clusterv1beta1.SetAPIVersionGetter(apiVersionGetter)
 
 	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
 
@@ -1659,7 +1656,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 							Annotations: map[string]string{
 								"fizz":                             "buzz",
 								corev1.LastAppliedConfigAnnotation: "should be cleaned up",
-								conversionutil.DataAnnotation:      "should be cleaned up",
+								conversion.DataAnnotation:          "should be cleaned up",
 							},
 						},
 						// Add some more fields to check that conversion implemented when calling RuntimeExtension are properly handled.
@@ -1716,7 +1713,7 @@ func TestComputeControlPlaneVersion(t *testing.T) {
 			r := &generator{
 				Client:        fakeClient,
 				RuntimeClient: runtimeClient,
-				hookCache:     cache.New[cache.HookEntry](ctx, cache.HookCacheDefaultTTL),
+				hookCache:     cache.New[cache.HookEntry](cache.HookCacheDefaultTTL),
 			}
 			version, err := r.computeControlPlaneVersion(ctx, s)
 			if tt.wantErr {
@@ -1761,12 +1758,16 @@ func TestComputeCluster(t *testing.T) {
 	g.Expect(obj).ToNot(BeNil())
 	g.Expect(err).ToNot(HaveOccurred())
 
+	// TypeMeta
+	g.Expect(obj.APIVersion).To(Equal(cluster.APIVersion))
+	g.Expect(obj.Kind).To(Equal(cluster.Kind))
+
 	// ObjectMeta
 	g.Expect(obj.Name).To(Equal(cluster.Name))
 	g.Expect(obj.Namespace).To(Equal(cluster.Namespace))
 	g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterNameLabel, cluster.Name))
 	g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterTopologyOwnedLabel, ""))
-	g.Expect(obj.GetAnnotations()).ToNot(HaveKey(clusterv1.ClusterTopologyUpgradeStepAnnotation))
+	g.Expect(obj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.ClusterTopologyUpgradeStepAnnotation, ""))
 
 	// Spec
 	g.Expect(obj.Spec.InfrastructureRef).To(BeComparableTo(contract.ObjToContractVersionedObjectReference(infrastructureCluster)))
@@ -1788,7 +1789,7 @@ func TestComputeCluster(t *testing.T) {
 	g.Expect(obj).ToNot(BeNil())
 	g.Expect(err).ToNot(HaveOccurred())
 
-	g.Expect(obj.GetAnnotations()).ToNot(HaveKey(clusterv1.ClusterTopologyUpgradeStepAnnotation))
+	g.Expect(obj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.ClusterTopologyUpgradeStepAnnotation, ""))
 
 	// Surfaces the ClusterTopologyUpgradeStepAnnotation annotation during upgrades when runtime SDK feature flag is on.
 	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.RuntimeSDK, true)
@@ -1814,7 +1815,7 @@ func TestComputeCluster(t *testing.T) {
 	g.Expect(obj).ToNot(BeNil())
 	g.Expect(err).ToNot(HaveOccurred())
 
-	g.Expect(obj.GetAnnotations()).ToNot(HaveKey(clusterv1.ClusterTopologyUpgradeStepAnnotation))
+	g.Expect(obj.GetAnnotations()).To(HaveKeyWithValue(clusterv1.ClusterTopologyUpgradeStepAnnotation, ""))
 }
 
 func TestComputeMachineDeployment(t *testing.T) {
@@ -3781,6 +3782,10 @@ func Test_computeMachineHealthCheck(t *testing.T) {
 	healthCheckTarget := builder.MachineDeployment("ns1", "md1").Build()
 	cluster := builder.Cluster("ns1", "cluster1").Build()
 	want := &clusterv1.MachineHealthCheck{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "MachineHealthCheck",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "md1",
 			Namespace: "ns1",
@@ -4026,8 +4031,8 @@ func TestGenerate(t *testing.T) {
 			fakeClient,
 			clusterCache,
 			fakeRuntimeClient,
-			cache.New[cache.HookEntry](ctx, cache.HookCacheDefaultTTL),
-			cache.New[GenerateUpgradePlanCacheEntry](ctx, 10*time.Minute),
+			cache.New[cache.HookEntry](cache.HookCacheDefaultTTL),
+			cache.New[GenerateUpgradePlanCacheEntry](10*time.Minute),
 		)
 		g.Expect(err).ToNot(HaveOccurred())
 

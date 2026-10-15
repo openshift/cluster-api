@@ -40,42 +40,34 @@ func TestCertManagerGet(t *testing.T) {
 			fields: fields{
 				reader: test.NewFakeReader(),
 			},
-			want:    NewCertManager(CertManagerDefaultURL, CertManagerDefaultVersion, CertManagerDefaultTimeout.String(), false),
+			want:    NewCertManager(CertManagerDefaultURL, CertManagerDefaultVersion, CertManagerDefaultTimeout.String()),
 			wantErr: false,
 		},
 		{
 			name: "return custom url if defined",
 			fields: fields{
-				reader: test.NewFakeReader().WithCertManager("foo-url", "vX.Y.Z", "", false),
+				reader: test.NewFakeReader().WithCertManager("foo-url", "vX.Y.Z", ""),
 			},
-			want:    NewCertManager("foo-url", "vX.Y.Z", CertManagerDefaultTimeout.String(), false),
+			want:    NewCertManager("foo-url", "vX.Y.Z", CertManagerDefaultTimeout.String()),
 			wantErr: false,
 		},
 		{
 			name: "return custom url with evaluated env vars if defined",
 			fields: fields{
-				reader: test.NewFakeReader().WithCertManager("${TEST_REPO_PATH}/foo-url", "vX.Y.Z", "", false),
+				reader: test.NewFakeReader().WithCertManager("${TEST_REPO_PATH}/foo-url", "vX.Y.Z", ""),
 			},
 			envVars: map[string]string{
 				"TEST_REPO_PATH": "/tmp/test",
 			},
-			want:    NewCertManager("/tmp/test/foo-url", "vX.Y.Z", CertManagerDefaultTimeout.String(), false),
+			want:    NewCertManager("/tmp/test/foo-url", "vX.Y.Z", CertManagerDefaultTimeout.String()),
 			wantErr: false,
 		},
 		{
 			name: "return timeout if defined",
 			fields: fields{
-				reader: test.NewFakeReader().WithCertManager("", "", "5m", false),
+				reader: test.NewFakeReader().WithCertManager("", "", "5m"),
 			},
-			want:    NewCertManager(CertManagerDefaultURL, CertManagerDefaultVersion, "5m", false),
-			wantErr: false,
-		},
-		{
-			name: "return externallyProvisioned if defined",
-			fields: fields{
-				reader: test.NewFakeReader().WithCertManager("", "", "5m", true),
-			},
-			want:    NewCertManager(CertManagerDefaultURL, CertManagerDefaultVersion, "5m", true),
+			want:    NewCertManager(CertManagerDefaultURL, CertManagerDefaultVersion, "5m"),
 			wantErr: false,
 		},
 	}

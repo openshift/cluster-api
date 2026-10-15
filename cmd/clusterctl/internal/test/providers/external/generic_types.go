@@ -53,7 +53,7 @@ type GenericClusterExternalObjectList struct {
 }
 
 func init() {
-	objectTypes = append(objectTypes,
+	SchemeBuilder.Register(
 		&GenericExternalObject{}, &GenericExternalObjectList{},
 		&GenericClusterExternalObject{}, &GenericClusterExternalObjectList{},
 	)

@@ -45,19 +45,15 @@ type validator struct {
 	auditAnnotationFilter cel.ConditionEvaluator
 	messageFilter         cel.ConditionEvaluator
 	failPolicy            *v1.FailurePolicyType
-	// compileError holds any compilation error from the CEL expressions.
-	// If non-nil, the validator will return an error result based on the failPolicy.
-	compileError error
 }
 
-func NewValidator(validationFilter cel.ConditionEvaluator, celMatcher matchconditions.Matcher, auditAnnotationFilter, messageFilter cel.ConditionEvaluator, failPolicy *v1.FailurePolicyType, err error) Validator {
+func NewValidator(validationFilter cel.ConditionEvaluator, celMatcher matchconditions.Matcher, auditAnnotationFilter, messageFilter cel.ConditionEvaluator, failPolicy *v1.FailurePolicyType) Validator {
 	return &validator{
 		celMatcher:            celMatcher,
 		validationFilter:      validationFilter,
 		auditAnnotationFilter: auditAnnotationFilter,
 		messageFilter:         messageFilter,
 		failPolicy:            failPolicy,
-		compileError:          err,
 	}
 }
 
@@ -75,10 +71,6 @@ func auditAnnotationEvaluationForError(f v1.FailurePolicyType) PolicyAuditAnnota
 	return AuditAnnotationActionError
 }
 
-func (v *validator) CompileError() error {
-	return v.compileError
-}
-
 // Validate takes a list of Evaluation and a failure policy and converts them into actionable PolicyDecisions
 // runtimeCELCostBudget was added for testing purpose only. Callers should always use const RuntimeCELCostBudget from k8s.io/apiserver/pkg/apis/cel/config.go as input.
 
@@ -88,17 +80,6 @@ func (v *validator) Validate(ctx context.Context, matchedResource schema.GroupVe
 		f = v1.Fail
 	} else {
 		f = *v.failPolicy
-	}
-	if v.compileError != nil {
-		return ValidateResult{
-			Decisions: []PolicyDecision{
-				{
-					Action:     policyDecisionActionForError(f),
-					Evaluation: EvalError,
-					Message:    v.compileError.Error(),
-				},
-			},
-		}
 	}
 	if v.celMatcher != nil {
 		matchResults := v.celMatcher.Match(ctx, versionedAttr, versionedParams, authz)

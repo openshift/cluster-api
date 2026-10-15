@@ -23,10 +23,8 @@ package upgradeplan
 
 import (
 	"context"
-	"fmt"
-	"strings"
+	"slices"
 
-	"github.com/blang/semver/v4"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,22 +56,10 @@ func (m *ExtensionHandlers) DoGenerateUpgradePlan(ctx context.Context, request *
 	ctx = ctrl.LoggerInto(ctx, log)
 	log.Info("GenerateUpgradePlan is called")
 
-	// Get the list of Kubernetes versions from the kind mapper, add at least one version for each minor up to the target KubernetesVersion.
-	// NOTE: this is required to handle when we are testing Kubernetes minors not yet included in kind.GetKubernetesVersions().
+	// Get the list of Kubernetes versions from the kind mapper.
 	versions := kind.GetKubernetesVersions()
-
-	var lastKnownMinor uint64
-	for _, version := range versions {
-		lastKnownMinor = max(lastKnownMinor, semver.MustParse(strings.TrimPrefix(version, "v")).Minor)
-	}
-
-	targetMinor := semver.MustParse(strings.TrimPrefix(request.ToKubernetesVersion, "v")).Minor
-	for i := lastKnownMinor + 1; i <= targetMinor; i++ {
-		if i == targetMinor {
-			versions = append(versions, request.ToKubernetesVersion)
-			break
-		}
-		versions = append(versions, fmt.Sprintf("v1.%d.0", i))
+	if !slices.Contains(versions, request.ToKubernetesVersion) {
+		versions = append(versions, request.ToKubernetesVersion)
 	}
 
 	// Use GetUpgradePlanFromClusterClassVersions to generate the upgrade plan.

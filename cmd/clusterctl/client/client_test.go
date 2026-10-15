@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -145,10 +145,6 @@ func (f fakeClient) RolloutResume(ctx context.Context, options RolloutResumeOpti
 	return f.internalClient.RolloutResume(ctx, options)
 }
 
-func (f fakeClient) Convert(ctx context.Context, options ConvertOptions) (ConvertResult, error) {
-	return f.internalClient.Convert(ctx, options)
-}
-
 // newFakeClient returns a clusterctl client that allows to execute tests on a set of fake config, fake repositories and fake clusters.
 // you can use WithCluster and WithRepository to prepare for the test case.
 func newFakeClient(ctx context.Context, configClient config.Client) *fakeClient {
@@ -166,7 +162,7 @@ func newFakeClient(ctx context.Context, configClient config.Client) *fakeClient 
 		// converting the client.Kubeconfig to cluster.Kubeconfig alias
 		k := cluster.Kubeconfig(i.Kubeconfig)
 		if _, ok := fake.clusters[k]; !ok {
-			return nil, pkgerrors.Errorf("Cluster for kubeconfig %q and/or context %q does not exist", i.Kubeconfig.Path, i.Kubeconfig.Context)
+			return nil, errors.Errorf("Cluster for kubeconfig %q and/or context %q does not exist", i.Kubeconfig.Path, i.Kubeconfig.Context)
 		}
 		return fake.clusters[k], nil
 	}
@@ -176,7 +172,7 @@ func newFakeClient(ctx context.Context, configClient config.Client) *fakeClient 
 		InjectClusterClientFactory(clusterClientFactory),
 		InjectRepositoryFactory(func(_ context.Context, input RepositoryClientFactoryInput) (repository.Client, error) {
 			if _, ok := fake.repositories[input.Provider.ManifestLabel()]; !ok {
-				return nil, pkgerrors.Errorf("repository for kubeconfig %q does not exist", input.Provider.ManifestLabel())
+				return nil, errors.Errorf("repository for kubeconfig %q does not exist", input.Provider.ManifestLabel())
 			}
 			return fake.repositories[input.Provider.ManifestLabel()], nil
 		}),
@@ -220,7 +216,7 @@ func newFakeCluster(kubeconfig cluster.Kubeconfig, configClient config.Client) *
 		cluster.InjectPollImmediateWaiter(pollImmediateWaiter),
 		cluster.InjectRepositoryFactory(func(_ context.Context, provider config.Provider, _ config.Client, _ ...repository.Option) (repository.Client, error) {
 			if _, ok := fake.repositories[provider.Name()]; !ok {
-				return nil, pkgerrors.Errorf("repository for kubeconfig %q does not exist", provider.Name())
+				return nil, errors.Errorf("repository for kubeconfig %q does not exist", provider.Name())
 			}
 			return fake.repositories[provider.Name()], nil
 		}),
@@ -558,7 +554,7 @@ func (f *fakeMetadataClient) Get(ctx context.Context) (*clusterctlv1.Metadata, e
 	codecFactory := serializer.NewCodecFactory(scheme.Scheme)
 
 	if err := runtime.DecodeInto(codecFactory.UniversalDecoder(), content, obj); err != nil {
-		return nil, pkgerrors.Wrap(err, "error decoding metadata.yaml")
+		return nil, errors.Wrap(err, "error decoding metadata.yaml")
 	}
 
 	return obj, nil

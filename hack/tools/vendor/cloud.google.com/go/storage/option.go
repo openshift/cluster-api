@@ -44,7 +44,6 @@ func init() {
 	storageinternal.WithGRPCBidiReads = withGRPCBidiReads
 	storageinternal.WithZonalBucketAPIs = withZonalBucketAPIs
 	storageinternal.WithDirectConnectivityEnforced = withDirectConnectivityEnforced
-	storageinternal.WithOtelMetrics = withOtelMetrics
 }
 
 // getDynamicReadReqIncreaseRateFromEnv returns the value set in the env variable.
@@ -82,7 +81,6 @@ type storageConfig struct {
 	useJSONforReads        bool
 	readAPIWasSet          bool
 	disableClientMetrics   bool
-	enableOtelMetrics      bool
 	metricExporter         *metric.Exporter
 	metricInterval         time.Duration
 	meterProvider          *metric.MeterProvider
@@ -301,16 +299,4 @@ func (w *withZonalBucketAPIsConfig) ApplyStorageOpt(config *storageConfig) {
 	// Use both appendable upload semantics and bidi reads.
 	config.grpcAppendableUploads = true
 	config.grpcBidiReads = true
-}
-
-func withOtelMetrics() option.ClientOption {
-	return &withOtelMetricsConfig{}
-}
-
-type withOtelMetricsConfig struct {
-	internaloption.EmbeddableAdapter
-}
-
-func (w *withOtelMetricsConfig) ApplyStorageOpt(c *storageConfig) {
-	c.enableOtelMetrics = true
 }
