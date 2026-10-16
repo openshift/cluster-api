@@ -89,6 +89,10 @@ func (c *ClusterBuilder) WithTopology(topology *clusterv1.Topology) *ClusterBuil
 // Build returns a Cluster with the attributes added to the ClusterBuilder.
 func (c *ClusterBuilder) Build() *clusterv1.Cluster {
 	obj := &clusterv1.Cluster{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Cluster",
+			APIVersion: clusterv1.GroupVersion.String(),
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        c.name,
 			Namespace:   c.namespace,

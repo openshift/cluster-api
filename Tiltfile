@@ -2,7 +2,7 @@
 
 clusterctl_cmd = "./bin/clusterctl"
 kubectl_cmd = "kubectl"
-kubernetes_version = "v1.37.0"
+kubernetes_version = "v1.36.1"
 
 load("ext://uibutton", "cmd_button", "location", "text_input")
 
@@ -58,19 +58,21 @@ default_enable_providers = [core_provider_name]
 
 providers = {
     core_provider_name: {
-        "context": "core",  # NOTE: this should be kept in sync with corresponding setting in tilt-prepare
+        "context": ".",  # NOTE: this should be kept in sync with corresponding setting in tilt-prepare
         "image": "gcr.io/k8s-staging-cluster-api/cluster-api-controller",
         "live_reload_deps": [
-            "reconcilers",
-            "webhooks",
             "main.go",
-            "../api",
-            "../exp",
-            "../feature",
-            "../internal",
-            "../util",
-            "../go.mod",
-            "../go.sum",
+            "go.mod",
+            "go.sum",
+            "api",
+            "cmd",
+            "controllers",
+            "errors",
+            "exp",
+            "feature",
+            "internal",
+            "util",
+            "webhooks",
         ],
         "label": "CAPI",
     },
@@ -78,11 +80,11 @@ providers = {
         "context": "bootstrap/kubeadm",  # NOTE: this should be kept in sync with corresponding setting in tilt-prepare
         "image": "gcr.io/k8s-staging-cluster-api/kubeadm-bootstrap-controller",
         "live_reload_deps": [
-            "pkg",
-            "reconcilers",
-            "webhooks",
             "main.go",
-            "../../api/bootstrap/kubeadm",
+            "api",
+            "controllers",
+            "internal",
+            "types",
             "../../go.mod",
             "../../go.sum",
         ],
@@ -92,11 +94,10 @@ providers = {
         "context": "controlplane/kubeadm",  # NOTE: this should be kept in sync with corresponding setting in tilt-prepare
         "image": "gcr.io/k8s-staging-cluster-api/kubeadm-control-plane-controller",
         "live_reload_deps": [
-            "pkg",
-            "reconcilers",
-            "webhooks",
             "main.go",
-            "../../api/controlplane/kubeadm",
+            "api",
+            "controllers",
+            "internal",
             "../../go.mod",
             "../../go.sum",
         ],
@@ -173,9 +174,9 @@ def load_provider_tilt_files():
 
 tilt_helper_dockerfile_header = """
 # Tilt image
-FROM golang:1.26.6 as tilt-helper
+FROM golang:1.25.12 as tilt-helper
 # Install delve. Note this should be kept in step with the Go release minor version.
-RUN go install github.com/go-delve/delve/cmd/dlv@v1.26
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.25
 # Support live reloading with Tilt
 RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/restart.sh  && \
     wget --output-document /start.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/start.sh && \
@@ -184,7 +185,7 @@ RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com
 """
 
 tilt_dockerfile_header = """
-FROM golang:1.26.6 as tilt
+FROM golang:1.25.12 as tilt
 WORKDIR /
 COPY --from=tilt-helper /process.txt .
 COPY --from=tilt-helper /start.sh .
@@ -222,7 +223,7 @@ def build_go_binary(context, reload_deps, debug, go_main, binary_name, label):
         arch = os_arch,
     )
 
-    build_cmd = "{build_env} go build -tags=fieldsv1string {build_options} -gcflags '{gcflags}' -ldflags '{ldflags}' -o .tiltbuild/bin/{binary_name} {go_main}".format(
+    build_cmd = "{build_env} go build {build_options} -gcflags '{gcflags}' -ldflags '{ldflags}' -o .tiltbuild/bin/{binary_name} {go_main}".format(
         build_env = build_env,
         build_options = build_options,
         gcflags = gcflags,
@@ -251,7 +252,6 @@ def build_go_binary(context, reload_deps, debug, go_main, binary_name, label):
         ),
         deps = live_reload_deps,
         labels = [label],
-        allow_parallel = True,
     )
 
 def build_docker_image(image, context, binary_name, additional_docker_build_commands, additional_docker_helper_commands, port_forwards):
@@ -483,15 +483,6 @@ def deploy_observability():
             port_forwards = [port_forward(local_port = 8000, container_port = 8081, name = "View visualization")],
             labels = ["observability"],
             objects = ["capi-visualizer:serviceaccount"],
-        )
-
-    if "headlamp" in settings.get("deploy_observability", []):
-        k8s_yaml(read_file("./.tiltbuild/yaml/headlamp.observability.yaml"), allow_duplicates = True)
-        k8s_resource(
-            workload = "headlamp",
-            port_forwards = [port_forward(local_port = 4466, container_port = 4466, name = "Headlamp UI")],
-            labels = ["observability"],
-            objects = ["headlamp-kubeconfig:configmap"],
         )
 
 def deploy_additional_kustomizations():

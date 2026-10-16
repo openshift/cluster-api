@@ -29,7 +29,7 @@ import (
 	"syscall"
 
 	"github.com/adrg/xdg"
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -39,7 +39,7 @@ import (
 )
 
 type stackTracer interface {
-	StackTrace() pkgerrors.StackTrace
+	StackTrace() errors.StackTrace
 }
 
 const (
@@ -81,7 +81,7 @@ var RootCmd = &cobra.Command{
 		}
 		output, err := checker.Check(ctx)
 		if err != nil {
-			return pkgerrors.Wrap(err, "unable to verify clusterctl version")
+			return errors.Wrap(err, "unable to verify clusterctl version")
 		}
 		if output != "" {
 			// Print the output in yellow so it is more visible.
@@ -110,7 +110,7 @@ var RootCmd = &cobra.Command{
 func Execute() {
 	handlePlugins()
 
-	if err := executeRoot(RootCmd); err != nil {
+	if err := RootCmd.Execute(); err != nil {
 		if verbosity != nil && *verbosity >= 5 {
 			if err, ok := err.(stackTracer); ok {
 				for _, f := range err.StackTrace() {
@@ -118,17 +118,9 @@ func Execute() {
 				}
 			}
 		}
+		// TODO: print cmd help if validation error
 		os.Exit(1)
 	}
-}
-
-func executeRoot(rootCmd *cobra.Command) error {
-	cmd, err := rootCmd.ExecuteC()
-	if err != nil && cmd != nil && isHelpError(err) {
-		_, _ = cmd.ErrOrStderr().Write([]byte("\n"))
-		_ = cmd.Help()
-	}
-	return err
 }
 
 func init() {
@@ -316,7 +308,7 @@ func (h *defaultPluginHandler) Execute(executablePath string, cmdArgs, environme
 }
 
 func shouldSkipOnLookPathErr(err error) bool {
-	return err != nil && !pkgerrors.Is(err, exec.ErrDot)
+	return err != nil && !errors.Is(err, exec.ErrDot)
 }
 
 // handlePluginCommand receives a pluginHandler and command-line arguments and attempts to find

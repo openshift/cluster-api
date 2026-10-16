@@ -81,7 +81,7 @@ type GenericClusterInfrastructureIdentityList struct {
 }
 
 func init() {
-	objectTypes = append(objectTypes,
+	SchemeBuilder.Register(
 		&GenericInfrastructureCluster{}, &GenericInfrastructureClusterList{},
 		&GenericInfrastructureMachine{}, &GenericInfrastructureMachineList{},
 		&GenericInfrastructureMachineTemplate{}, &GenericInfrastructureMachineTemplateList{},

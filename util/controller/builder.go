@@ -17,17 +17,15 @@ limitations under the License.
 package controller
 
 import (
-	"context"
+	"errors"
 	"math"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
-	pkgerrors "github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -152,26 +150,18 @@ type Controller interface {
 	controller.Controller
 	DeferNextReconcile(req reconcile.Request, reconcileAfter time.Time)
 	DeferNextReconcileForObject(obj metav1.Object, reconcileAfter time.Time)
-
-	// DeferNextReconcileUntilCacheUpToDate defers the next reconcile of the reconciledObject until
-	// the cache observed the writtenObject in the given ResourceVersion.
-	// Note: This func should only be called if we have an informer for the writtenObject anyway.
-	DeferNextReconcileUntilCacheUpToDate(reconciledObject metav1.Object, writtenObjectGVKT GroupVersionKindType, writtenObjectResourceVersion string)
-
-	// ClearConsistencyStore clears the consistency store for a reconciledObject.
-	ClearConsistencyStore(reconciledObject client.ObjectKey, reconciledObjectUID types.UID)
 }
 
 // Complete builds the Application Controller.
-func (blder *Builder) Complete(ctx context.Context, r reconcile.TypedReconciler[reconcile.Request]) error {
-	_, err := blder.Build(ctx, r)
+func (blder *Builder) Complete(r reconcile.TypedReconciler[reconcile.Request]) error {
+	_, err := blder.Build(r)
 	return err
 }
 
 // Build builds the Application Controller and returns the Controller it created.
-func (blder *Builder) Build(ctx context.Context, r reconcile.TypedReconciler[reconcile.Request]) (Controller, error) {
+func (blder *Builder) Build(r reconcile.TypedReconciler[reconcile.Request]) (Controller, error) {
 	if feature.Gates.Enabled(feature.ReconcilerRateLimiting) && !feature.Gates.Enabled(feature.PriorityQueue) {
-		return nil, pkgerrors.New("if feature gate ReconcilerRateLimiting is enabled, feature gate PriorityQueue must be enabled as well")
+		return nil, errors.New("if feature gate ReconcilerRateLimiting is enabled, feature gate PriorityQueue must be enabled as well")
 	}
 
 	// Get GVK of the for object.
@@ -242,10 +232,7 @@ func (blder *Builder) Build(ctx context.Context, r reconcile.TypedReconciler[rec
 	blder.builder.WithOptions(blder.options)
 
 	// Create reconcileCache.
-	reconcileCache := cache.New[reconcileCacheEntry](ctx, cache.DefaultTTL)
-
-	// Create consistencyStore.
-	consistencyStore := newConsistencyStore(blder.mgr.GetScheme(), blder.mgr.GetCache())
+	reconcileCache := cache.New[reconcileCacheEntry](cache.DefaultTTL)
 
 	c, err := blder.builder.Build(&reconcilerWrapper{
 		name:              controllerName,
@@ -253,7 +240,6 @@ func (blder *Builder) Build(ctx context.Context, r reconcile.TypedReconciler[rec
 		reconcileCache:    reconcileCache,
 		rateLimitInterval: rateLimitInterval,
 		queueRateLimiter:  queueRateLimiter,
-		consistencyStore:  consistencyStore,
 	})
 	if err != nil {
 		return nil, err
@@ -268,9 +254,8 @@ func (blder *Builder) Build(ctx context.Context, r reconcile.TypedReconciler[rec
 	reconcileTotal.WithLabelValues(controllerName, labelSuccess).Add(0)
 
 	return &controllerWrapper{
-		TypedController:  c,
-		reconcileCache:   reconcileCache,
-		consistencyStore: consistencyStore,
+		TypedController: c,
+		reconcileCache:  reconcileCache,
 	}, nil
 }
 

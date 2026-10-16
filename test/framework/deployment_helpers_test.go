@@ -74,11 +74,8 @@ func Test_containerHasTerminated(t *testing.T) {
 			want:          true,
 		},
 		{
-			name: "terminated regular container in pod with restartPolicy Never",
+			name: "running pod with terminated regular container",
 			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-				},
 				Status: corev1.PodStatus{
 					Phase: corev1.PodRunning,
 					ContainerStatuses: []corev1.ContainerStatus{
@@ -95,52 +92,6 @@ func Test_containerHasTerminated(t *testing.T) {
 			},
 			containerName: "sidecar",
 			want:          true,
-		},
-		{
-			name: "terminated regular container in pod with restartPolicy Always may still restart",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyAlways,
-				},
-				Status: corev1.PodStatus{
-					Phase: corev1.PodRunning,
-					ContainerStatuses: []corev1.ContainerStatus{
-						{
-							Name:  "flaky",
-							State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1}},
-						},
-						{
-							Name:  "main",
-							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
-						},
-					},
-				},
-			},
-			containerName: "flaky",
-			want:          false,
-		},
-		{
-			name: "terminated regular container in pod with restartPolicy OnFailure may still restart",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-				},
-				Status: corev1.PodStatus{
-					Phase: corev1.PodRunning,
-					ContainerStatuses: []corev1.ContainerStatus{
-						{
-							Name:  "flaky",
-							State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1}},
-						},
-						{
-							Name:  "main",
-							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
-						},
-					},
-				},
-			},
-			containerName: "flaky",
-			want:          false,
 		},
 		{
 			name: "running pod — container still running",

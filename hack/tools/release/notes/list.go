@@ -24,6 +24,8 @@ import (
 	"log"
 	"regexp"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 // githubFromToPRLister lists PRs from GitHub contained between two refs.
@@ -52,7 +54,7 @@ func newGithubFromToPRLister(repo string, fromRef, toRef ref, branch string) *gi
 // between fromRef and toRef, discarding any PR not seeing in the commits list.
 // This ensures we don't include any PR merged in the same date range that
 // doesn't belong to our git timeline.
-func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, []string, error) {
+func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, error) {
 	var (
 		diff *githubDiff
 		err  error
@@ -65,13 +67,13 @@ func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, []string, 
 		diff, err = l.client.getDiffAllCommits(l.fromRef.value, l.toRef.value)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	log.Printf("Reading ref %s for upper limit", l.toRef)
 	toRef, err := l.client.getRef(l.toRef.String())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	var toCommitSHA string
@@ -79,7 +81,7 @@ func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, []string, 
 		log.Printf("Reading tag info %s for upper limit", toRef.Object.SHA)
 		toTag, err := l.client.getTag(toRef.Object.SHA)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		toCommitSHA = toTag.Object.SHA
 	} else {
@@ -89,7 +91,7 @@ func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, []string, 
 	log.Printf("Reading commit %s for upper limit", toCommitSHA)
 	toCommit, err := l.client.getCommit(toCommitSHA)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	fromDate := diff.MergeBaseCommit.Commit.Committer.Date
@@ -105,7 +107,7 @@ func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, []string, 
 	// need the PRs from other release branches.
 	gPRs, err := l.client.listMergedPRs(fromDate, toDate, l.branch, "main")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	log.Printf("Found %d PRs in github", len(gPRs))
@@ -117,8 +119,6 @@ func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, []string, 
 		if _, ok := selectedPRNumbers[fmt.Sprintf("%d", p.Number)]; !ok {
 			continue
 		}
-		selectedPRNumbers[fmt.Sprintf("%d", p.Number)] = true
-
 		labels := make([]string, 0, len(p.Labels))
 		for _, l := range p.Labels {
 			labels = append(labels, l.Name)
@@ -131,19 +131,13 @@ func (l *githubFromToPRLister) listPRs(previousReleaseRef ref) ([]pr, []string, 
 		})
 	}
 
-	// Report consistency problems
-	var consistencyErrors []string
-	for sp, found := range selectedPRNumbers {
-		if found {
-			continue
-		}
-		consistencyErrors = append(consistencyErrors, fmt.Sprintf("PR number %s identified from commits, not found in the PR list", sp))
-		log.Printf("PR number %s identified from commits, not found in the PR list", sp)
-	}
-
 	log.Printf("%d PRs match the commits from the git diff", len(prs))
 
-	return prs, consistencyErrors, nil
+	if len(prs) != len(selectedPRNumbers) {
+		return nil, errors.Errorf("expected %d PRs from commit list but only found %d", len(selectedPRNumbers), len(prs))
+	}
+
+	return prs, nil
 }
 
 var (
@@ -151,18 +145,18 @@ var (
 	tideSquashedCommitMessage = regexp.MustCompile(`(?m)^.+\(#(?P<number>\d+)\)$`)
 )
 
-func buildSetOfPRNumbers(commits []githubCommitNode) map[string]bool {
-	prNumbers := make(map[string]bool)
+func buildSetOfPRNumbers(commits []githubCommitNode) map[string]struct{} {
+	prNumbers := make(map[string]struct{})
 	for _, commit := range commits {
 		match := mergeCommitMessage.FindStringSubmatch(commit.Commit.Message)
 		if len(match) == 2 {
-			prNumbers[match[1]] = false
+			prNumbers[match[1]] = struct{}{}
 			continue
 		}
 
 		match = tideSquashedCommitMessage.FindStringSubmatch(commit.Commit.Message)
 		if len(match) == 2 {
-			prNumbers[match[1]] = false
+			prNumbers[match[1]] = struct{}{}
 		}
 	}
 

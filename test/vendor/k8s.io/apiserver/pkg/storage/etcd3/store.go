@@ -895,13 +895,7 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 	if err != nil {
 		return err
 	}
-	if err := s.versioner.UpdateList(listObj, uint64(withRev), continueValue, remainingItemCount); err != nil {
-		return err
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(features.ShardedListAndWatch) {
-		opts.Predicate.SetShardInfoOnList(listObj)
-	}
-	return nil
+	return s.versioner.UpdateList(listObj, uint64(withRev), continueValue, remainingItemCount)
 }
 
 func (s *store) getList(ctx context.Context, keyPrefix string, recursive bool, options kubernetes.ListOptions) (resp kubernetes.ListResponse, err error) {

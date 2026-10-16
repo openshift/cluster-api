@@ -21,7 +21,7 @@ import (
 	"crypto/x509"
 	"net"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 
 	"sigs.k8s.io/cluster-api/util/certs"
 )
@@ -34,14 +34,14 @@ func init() {
 	var err error
 	key, err = certs.NewPrivateKey()
 	if err != nil {
-		panic(pkgerrors.Wrap(err, "unable to create private key").Error())
+		panic(errors.Wrap(err, "unable to create private key").Error())
 	}
 }
 
 func newCertAndKey(caCert *x509.Certificate, caKey *rsa.PrivateKey, config *certs.Config) (*x509.Certificate, *rsa.PrivateKey, error) {
 	cert, err := config.NewSignedCert(key, caCert, caKey)
 	if err != nil {
-		return nil, nil, pkgerrors.Wrap(err, "unable to create certificate")
+		return nil, nil, errors.Wrap(err, "unable to create certificate")
 	}
 
 	return cert, key, nil

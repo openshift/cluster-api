@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -56,17 +55,17 @@ const (
 var defaultWatcherMaxLimit int64 = maxLimit
 
 // fatalOnDecodeError is used during testing to panic the server if watcher encounters a decoding error
-var fatalOnDecodeError atomic.Bool
+var fatalOnDecodeError = false
 
 func init() {
 	// check to see if we are running in a test environment
-	b, _ := strconv.ParseBool(os.Getenv("KUBE_PANIC_WATCH_DECODE_ERROR"))
-	TestOnlySetFatalOnDecodeError(b)
+	TestOnlySetFatalOnDecodeError(true)
+	fatalOnDecodeError, _ = strconv.ParseBool(os.Getenv("KUBE_PANIC_WATCH_DECODE_ERROR"))
 }
 
 // TestOnlySetFatalOnDecodeError should only be used for cases where decode errors are expected and need to be tested. e.g. conversion webhooks.
 func TestOnlySetFatalOnDecodeError(b bool) {
-	fatalOnDecodeError.Store(b)
+	fatalOnDecodeError = b
 }
 
 type watcher struct {
@@ -759,7 +758,7 @@ func (w *watcher) transformIfCorruptObjectError(e *event, err error) error {
 func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64) (_ runtime.Object, err error) {
 	obj, err := runtime.Decode(codec, []byte(data))
 	if err != nil {
-		if fatalOnDecodeError.Load() {
+		if fatalOnDecodeError {
 			// we are running in a test environment and thus an
 			// error here is due to a coder mistake if the defer
 			// does not catch it

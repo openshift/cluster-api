@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,7 +33,7 @@ import (
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -91,7 +91,7 @@ type CacheOptions struct {
 	DefaultTransform toolscache.TransformFunc
 
 	// ByObject restricts the cache's ListWatch to the desired fields per GVK at the specified object.
-	ByObject map[client.Object]ctrlcache.ByObject
+	ByObject map[client.Object]cache.ByObject
 
 	// Indexes are the indexes added to the cache.
 	Indexes []CacheOptionsIndex
@@ -204,7 +204,7 @@ var ErrClusterNotConnected = fmt.Errorf("connection to the workload cluster is d
 type Watcher interface {
 	Name() string
 	Object() client.Object
-	Watch(cache ctrlcache.Cache) error
+	Watch(cache cache.Cache) error
 }
 
 // SourceWatcher is a scoped-down interface from Controller that only has the Watch func.
@@ -266,7 +266,7 @@ type watcher[object client.Object, request comparable] struct {
 
 func (tw *watcher[object, request]) Name() string          { return tw.name }
 func (tw *watcher[object, request]) Object() client.Object { return tw.kind }
-func (tw *watcher[object, request]) Watch(cache ctrlcache.Cache) error {
+func (tw *watcher[object, request]) Watch(cache cache.Cache) error {
 	return tw.watcher.Watch(source.TypedKind[object, request](cache, tw.kind, tw.eventHandler, tw.predicates...))
 }
 
@@ -332,7 +332,6 @@ func SetupWithManager(ctx context.Context, mgr manager.Manager, options Options,
 		client:                mgr.GetClient(),
 		clusterAccessorConfig: buildClusterAccessorConfig(mgr.GetScheme(), options, controllerPodMetadata),
 		clusterAccessors:      make(map[client.ObjectKey]*clusterAccessor),
-		clusterFilter:         options.ClusterFilter,
 		cacheCtx:              cacheCtx,
 		cacheCtxCancel:        cacheCtxCancel,
 	}
@@ -343,9 +342,9 @@ func SetupWithManager(ctx context.Context, mgr manager.Manager, options Options,
 		For(&clusterv1.Cluster{}).
 		WithOptions(controllerOptions).
 		WithEventFilter(predicates.ResourceHasFilterLabel(mgr.GetScheme(), log, options.WatchFilterValue)).
-		Complete(ctx, cc)
+		Complete(cc)
 	if err != nil {
-		return nil, pkgerrors.WithMessage(err, "failed setting up ClusterCache with a controller manager")
+		return nil, errors.WithMessage(err, "failed setting up ClusterCache with a controller manager")
 	}
 
 	return cc, nil
@@ -401,7 +400,7 @@ type clusterSource struct {
 func (cc *clusterCache) GetClient(ctx context.Context, cluster client.ObjectKey) (client.Client, error) {
 	accessor := cc.getClusterAccessor(cluster)
 	if accessor == nil {
-		return nil, pkgerrors.WithMessage(ErrClusterNotConnected, "error getting client")
+		return nil, errors.WithMessage(ErrClusterNotConnected, "error getting client")
 	}
 	return accessor.GetClient(ctx)
 }
@@ -409,7 +408,7 @@ func (cc *clusterCache) GetClient(ctx context.Context, cluster client.ObjectKey)
 func (cc *clusterCache) GetReader(ctx context.Context, cluster client.ObjectKey) (client.Reader, error) {
 	accessor := cc.getClusterAccessor(cluster)
 	if accessor == nil {
-		return nil, pkgerrors.WithMessage(ErrClusterNotConnected, "error getting client reader")
+		return nil, errors.WithMessage(ErrClusterNotConnected, "error getting client reader")
 	}
 	return accessor.GetReader(ctx)
 }
@@ -419,7 +418,7 @@ func (cc *clusterCache) GetReader(ctx context.Context, cluster client.ObjectKey)
 func (cc *clusterCache) GetUncachedClient(ctx context.Context, cluster client.ObjectKey) (client.Client, error) {
 	accessor := cc.getClusterAccessor(cluster)
 	if accessor == nil {
-		return nil, pkgerrors.WithMessage(ErrClusterNotConnected, "error getting uncached client")
+		return nil, errors.WithMessage(ErrClusterNotConnected, "error getting uncached client")
 	}
 	return accessor.GetUncachedClient(ctx)
 }
@@ -427,7 +426,7 @@ func (cc *clusterCache) GetUncachedClient(ctx context.Context, cluster client.Ob
 func (cc *clusterCache) GetRESTConfig(ctx context.Context, cluster client.ObjectKey) (*rest.Config, error) {
 	accessor := cc.getClusterAccessor(cluster)
 	if accessor == nil {
-		return nil, pkgerrors.WithMessage(ErrClusterNotConnected, "error getting REST config")
+		return nil, errors.WithMessage(ErrClusterNotConnected, "error getting REST config")
 	}
 	return accessor.GetRESTConfig(ctx)
 }
@@ -435,7 +434,7 @@ func (cc *clusterCache) GetRESTConfig(ctx context.Context, cluster client.Object
 func (cc *clusterCache) Watch(ctx context.Context, cluster client.ObjectKey, watcher Watcher) error {
 	accessor := cc.getClusterAccessor(cluster)
 	if accessor == nil {
-		return pkgerrors.WithMessagef(ErrClusterNotConnected, "error creating watch %s for %T", watcher.Name(), watcher.Object())
+		return errors.WithMessagef(ErrClusterNotConnected, "error creating watch %s for %T", watcher.Name(), watcher.Object())
 	}
 	return accessor.Watch(ctx, watcher)
 }
@@ -462,7 +461,12 @@ func (cc *clusterCache) Reconcile(ctx context.Context, req reconcile.Request) (r
 	if err := cc.client.Get(ctx, req.NamespacedName, cluster); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Info("Cluster has been deleted, disconnecting")
-			cc.cleanupForCluster(ctx, clusterKey)
+			accessor := cc.getClusterAccessor(clusterKey)
+			if accessor != nil {
+				accessor.Disconnect(ctx)
+			}
+			cc.deleteClusterAccessor(clusterKey)
+			cc.cleanupClusterSourcesForCluster(clusterKey)
 			return ctrl.Result{}, nil
 		}
 
@@ -474,7 +478,12 @@ func (cc *clusterCache) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// Apply cluster filter if set
 	if cc.clusterFilter != nil && !cc.clusterFilter(cluster) {
 		log.V(6).Info("Cluster filtered out by ClusterFilter, not connecting")
-		cc.cleanupForCluster(ctx, clusterKey)
+		accessor := cc.getClusterAccessor(clusterKey)
+		if accessor != nil {
+			accessor.Disconnect(ctx)
+		}
+		cc.deleteClusterAccessor(clusterKey)
+		cc.cleanupClusterSourcesForCluster(clusterKey)
 		return ctrl.Result{}, nil
 	}
 
@@ -638,23 +647,6 @@ func (cc *clusterCache) cleanupClusterSourcesForCluster(cluster client.ObjectKey
 	}
 }
 
-func (cc *clusterCache) cleanupMetricsForCluster(cluster client.ObjectKey) {
-	healthCheck.DeleteLabelValues(cluster.Name, cluster.Namespace)
-	connectionUp.DeleteLabelValues(cluster.Name, cluster.Namespace)
-	healthChecksTotal.DeleteLabelValues(cluster.Name, cluster.Namespace, "success")
-	healthChecksTotal.DeleteLabelValues(cluster.Name, cluster.Namespace, "error")
-}
-
-func (cc *clusterCache) cleanupForCluster(ctx context.Context, cluster client.ObjectKey) {
-	accessor := cc.getClusterAccessor(cluster)
-	if accessor != nil {
-		accessor.Disconnect(ctx)
-	}
-	cc.deleteClusterAccessor(cluster)
-	cc.cleanupClusterSourcesForCluster(cluster)
-	cc.cleanupMetricsForCluster(cluster)
-}
-
 func (cc *clusterCache) GetClusterSource(controllerName string, mapFunc func(ctx context.Context, cluster client.Object) []ctrl.Request, opts ...GetClusterSourceOption) source.Source {
 	cc.clusterSourcesLock.Lock()
 	defer cc.clusterSourcesLock.Unlock()
@@ -731,12 +723,12 @@ func (cc *clusterCache) SetConnectionCreationRetryInterval(interval time.Duratio
 // This method should only be used for tests because it hasn't been designed for production usage
 // in a manager (race conditions with manager shutdown etc.).
 func (cc *clusterCache) Shutdown() {
-	cc.cacheCtxCancel(pkgerrors.New("ClusterCache is shutdown"))
+	cc.cacheCtxCancel(errors.New("ClusterCache is shutdown"))
 }
 
 func validateAndDefaultOptions(opts *Options) error {
 	if opts.SecretClient == nil {
-		return pkgerrors.New("options.SecretClient must be set")
+		return errors.New("options.SecretClient must be set")
 	}
 
 	if opts.Client.Timeout.Nanoseconds() == 0 {
@@ -749,7 +741,7 @@ func validateAndDefaultOptions(opts *Options) error {
 		opts.Client.Burst = 30
 	}
 	if opts.Client.UserAgent == "" {
-		return pkgerrors.New("options.Client.UserAgent must be set")
+		return errors.New("options.Client.UserAgent must be set")
 	}
 
 	return nil

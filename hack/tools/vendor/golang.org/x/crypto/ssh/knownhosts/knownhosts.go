@@ -142,15 +142,6 @@ func keyEq(a, b ssh.PublicKey) bool {
 	return bytes.Equal(a.Marshal(), b.Marshal())
 }
 
-// plainKeyBlob returns the serialized public portion of key: for a
-// certificate this is the certified key, otherwise the key itself.
-func plainKeyBlob(key ssh.PublicKey) string {
-	if cert, ok := key.(*ssh.Certificate); ok {
-		return string(cert.Key.Marshal())
-	}
-	return string(key.Marshal())
-}
-
 // IsHostAuthority can be used as a callback in ssh.CertChecker
 func (db *hostKeyDB) IsHostAuthority(remote ssh.PublicKey, address string) bool {
 	h, p, err := net.SplitHostPort(address)
@@ -169,10 +160,10 @@ func (db *hostKeyDB) IsHostAuthority(remote ssh.PublicKey, address string) bool 
 
 // IsRevoked can be used as a callback in ssh.CertChecker
 func (db *hostKeyDB) IsRevoked(key *ssh.Certificate) bool {
-	if _, ok := db.revoked[plainKeyBlob(key)]; ok {
+	if _, ok := db.revoked[string(key.Marshal())]; ok {
 		return true
 	}
-	if _, ok := db.revoked[plainKeyBlob(key.SignatureKey)]; ok {
+	if _, ok := db.revoked[string(key.SignatureKey.Marshal())]; ok {
 		return true
 	}
 	return false
@@ -237,7 +228,7 @@ func (db *hostKeyDB) parseLine(line []byte, filename string, linenum int) error 
 	}
 
 	if marker == markerRevoked {
-		db.revoked[plainKeyBlob(key)] = &KnownKey{
+		db.revoked[string(key.Marshal())] = &KnownKey{
 			Key:      key,
 			Filename: filename,
 			Line:     linenum,
@@ -350,7 +341,7 @@ func (r *RevokedError) Error() string {
 // check checks a key against the host database. This should not be
 // used for verifying certificates.
 func (db *hostKeyDB) check(address string, remote net.Addr, remoteKey ssh.PublicKey) error {
-	if revoked := db.revoked[plainKeyBlob(remoteKey)]; revoked != nil {
+	if revoked := db.revoked[string(remoteKey.Marshal())]; revoked != nil {
 		return &RevokedError{Revoked: *revoked}
 	}
 

@@ -332,7 +332,6 @@ func (l *tcpListener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 	go DiscardRequests(incoming)
-	go io.Copy(io.Discard, ch.Stderr())
 
 	return &chanConn{
 		Channel: ch,
@@ -496,7 +495,6 @@ func (c *Client) dial(laddr string, lport int, raddr string, rport int) (Channel
 		return nil, err
 	}
 	go DiscardRequests(in)
-	go io.Copy(io.Discard, ch.Stderr())
 	return ch, nil
 }
 

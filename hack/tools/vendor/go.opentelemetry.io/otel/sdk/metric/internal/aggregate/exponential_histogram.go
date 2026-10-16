@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package aggregate
+package aggregate // import "go.opentelemetry.io/otel/sdk/metric/internal/aggregate"
 
 import (
 	"context"
@@ -26,9 +26,8 @@ const (
 
 // expoHistogramDataPoint is a single data point in an exponential histogram.
 type expoHistogramDataPoint[N int64 | float64] struct {
-	attrs         attribute.Set
-	res           FilteredExemplarReservoir[N]
-	dropExemplars bool
+	attrs attribute.Set
+	res   FilteredExemplarReservoir[N]
 
 	minMax atomicMinMax[N]
 	sum    atomicCounter[N]
@@ -350,18 +349,13 @@ func (e *expoHistogram[N]) measure(
 		v, ok = e.values[fltrAttr.Equivalent()]
 		if !ok {
 			v = newExpoHistogramDataPoint[N](fltrAttr, e.maxSize, e.maxScale, e.noMinMax, e.noSum)
-			r := e.newRes(fltrAttr)
-			_, isDrop := r.(*dropRes[N])
-			v.res = r
-			v.dropExemplars = isDrop
+			v.res = e.newRes(fltrAttr)
 
 			e.values[fltrAttr.Equivalent()] = v
 		}
 	}
 	v.record(value)
-	if !v.dropExemplars {
-		v.res.Offer(ctx, value, droppedAttr)
-	}
+	v.res.Offer(ctx, value, droppedAttr)
 }
 
 func (e *expoHistogram[N]) delta(
@@ -412,15 +406,12 @@ func (e *expoHistogram[N]) delta(
 
 		if !e.noSum {
 			hDPts[i].Sum = val.sum.load()
-		} else {
-			hDPts[i].Sum = 0
 		}
-		if !e.noMinMax && val.minMax.set.Load() {
-			hDPts[i].Min = metricdata.NewExtrema(val.minMax.minimum.Load())
-			hDPts[i].Max = metricdata.NewExtrema(val.minMax.maximum.Load())
-		} else {
-			hDPts[i].Min = metricdata.Extrema[N]{}
-			hDPts[i].Max = metricdata.Extrema[N]{}
+		if !e.noMinMax {
+			if val.minMax.set.Load() {
+				hDPts[i].Min = metricdata.NewExtrema(val.minMax.minimum.Load())
+				hDPts[i].Max = metricdata.NewExtrema(val.minMax.maximum.Load())
+			}
 		}
 
 		collectExemplars(&hDPts[i].Exemplars, val.res.Collect)
@@ -491,15 +482,12 @@ func (e *expoHistogram[N]) cumulative(
 
 		if !e.noSum {
 			hDPts[i].Sum = val.sum.load()
-		} else {
-			hDPts[i].Sum = 0
 		}
-		if !e.noMinMax && val.minMax.set.Load() {
-			hDPts[i].Min = metricdata.NewExtrema(val.minMax.minimum.Load())
-			hDPts[i].Max = metricdata.NewExtrema(val.minMax.maximum.Load())
-		} else {
-			hDPts[i].Min = metricdata.Extrema[N]{}
-			hDPts[i].Max = metricdata.Extrema[N]{}
+		if !e.noMinMax {
+			if val.minMax.set.Load() {
+				hDPts[i].Min = metricdata.NewExtrema(val.minMax.minimum.Load())
+				hDPts[i].Max = metricdata.NewExtrema(val.minMax.maximum.Load())
+			}
 		}
 
 		collectExemplars(&hDPts[i].Exemplars, val.res.Collect)

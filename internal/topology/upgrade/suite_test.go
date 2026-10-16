@@ -29,17 +29,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
-	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/api/core/v1beta2/index"
+	"sigs.k8s.io/cluster-api/controllers"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
-	"sigs.k8s.io/cluster-api/core/reconcilers/clusterclass"
-	topologycluster "sigs.k8s.io/cluster-api/core/reconcilers/topology/cluster"
-	"sigs.k8s.io/cluster-api/core/setup"
+	"sigs.k8s.io/cluster-api/internal/controllers/clusterclass"
 	fakeruntimeclient "sigs.k8s.io/cluster-api/internal/runtime/client/fake"
+	"sigs.k8s.io/cluster-api/internal/setup"
 	"sigs.k8s.io/cluster-api/internal/test/envtest"
-	"sigs.k8s.io/cluster-api/util/index"
 )
 
 var (
@@ -84,7 +83,7 @@ func TestMain(m *testing.M) {
 			clusterCache.(interface{ Shutdown() }).Shutdown()
 		}()
 
-		if err := (&topologycluster.Reconciler{
+		if err := (&controllers.ClusterTopologyReconciler{
 			Client:        mgr.GetClient(),
 			APIReader:     mgr.GetAPIReader(),
 			ClusterCache:  clusterCache,
@@ -102,10 +101,8 @@ func TestMain(m *testing.M) {
 	SetDefaultEventuallyPollingInterval(100 * time.Millisecond)
 	SetDefaultEventuallyTimeout(30 * time.Second)
 	os.Exit(envtest.Run(ctx, envtest.RunInput{
-		M: m,
-		SetupManagerCacheOptions: func(scheme *runtime.Scheme) ctrlcache.Options {
-			return setup.ManagerCacheOptions(scheme, "test-controller-manager", "", 10*time.Minute)
-		},
+		M:                    m,
+		ManagerCacheOptions:  setup.ManagerCacheOptions("", 10*time.Minute),
 		ManagerClientOptions: setup.ManagerClientOptions(),
 		SetupEnv:             func(e *envtest.Environment) { env = e },
 		SetupIndexes:         setupIndexes,

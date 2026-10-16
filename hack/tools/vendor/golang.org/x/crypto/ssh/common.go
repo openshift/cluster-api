@@ -419,7 +419,7 @@ type AlgorithmNegotiationError struct {
 }
 
 func (a *AlgorithmNegotiationError) Error() string {
-	return fmt.Sprintf("ssh: no common algorithm for %s; we offered: %q, peer offered: %q",
+	return fmt.Sprintf("ssh: no common algorithm for %s; we offered: %v, peer offered: %v",
 		a.What, a.SupportedAlgorithms, a.RequestedAlgorithms)
 }
 
@@ -544,7 +544,7 @@ func (c *Config) SetDefaults() {
 	if c.Rand == nil {
 		c.Rand = rand.Reader
 	}
-	if len(c.Ciphers) == 0 {
+	if c.Ciphers == nil {
 		c.Ciphers = defaultCiphers
 	}
 	var ciphers []string
@@ -556,7 +556,7 @@ func (c *Config) SetDefaults() {
 	}
 	c.Ciphers = ciphers
 
-	if len(c.KeyExchanges) == 0 {
+	if c.KeyExchanges == nil {
 		c.KeyExchanges = defaultKexAlgos
 	}
 	var kexs []string
@@ -571,7 +571,7 @@ func (c *Config) SetDefaults() {
 	}
 	c.KeyExchanges = kexs
 
-	if len(c.MACs) == 0 {
+	if c.MACs == nil {
 		c.MACs = defaultMACs
 	}
 	var macs []string

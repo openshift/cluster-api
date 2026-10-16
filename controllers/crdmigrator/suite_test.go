@@ -22,12 +22,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/component-base/logs"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
-	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -52,16 +51,14 @@ func TestMain(m *testing.M) {
 
 	os.Exit(envtest.Run(ctx, envtest.RunInput{
 		M: m,
-		SetupManagerCacheOptions: func(_ *runtime.Scheme) ctrlcache.Options {
-			return ctrlcache.Options{
-				ByObject: map[client.Object]ctrlcache.ByObject{
-					// Only cache Secrets with the cluster name label.
-					// This is similar to the real world.
-					&corev1.Secret{}: {
-						Label: clusterSecretCacheSelector,
-					},
+		ManagerCacheOptions: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				// Only cache Secrets with the cluster name label.
+				// This is similar to the real world.
+				&corev1.Secret{}: {
+					Label: clusterSecretCacheSelector,
 				},
-			}
+			},
 		},
 		SetupEnv: func(e *envtest.Environment) { env = e },
 	}))

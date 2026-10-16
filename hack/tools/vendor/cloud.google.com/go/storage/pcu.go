@@ -47,8 +47,6 @@ const (
 //
 // **Note:** This feature is currently experimental and its API surface may change
 // in future releases. It is not yet recommended for production use.
-//
-// TODO(b/521239530): Add option to delete source parts after compose operation and remove cleanup logic.
 type ParallelUploadConfig struct {
 
 	// PartSize is the size of each part to be uploaded in parallel.
@@ -184,8 +182,7 @@ func (w *Writer) initPCU(ctx context.Context) error {
 	// Track PCU operations using client feature tracking header.
 	ctx = addFeatureAttributes(ctx, featurePCU)
 
-	bgCtx := contextWithoutMetrics(ctx)
-	pCtx, cancel := context.WithCancel(bgCtx)
+	pCtx, cancel := context.WithCancel(ctx)
 
 	state := &pcuState{
 		ctx:             pCtx,

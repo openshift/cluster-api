@@ -20,7 +20,6 @@ updates:
 - package-ecosystem: "gomod"
   directories:
   - "/"
-  - "/api"
   - "/test"
   - "/hack/tools"
   schedule:

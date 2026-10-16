@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 
@@ -42,7 +42,7 @@ var versionCmd = &cobra.Command{
 	Use:     "version",
 	GroupID: groupOther,
 	Short:   "Print clusterctl version",
-	Args:    helpOnErrorArgs(cobra.NoArgs),
+	Args:    cobra.NoArgs,
 	RunE: func(*cobra.Command, []string) error {
 		return runVersion()
 	},
@@ -78,7 +78,7 @@ func runVersion() error {
 		}
 		fmt.Println(string(y))
 	default:
-		return pkgerrors.Errorf("invalid output format: %s", vo.output)
+		return errors.Errorf("invalid output format: %s", vo.output)
 	}
 
 	return nil

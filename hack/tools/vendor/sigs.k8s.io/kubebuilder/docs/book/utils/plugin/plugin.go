@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 )
 
@@ -64,9 +65,7 @@ func Run(plug Plugin, inputRaw io.Reader, outputRaw io.Writer, args ...string) e
 		return fmt.Errorf("unable to write output book object: %v", err)
 	}
 
-	if err = os.WriteFile("/tmp/litout.json", out, os.ModePerm); err != nil {
-		return fmt.Errorf("unable to write output book object: %v", err)
-	}
+	ioutil.WriteFile("/tmp/litout.json", out, os.ModePerm)
 
 	return nil
 }

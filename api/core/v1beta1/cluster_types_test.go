@@ -17,8 +17,9 @@ limitations under the License.
 package v1beta1
 
 import (
-	"strings"
 	"testing"
+
+	. "github.com/onsi/gomega"
 )
 
 func TestClusterIPFamily(t *testing.T) {
@@ -91,13 +92,10 @@ func TestClusterIPFamily(t *testing.T) {
 
 	for _, tt := range validAndUnambiguous {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			ipFamily, err := tt.c.GetIPFamily()
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if ipFamily != tt.expectRes {
-				t.Fatalf("Expected %s to equal %s", ipFamily, tt.expectRes)
-			}
+			g.Expect(ipFamily).To(Equal(tt.expectRes))
+			g.Expect(err).ToNot(HaveOccurred())
 		})
 	}
 
@@ -128,13 +126,10 @@ func TestClusterIPFamily(t *testing.T) {
 
 	for _, tt := range validButAmbiguous {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			ipFamily, err := tt.c.GetIPFamily()
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if ipFamily != tt.expectRes {
-				t.Fatalf("Expected %s to equal %s", ipFamily, tt.expectRes)
-			}
+			g.Expect(ipFamily).To(Equal(tt.expectRes))
+			g.Expect(err).ToNot(HaveOccurred())
 		})
 	}
 
@@ -192,16 +187,11 @@ func TestClusterIPFamily(t *testing.T) {
 
 	for _, tt := range invalid {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			ipFamily, err := tt.c.GetIPFamily()
-			if err == nil {
-				t.Fatal("Expected error but didn't return one")
-			}
-			if !strings.Contains(err.Error(), tt.expectErr) {
-				t.Fatalf("Expected %s to contain substring %s", err.Error(), tt.expectErr)
-			}
-			if ipFamily != InvalidIPFamily {
-				t.Fatalf("Expected %s to equal %s", ipFamily, InvalidIPFamily)
-			}
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(err).To(MatchError(ContainSubstring(tt.expectErr)))
+			g.Expect(ipFamily).To(Equal(InvalidIPFamily))
 		})
 	}
 }

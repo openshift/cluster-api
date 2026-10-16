@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -178,7 +178,7 @@ func Test_clusterctlClient_InitImages(t *testing.T) {
 				kubeconfigContext: "mgmt-context",
 			},
 			wantErr:              true,
-			certManagerImagesErr: pkgerrors.New("failed to get cert images"),
+			certManagerImagesErr: errors.New("failed to get cert images"),
 		},
 	}
 

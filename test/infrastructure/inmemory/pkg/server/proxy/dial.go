@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"time"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
@@ -43,7 +43,7 @@ type Dialer struct {
 // NewDialer creates a new dialer for a given API server scope.
 func NewDialer(p Proxy, options ...func(*Dialer) error) (*Dialer, error) {
 	if p.Port == 0 {
-		return nil, pkgerrors.New("port required")
+		return nil, errors.New("port required")
 	}
 
 	dialer := &Dialer{
@@ -75,23 +75,13 @@ func (d *Dialer) DialContextWithAddr(ctx context.Context, addr string) (net.Conn
 }
 
 // DialContext creates proxied port-forwarded connections.
-func (d *Dialer) DialContext(ctx context.Context, _ string, addr string) (net.Conn, error) {
-	// Check if context is already cancelled or timed out
-	select {
-	case <-ctx.Done():
-		return nil, pkgerrors.Wrap(ctx.Err(), "context cancelled before establishing connection")
-	default:
-	}
-
+// ctx is currently unused, but fulfils the type signature used by GRPC.
+func (d *Dialer) DialContext(_ context.Context, _ string, addr string) (net.Conn, error) {
 	proxyTransport, upgrader, err := spdy.RoundTripperFor(d.proxy.KubeConfig)
 	if err != nil {
 		return nil, err
 	}
-
 	httpClient := &http.Client{Transport: proxyTransport}
-	if deadline, ok := ctx.Deadline(); ok {
-		httpClient.Timeout = time.Until(deadline)
-	}
 
 	req := d.clientset.CoreV1().RESTClient().
 		Post().
@@ -107,7 +97,7 @@ func (d *Dialer) DialContext(ctx context.Context, _ string, addr string) (net.Co
 	// Warning: Any early return should close this connection, otherwise we're going to leak them.
 	connection, _, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
 	if err != nil {
-		return nil, pkgerrors.Wrap(err, "error upgrading connection")
+		return nil, errors.Wrap(err, "error upgrading connection")
 	}
 
 	// Create the headers.
@@ -144,21 +134,23 @@ func (d *Dialer) DialContext(ctx context.Context, _ string, addr string) (net.Co
 	dataStream, err := connection.CreateStream(headers)
 	if err != nil {
 		return nil, kerrors.NewAggregate([]error{
-			pkgerrors.Wrap(err, "error creating forwarding stream"),
+			errors.Wrap(err, "error creating forwarding stream"),
 			connection.Close(),
 		})
 	}
 
 	// Create the net.Conn and return.
-	// If there is context deadline, also apply it to the stream inside the connection.
-	conn := NewConn(connection, dataStream)
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := conn.SetDeadline(deadline); err != nil {
-			return nil, kerrors.NewAggregate([]error{
-				err,
-				connection.Close(),
-			})
-		}
+	return NewConn(connection, dataStream), nil
+}
+
+// DialTimeout sets the timeout.
+func DialTimeout(duration time.Duration) func(*Dialer) error {
+	return func(d *Dialer) error {
+		return d.setTimeout(duration)
 	}
-	return conn, nil
+}
+
+func (d *Dialer) setTimeout(duration time.Duration) error {
+	d.timeout = duration
+	return nil
 }

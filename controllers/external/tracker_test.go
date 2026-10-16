@@ -21,7 +21,7 @@ import (
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/gomega"
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
@@ -58,7 +58,7 @@ func newWatchCountController(raiseError bool) *watchCountController {
 func (c *watchCountController) Watch(_ source.Source) error {
 	c.count++
 	if c.raiseError {
-		return pkgerrors.New("injected failure")
+		return errors.New("injected failure")
 	}
 	return nil
 }

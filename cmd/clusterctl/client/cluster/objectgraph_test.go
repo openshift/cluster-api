@@ -23,8 +23,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	pkgerrors "github.com/pkg/errors"
-	corev1 "k8s.io/api/core/v1"
+	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -1709,7 +1708,7 @@ func getDetachedObjectGraphWihObjs(objs []client.Object) (*objectGraph, error) {
 	for _, o := range objs {
 		u := &unstructured.Unstructured{}
 		if err := test.FakeScheme.Convert(o, u, nil); err != nil {
-			return nil, pkgerrors.Wrap(err, "failed to convert object in unstructured")
+			return nil, errors.Wrap(err, "failed to convert object in unstructured")
 		}
 		if err := graph.addObj(u); err != nil {
 			return nil, err
@@ -2774,43 +2773,4 @@ func deduplicateObjects(objs []client.Object) []client.Object {
 		}
 	}
 	return res
-}
-
-func TestCycleSafeguards(t *testing.T) {
-	g := NewWithT(t)
-
-	o := newObjectGraph(nil, nil)
-
-	// Cluster root (forceMoveHierarchy) with an A <-> B ownerReference cycle,
-	// both reachable from the root.
-	c := newGraphNode("cluster")
-	c.forceMoveHierarchy = true
-	a := newGraphNode("secret-a")
-	b := newGraphNode("secret-b")
-	a.addOwner(c, ownerReferenceAttributes{})
-	a.addOwner(b, ownerReferenceAttributes{})
-	b.addOwner(a, ownerReferenceAttributes{})
-
-	o.uidToNode[c.identity.UID] = c
-	o.uidToNode[a.identity.UID] = a
-	o.uidToNode[b.identity.UID] = b
-
-	// setTenants should not fail with stack overflow.
-	o.setTenants()
-	g.Expect(a.tenant).To(HaveKey(c))
-	g.Expect(b.tenant).To(HaveKey(c))
-
-	// setShouldNotDeleteHierarchy should not fail with stack overflow.
-	o.setShouldNotDeleteHierarchy(c)
-	g.Expect(a.shouldNotDelete).To(BeTrue())
-	g.Expect(b.shouldNotDelete).To(BeTrue())
-}
-
-func newGraphNode(uid string) *node {
-	return &node{
-		identity:   corev1.ObjectReference{UID: types.UID(uid), Name: uid},
-		owners:     map[*node]ownerReferenceAttributes{},
-		softOwners: map[*node]empty{},
-		tenant:     map[*node]empty{},
-	}
 }

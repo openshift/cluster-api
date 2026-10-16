@@ -22,7 +22,7 @@ import (
 	"regexp"
 	"strings"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 	"sigs.k8s.io/yaml"
 
 	"sigs.k8s.io/cluster-api/test/infrastructure/docker/internal/provisioning"
@@ -58,7 +58,7 @@ type action interface {
 func RawCloudInitToProvisioningCommands(config []byte, mapping kind.Mapping) ([]provisioning.Cmd, error) {
 	// validate cloudConfigScript is a valid yaml, as required by the cloud config specification
 	if err := yaml.Unmarshal(config, &map[string]interface{}{}); err != nil {
-		return nil, pkgerrors.Wrapf(err, "cloud-config is not valid yaml")
+		return nil, errors.Wrapf(err, "cloud-config is not valid yaml")
 	}
 
 	// parse the cloud config yaml into a slice of cloud config actions.
@@ -99,7 +99,7 @@ func getActions(userData []byte, mapping kind.Mapping) ([]action, error) {
 			if act != nil {
 				actionBlock := strings.Join(lines, "\n")
 				if err := act.Unmarshal([]byte(actionBlock), mapping); err != nil {
-					return nil, pkgerrors.WithStack(err)
+					return nil, errors.WithStack(err)
 				}
 				actions = append(actions, act)
 				lines = lines[:0]
@@ -117,7 +117,7 @@ func getActions(userData []byte, mapping kind.Mapping) ([]action, error) {
 	if act != nil {
 		actionBlock := strings.Join(lines, "\n")
 		if err := act.Unmarshal([]byte(actionBlock), mapping); err != nil {
-			return nil, pkgerrors.WithStack(err)
+			return nil, errors.WithStack(err)
 		}
 		actions = append(actions, act)
 	}

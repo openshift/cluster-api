@@ -22,7 +22,7 @@ package main
 import (
 	"strings"
 
-	pkgerrors "github.com/pkg/errors"
+	"github.com/pkg/errors"
 )
 
 // ref represents a git reference.
@@ -47,7 +47,7 @@ func parseRef(r string) ref {
 func validateRef(r string) error {
 	split := strings.SplitN(r, "/", 2)
 	if len(split) != 2 {
-		return pkgerrors.Errorf("invalid ref %s: must follow [type]/[value]", r)
+		return errors.Errorf("invalid ref %s: must follow [type]/[value]", r)
 	}
 
 	return nil

@@ -101,11 +101,11 @@ spec:
                   apiVersion: pod-security.admission.config.k8s.io/v1{{ if semverCompare "< v1.25" .builtin.controlPlane.version }}beta1{{ end }}
                   kind: PodSecurityConfiguration
                   defaults:
-                    enforce: "{{ .podSecurityStandard.enforce }}"
+                    enforce: "{{ .podSecurity.enforce }}"
                     enforce-version: "latest"
-                    audit: "{{ .podSecurityStandard.audit }}"
+                    audit: "{{ .podSecurity.audit }}"
                     audit-version: "latest"
-                    warn: "{{ .podSecurityStandard.warn }}"
+                    warn: "{{ .podSecurity.warn }}"
                     warn-version: "latest"
                   exemptions:
                     usernames: []
@@ -167,11 +167,11 @@ spec:
                     apiVersion: pod-security.admission.config.k8s.io/v1{{ if semverCompare "< v1.25" .builtin.controlPlane.version }}beta1{{ end }}
                     kind: PodSecurityConfiguration
                     defaults:
-                      enforce: "{{ .podSecurityStandard.enforce }}"
+                      enforce: "{{ .podSecurity.enforce }}"
                       enforce-version: "latest"
-                      audit: "{{ .podSecurityStandard.audit }}"
+                      audit: "{{ .podSecurity.audit }}"
                       audit-version: "latest"
-                      warn: "{{ .podSecurityStandard.warn }}"
+                      warn: "{{ .podSecurity.warn }}"
                       warn-version: "latest"
                     exemptions:
                       usernames: []
