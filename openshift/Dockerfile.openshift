@@ -15,6 +15,7 @@ COPY --from=builder /build/manager /manager
 COPY openshift/manifests /manifests
 COPY openshift/capi-operator-manifests /capi-operator-manifests
 
+USER 65532
 ENTRYPOINT [ "/manager" ]
 
 LABEL io.openshift.release.operator true
