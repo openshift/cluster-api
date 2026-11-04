@@ -10,9 +10,9 @@ manager. It does not run CAPI controllers, admission webhooks, or leader electio
 The [release bundle](../manifests/0000_30_cluster-api_03_capi-ipam-conversion-webhook.yaml)
 deploys one replica with dedicated RBAC, Service, and NetworkPolicy in the shared
 `openshift-cluster-api` namespace supplied by the Cluster CAPI Operator (CCAPIO).
-It requires the ClusterAPI capability and `ClusterAPIOperator` feature gate and
-supports self-managed HA and single-node installations. MachineAPI-only capability
-configurations and hosted installations are outside this deployment's scope.
+It requires the `ClusterAPIOperator` feature gate and supports self-managed HA
+and single-node installations. Hosted installations are outside this deployment's
+scope.
 
 The binary ships in the existing `cluster-capi-controllers` image. Its Deployment
 runs `/capi-ipam-conversion-webhook`; `/manager` remains the image's default
@@ -26,9 +26,12 @@ the process so Kubernetes restarts it with the updated settings.
 
 ## CRD lifecycle
 
-The [standalone IPAM CRDs](../ipam/kustomization.yaml) use this Service while
-`ClusterAPIMachineManagement` is disabled. All three API versions are served;
-`v1beta1` remains the sole storage version for rollback compatibility.
+With both `ClusterAPIOperator` enabled and `ClusterAPIMachineManagement` disabled,
+the [new standalone IPAM CRDs](../ipam/kustomization.yaml) use this Service. All
+three API versions are served; `v1beta1` remains the sole storage version for
+rollback compatibility. With both feature gates disabled, the
+[legacy standalone CRDs](../manifests/0000_30_cluster-api_04_crd.core-cluster-api-legacy.yaml)
+remain installed without conversion webhook configuration.
 
 The full-provider CRDs retain their existing conversion endpoint and
 `capi-operator.openshift.io/adopt-existing: "always"` annotation, allowing CCAPIO

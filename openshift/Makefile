@@ -25,6 +25,7 @@ update-manifests-gen:
 
 .PHONY: ipam-manifests
 ipam-manifests: $(KUSTOMIZE)
+	$(KUSTOMIZE) build ipam-legacy -o manifests/0000_30_cluster-api_04_crd.core-cluster-api-legacy.yaml
 	$(KUSTOMIZE) build ipam -o manifests/0000_30_cluster-api_04_crd.core-cluster-api.yaml
 
 .PHONY: capi-ipam-conversion-webhook
