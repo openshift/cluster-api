@@ -1,0 +1,199 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: capi-ipam-conversion-webhook
+  namespace: openshift-cluster-api
+  annotations:
+    capability.openshift.io/name: ClusterAPI
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: ClusterAPIOperator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: capi-ipam-conversion-webhook
+  annotations:
+    capability.openshift.io/name: ClusterAPI
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: ClusterAPIOperator
+rules:
+- apiGroups:
+  - config.openshift.io
+  resources:
+  - apiservers
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: capi-ipam-conversion-webhook
+  annotations:
+    capability.openshift.io/name: ClusterAPI
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: ClusterAPIOperator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: capi-ipam-conversion-webhook
+subjects:
+- kind: ServiceAccount
+  name: capi-ipam-conversion-webhook
+  namespace: openshift-cluster-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: capi-ipam-conversion-webhook
+  namespace: openshift-cluster-api
+  annotations:
+    capability.openshift.io/name: ClusterAPI
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: ClusterAPIOperator
+    service.beta.openshift.io/serving-cert-secret-name: capi-ipam-conversion-webhook-cert
+spec:
+  selector:
+    app: capi-ipam-conversion-webhook
+  ports:
+  - name: https
+    port: 443
+    targetPort: webhook-server
+    protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capi-ipam-conversion-webhook
+  namespace: openshift-cluster-api
+  annotations:
+    capability.openshift.io/name: ClusterAPI
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: ClusterAPIOperator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: capi-ipam-conversion-webhook
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: capi-ipam-conversion-webhook
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+        openshift.io/required-scc: restricted-v2
+    spec:
+      serviceAccountName: capi-ipam-conversion-webhook
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: system-cluster-critical
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: capi-ipam-conversion-webhook
+        image: registry.ci.openshift.org/openshift:cluster-capi-controllers
+        imagePullPolicy: IfNotPresent
+        command:
+        - /capi-ipam-conversion-webhook
+        ports:
+        - name: webhook-server
+          containerPort: 9443
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 10m
+            memory: 50Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          # The shared namespace bypasses SCC admission, so set IDs explicitly.
+          runAsGroup: 65532
+          runAsUser: 65532
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: serving-cert
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+        startupProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /healthz
+            port: webhook-server
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /healthz
+            port: webhook-server
+        readinessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /readyz
+            port: webhook-server
+      volumes:
+      - name: serving-cert
+        secret:
+          secretName: capi-ipam-conversion-webhook-cert
+          optional: false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: capi-ipam-conversion-webhook
+  namespace: openshift-cluster-api
+  annotations:
+    capability.openshift.io/name: ClusterAPI
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-gate: ClusterAPIOperator
+spec:
+  podSelector:
+    matchLabels:
+      app: capi-ipam-conversion-webhook
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 9443
+  egress:
+  - ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
