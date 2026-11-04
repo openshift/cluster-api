@@ -5,7 +5,7 @@ COPY . .
 RUN GO111MODULE=on CGO_ENABLED=0 GOOS=${GOOS} GOPROXY=${GOPROXY} go build \
   -ldflags="-w -s -X 'main.version=${VERSION}'" \
   -o=manager \
-  main.go
+  ./core
 
 FROM registry.ci.openshift.org/ocp/5.0:base-rhel9
 
