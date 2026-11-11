@@ -97,8 +97,8 @@ github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/openshift/api v0.0.0-20261028095540-9af1f7b4730c h1:htIaa9XrrcLWrDZIhIbSHA3GBjRbirC+0BVwHRhPrFI=
 github.com/openshift/api v0.0.0-20261028095540-9af1f7b4730c/go.mod h1:2oI3aXQFDjjl7l4xA9ZPSkB+l+lyfWLg7P2sWg9yEvM=
-github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20261106153353-bced174ae373 h1:u8CbhkSkLpOaIjd5n9M6AoBh1pmUu1s6EyUS+V7iuKc=
-github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20261106153353-bced174ae373/go.mod h1:snTUjxZ1tIbSRBk1XzPP+IR+cNPt06Mo7Dk2gTl6iJ4=
+github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20261109165528-ac50c89706ee h1:G1f4Oi2AmktTgdKtOrgzl+Z3amvtAWhVTBOYOhjDTRs=
+github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20261109165528-ac50c89706ee/go.mod h1:snTUjxZ1tIbSRBk1XzPP+IR+cNPt06Mo7Dk2gTl6iJ4=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=

@@ -616,6 +616,25 @@ _Appears in:_
 | `append` _boolean_ | append specifies whether to append Content to existing file if Path exists. |  | Optional: \{\} <br /> |
 | `content` _string_ | content is the actual content of the file. |  | MaxLength: 10240 <br />MinLength: 1 <br />Optional: \{\} <br /> |
 | `contentFrom` _[FileSource](#filesource)_ | contentFrom is a referenced source of content to populate the file. |  | Optional: \{\} <br /> |
+| `contentFormat` _[FileContentFormat](#filecontentformat)_ | contentFormat specifies how to interpret content after it is resolved (inline or from contentFrom).<br />When set to "Template", content is rendered as a Go text/template.<br />Available template variables:<br />  - .controlPlane.version: the Kubernetes version of the control plane (e.g. "v1.35.0").<br />    Only set when the cluster has a control plane reference that exposes spec.version.<br />When set to "Raw" or omitted, content is used verbatim. |  | Enum: [Raw Template] <br />Optional: \{\} <br /> |
+
+
+#### FileContentFormat
+
+_Underlying type:_ _string_
+
+FileContentFormat specifies how file content is interpreted after resolving content/contentFrom and before writing bootstrap data.
+
+_Validation:_
+- Enum: [Raw Template]
+
+_Appears in:_
+- [File](#file)
+
+| Field | Description |
+| --- | --- |
+| `Raw` | FileContentFormatRaw means content is used verbatim.<br /> |
+| `Template` | FileContentFormatTemplate means content is rendered as a Go text/template.<br /> |
 
 
 #### FileDiscovery
@@ -1807,6 +1826,8 @@ _Appears in:_
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date control plane machines in this cluster. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
 | `readyReplicas` _integer_ | readyReplicas is the total number of ready control plane machines in this cluster. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the total number of available control plane machines in this cluster. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this control plane. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
+| `upgradePlan` _[StatusUpgradePlanVersion](#statusupgradeplanversion) array_ | upgradePlan reports the list of versions that would be applied to the control plane object according to the upgrade plan.<br />Note:<br />- This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.<br />- Once a version is applied to the control plane object, it is removed from the list (after a version<br />  is applied to a control plane object, it might take some time for the actual upgrade to complete)<br />- During a chained upgrade, the upgrade plan is continuously re-computed, and this field will<br />  report only the last known upgrade plan. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 
 
 #### ClusterDeprecatedStatus
@@ -2883,7 +2904,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random".  Valid values are "Random, "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
+| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random". Valid values are "Random", "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
 | `nodeDrainTimeoutSeconds` _integer_ | nodeDrainTimeoutSeconds is the total amount of time that the controller will spend on draining a node.<br />The default value is 0, meaning that the node can be drained without any time limitations.<br />NOTE: nodeDrainTimeoutSeconds is different from `kubectl drain --timeout`<br />NOTE: This value can be overridden while defining a Cluster.Topology using this MachineDeploymentClass. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `nodeVolumeDetachTimeoutSeconds` _integer_ | nodeVolumeDetachTimeoutSeconds is the total amount of time that the controller will spend on waiting for all volumes<br />to be detached. The default value is 0, meaning that the volumes can be detached without any time limitations.<br />NOTE: This value can be overridden while defining a Cluster.Topology using this MachineDeploymentClass. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `nodeDeletionTimeoutSeconds` _integer_ | nodeDeletionTimeoutSeconds defines how long the controller will attempt to delete the Node that the Machine<br />hosts after the Machine is marked for deletion. A duration of 0 will retry deletion indefinitely.<br />Defaults to 10 seconds.<br />NOTE: This value can be overridden while defining a Cluster.Topology using this MachineDeploymentClass. |  | Minimum: 0 <br />Optional: \{\} <br /> |
@@ -2974,7 +2995,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random".  Valid values are "Random, "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
+| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random". Valid values are "Random", "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
 
 
 #### MachineDeploymentDeprecatedStatus
@@ -3150,6 +3171,7 @@ _Appears in:_
 | `readyReplicas` _integer_ | readyReplicas is the number of ready replicas for this MachineDeployment. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the number of available replicas for this MachineDeployment. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date replicas targeted by this deployment. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this MachineDeployment. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `phase` _string_ | phase represents the current phase of a MachineDeployment (ScalingUp, ScalingDown, Running, Failed, or Unknown). |  | Enum: [ScalingUp ScalingDown Running Failed Unknown] <br />Optional: \{\} <br /> |
 | `deprecated` _[MachineDeploymentDeprecatedStatus](#machinedeploymentdeprecatedstatus)_ | deprecated groups all the status fields that are deprecated and will be removed when all the nested field are removed. |  | Optional: \{\} <br /> |
 
@@ -3271,7 +3293,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random".  Valid values are "Random, "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
+| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random". Valid values are "Random", "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
 | `nodeDrainTimeoutSeconds` _integer_ | nodeDrainTimeoutSeconds is the total amount of time that the controller will spend on draining a node.<br />The default value is 0, meaning that the node can be drained without any time limitations.<br />NOTE: nodeDrainTimeoutSeconds is different from `kubectl drain --timeout` |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `nodeVolumeDetachTimeoutSeconds` _integer_ | nodeVolumeDetachTimeoutSeconds is the total amount of time that the controller will spend on waiting for all volumes<br />to be detached. The default value is 0, meaning that the volumes can be detached without any time limitations. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `nodeDeletionTimeoutSeconds` _integer_ | nodeDeletionTimeoutSeconds defines how long the controller will attempt to delete the Node that the Machine<br />hosts after the Machine is marked for deletion. A duration of 0 will retry deletion indefinitely.<br />Defaults to 10 seconds. |  | Minimum: 0 <br />Optional: \{\} <br /> |
@@ -3985,11 +4007,12 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#condition-v1-meta) array_ | conditions represents the observations of a MachinePool's current state.<br />Known condition types are Available, BootstrapConfigReady, InfrastructureReady, MachinesReady, MachinesUpToDate,<br />ScalingUp, ScalingDown, Remediating, Deleting, Paused. |  | MaxItems: 32 <br />Optional: \{\} <br /> |
 | `initialization` _[MachinePoolInitializationStatus](#machinepoolinitializationstatus)_ | initialization provides observations of the MachinePool initialization process.<br />NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial MachinePool provisioning. |  | MinProperties: 1 <br />Optional: \{\} <br /> |
-| `nodeRefs` _[ObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#objectreference-v1-core) array_ | nodeRefs will point to the corresponding Nodes if it they exist. |  | MaxItems: 10000 <br />Optional: \{\} <br /> |
+| `nodeRefs` _[ObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#objectreference-v1-core) array_ | nodeRefs will point to the corresponding Nodes if they exist. |  | MaxItems: 10000 <br />Optional: \{\} <br /> |
 | `replicas` _integer_ | replicas is the most recently observed number of replicas. |  | Optional: \{\} <br /> |
 | `readyReplicas` _integer_ | readyReplicas is the number of ready replicas for this MachinePool. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the number of available replicas for this MachinePool. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date replicas targeted by this MachinePool. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this MachinePool. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `phase` _string_ | phase represents the current phase of cluster actuation. |  | Enum: [Pending Provisioning Provisioned Running ScalingUp ScalingDown Scaling Deleting Failed Unknown] <br />Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | observedGeneration is the latest generation observed by the controller. |  | Minimum: 1 <br />Optional: \{\} <br /> |
 | `deprecated` _[MachinePoolDeprecatedStatus](#machinepooldeprecatedstatus)_ | deprecated groups all the status fields that are deprecated and will be removed when all the nested field are removed. |  | Optional: \{\} <br /> |
@@ -4157,7 +4180,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random".  Valid values are "Random, "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
+| `order` _[MachineSetDeletionOrder](#machinesetdeletionorder)_ | order defines the order in which Machines are deleted when downscaling.<br />Defaults to "Random". Valid values are "Random", "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
 
 
 #### MachineSetDeprecatedStatus
@@ -4238,6 +4261,7 @@ _Appears in:_
 | `readyReplicas` _integer_ | readyReplicas is the number of ready replicas for this MachineSet. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the number of available replicas for this MachineSet. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date replicas for this MachineSet. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this MachineSet. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | observedGeneration reflects the generation of the most recently observed MachineSet. |  | Minimum: 1 <br />Optional: \{\} <br /> |
 | `deprecated` _[MachineSetDeprecatedStatus](#machinesetdeprecatedstatus)_ | deprecated groups all the status fields that are deprecated and will be removed when all the nested field are removed. |  | Optional: \{\} <br /> |
 
@@ -4558,6 +4582,45 @@ _Appears in:_
 | `names` _string array_ | names selects templates by class names. |  | MaxItems: 100 <br />items:MaxLength: 256 <br />items:MinLength: 1 <br />Optional: \{\} <br /> |
 
 
+#### StatusUpgradePlanVersion
+
+
+
+StatusUpgradePlanVersion groups upgrade plan version-related status information.
+
+
+
+_Appears in:_
+- [ClusterControlPlaneStatus](#clustercontrolplanestatus)
+- [WorkersStatus](#workersstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `version` _string_ | version is the Kubernetes version. |  | MaxLength: 256 <br />MinLength: 1 <br />Required: \{\} <br /> |
+
+
+#### StatusVersion
+
+
+
+StatusVersion groups version-related status information.
+
+
+
+_Appears in:_
+- [ClusterControlPlaneStatus](#clustercontrolplanestatus)
+- [KubeadmControlPlaneStatus](#kubeadmcontrolplanestatus)
+- [MachineDeploymentStatus](#machinedeploymentstatus)
+- [MachinePoolStatus](#machinepoolstatus)
+- [MachineSetStatus](#machinesetstatus)
+- [WorkersStatus](#workersstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `version` _string_ | version is the Kubernetes version. |  | MaxLength: 256 <br />MinLength: 1 <br />Required: \{\} <br /> |
+| `replicas` _integer_ | replicas is the number of replicas at this version. |  | Minimum: 1 <br />Optional: \{\} <br /> |
+
+
 #### Topology
 
 
@@ -4696,6 +4759,8 @@ _Appears in:_
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date worker machines in this cluster. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
 | `readyReplicas` _integer_ | readyReplicas is the total number of ready worker machines in this cluster. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the total number of available worker machines in this cluster. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in cluster workers. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
+| `upgradePlan` _[StatusUpgradePlanVersion](#statusupgradeplanversion) array_ | upgradePlan reports the list of versions that would be applied to the worker objects (all MachineDeployments and MachinePools).<br />Note:<br />- This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.<br />- Once a version is applied to the worker objects, it is removed from the list (after a version<br />  is applied to a worker object, it might take some time for the actual upgrade to complete)<br />- During a chained upgrade, the upgrade plan is continuously re-computed, and this field will<br />  report only the last known upgrade plan. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 
 
 #### WorkersTopology
@@ -5012,7 +5077,8 @@ _Appears in:_
 | `readyReplicas` _integer_ | readyReplicas is the number of ready replicas for this KubeadmControlPlane. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the number of available replicas targeted by this KubeadmControlPlane. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date replicas targeted by this KubeadmControlPlane. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
-| `version` _string_ | version represents the minimum Kubernetes version for the control plane machines<br />in the cluster. |  | MaxLength: 256 <br />MinLength: 1 <br />Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this KubeadmControlPlane. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
+| `version` _string_ | version represents the minimum Kubernetes version for the control plane machines<br />in the cluster.<br />Deprecated: This field is deprecated and is going to be removed in a future API version. Please use status.versions instead. |  | MaxLength: 256 <br />MinLength: 1 <br />Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | observedGeneration is the latest generation observed by the controller. |  | Minimum: 1 <br />Optional: \{\} <br /> |
 | `lastRemediation` _[LastRemediationStatus](#lastremediationstatus)_ | lastRemediation stores info about last remediation performed. |  | Optional: \{\} <br /> |
 | `deprecated` _[KubeadmControlPlaneDeprecatedStatus](#kubeadmcontrolplanedeprecatedstatus)_ | deprecated groups all the status fields that are deprecated and will be removed when all the nested field are removed. |  | Optional: \{\} <br /> |

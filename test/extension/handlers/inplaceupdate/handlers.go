@@ -28,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"gomodules.xyz/jsonpatch/v2"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -92,11 +92,13 @@ func canUpdateKubeadmConfigSpec(current, desired *bootstrapv1.KubeadmConfigSpec)
 	}
 }
 
-// canUpdateDockerMachineSpec declares that this extension can update:
-// * DockerMachineSpec.BootstrapTimeout.
-func canUpdateDockerMachineSpec(current, desired *infrav1.DockerMachineSpec) {
-	if current.BootstrapTimeout != desired.BootstrapTimeout {
-		current.BootstrapTimeout = desired.BootstrapTimeout
+// canUpdateDevMachineSpec declares that this extension can update:
+// * DevMachineSpec.Backend.Docker.BootstrapTimeout.
+func canUpdateDevMachineSpec(current, desired *infrav1.DevMachineSpec) {
+	if current.Backend.Docker != nil && desired.Backend.Docker != nil {
+		if current.Backend.Docker.BootstrapTimeout != desired.Backend.Docker.BootstrapTimeout {
+			current.Backend.Docker.BootstrapTimeout = desired.Backend.Docker.BootstrapTimeout
+		}
 	}
 }
 
@@ -131,11 +133,11 @@ func (h *ExtensionHandlers) DoCanUpdateMachine(ctx context.Context, req *runtime
 		canUpdateKubeadmConfigSpec(&currentKubeadmConfig.Spec, &desiredKubeadmConfig.Spec)
 	}
 
-	// InfraMachine (we can only update DockerMachines)
-	currentDockerMachine, isCurrentDockerMachine := currentInfraMachine.(*infrav1.DockerMachine)
-	desiredDockerMachine, isDesiredDockerMachine := desiredInfraMachine.(*infrav1.DockerMachine)
-	if isCurrentDockerMachine && isDesiredDockerMachine {
-		canUpdateDockerMachineSpec(&currentDockerMachine.Spec, &desiredDockerMachine.Spec)
+	// InfraMachine (we can only update DevMachines)
+	currentDevMachine, isCurrentDevMachine := currentInfraMachine.(*infrav1.DevMachine)
+	desiredDevMachine, isDesiredDevMachine := desiredInfraMachine.(*infrav1.DevMachine)
+	if isCurrentDevMachine && isDesiredDevMachine {
+		canUpdateDevMachineSpec(&currentDevMachine.Spec, &desiredDevMachine.Spec)
 	}
 
 	if err := h.computeCanUpdateMachineResponse(req, resp, currentMachine, currentBootstrapConfig, currentInfraMachine); err != nil {
@@ -178,11 +180,11 @@ func (h *ExtensionHandlers) DoCanUpdateMachineSet(ctx context.Context, req *runt
 		canUpdateKubeadmConfigSpec(&currentKubeadmConfigTemplate.Spec.Template.Spec, &desiredKubeadmConfigTemplate.Spec.Template.Spec)
 	}
 
-	// InfraMachine (we can only update DockerMachines)
-	currentDockerMachineTemplate, isCurrentDockerMachineTemplate := currentInfraMachineTemplate.(*infrav1.DockerMachineTemplate)
-	desiredDockerMachineTemplate, isDesiredDockerMachineTemplate := desiredInfraMachineTemplate.(*infrav1.DockerMachineTemplate)
-	if isCurrentDockerMachineTemplate && isDesiredDockerMachineTemplate {
-		canUpdateDockerMachineSpec(&currentDockerMachineTemplate.Spec.Template.Spec, &desiredDockerMachineTemplate.Spec.Template.Spec)
+	// InfraMachine (we can only update DevMachines)
+	currentDevMachineTemplate, isCurrentDevMachineTemplate := currentInfraMachineTemplate.(*infrav1.DevMachineTemplate)
+	desiredDevMachineTemplate, isDesiredDevMachineTemplate := desiredInfraMachineTemplate.(*infrav1.DevMachineTemplate)
+	if isCurrentDevMachineTemplate && isDesiredDevMachineTemplate {
+		canUpdateDevMachineSpec(&currentDevMachineTemplate.Spec.Template.Spec, &desiredDevMachineTemplate.Spec.Template.Spec)
 	}
 
 	if err := h.computeCanUpdateMachineSetResponse(req, resp, currentMachineSet, currentBootstrapConfigTemplate, currentInfraMachineTemplate); err != nil {
@@ -215,7 +217,7 @@ func (h *ExtensionHandlers) DoUpdateMachine(ctx context.Context, req *runtimehoo
 	// Note: We are intentionally not actually applying any in-place changes we are just faking them,
 	// which is good enough for test purposes.
 	if firstTimeCalled, ok := h.state.Load(key); ok {
-		if time.Since(firstTimeCalled.(time.Time)) > time.Duration(30+rand.Intn(10))*time.Second {
+		if time.Since(firstTimeCalled.(time.Time)) > time.Duration(15+rand.Intn(5))*time.Second {
 			h.state.Delete(key)
 			resp.Status = runtimehooksv1.ResponseStatusSuccess
 			resp.Message = "Extension completed updating Machine"
@@ -228,7 +230,7 @@ func (h *ExtensionHandlers) DoUpdateMachine(ctx context.Context, req *runtimehoo
 
 	resp.Status = runtimehooksv1.ResponseStatusSuccess
 	resp.Message = "Extension is updating Machine"
-	resp.RetryAfterSeconds = 15
+	resp.RetryAfterSeconds = 5
 }
 
 func (h *ExtensionHandlers) getObjectsFromCanUpdateMachineRequest(req *runtimehooksv1.CanUpdateMachineRequest) (*clusterv1.Machine, *clusterv1.Machine, runtime.Object, runtime.Object, runtime.Object, runtime.Object, error) { //nolint:gocritic // accepting high number of return parameters for now
@@ -348,17 +350,17 @@ func createJSONPatch(marshalledOriginal []byte, modified runtime.Object) ([]byte
 	// TODO: avoid producing patches for status (although they will be ignored by the KCP / MD controllers anyway)
 	marshalledModified, err := json.Marshal(modified)
 	if err != nil {
-		return nil, errors.Errorf("failed to marshal modified object: %v", err)
+		return nil, pkgerrors.Errorf("failed to marshal modified object: %v", err)
 	}
 
 	patch, err := jsonpatch.CreatePatch(marshalledOriginal, marshalledModified)
 	if err != nil {
-		return nil, errors.Errorf("failed to create patch: %v", err)
+		return nil, pkgerrors.Errorf("failed to create patch: %v", err)
 	}
 
 	patchBytes, err := json.Marshal(patch)
 	if err != nil {
-		return nil, errors.Errorf("failed to marshal patch: %v", err)
+		return nil, pkgerrors.Errorf("failed to marshal patch: %v", err)
 	}
 
 	return patchBytes, nil
