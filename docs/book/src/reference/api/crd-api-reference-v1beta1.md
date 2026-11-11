@@ -580,6 +580,25 @@ _Appears in:_
 | `append` _boolean_ | append specifies whether to append Content to existing file if Path exists. |  | Optional: \{\} <br /> |
 | `content` _string_ | content is the actual content of the file. |  | MaxLength: 10240 <br />MinLength: 1 <br />Optional: \{\} <br /> |
 | `contentFrom` _[FileSource](#filesource)_ | contentFrom is a referenced source of content to populate the file. |  | Optional: \{\} <br /> |
+| `contentFormat` _[FileContentFormat](#filecontentformat)_ | contentFormat specifies how to interpret content after it is resolved (inline or from contentFrom).<br />When set to "Template", content is rendered as a Go text/template.<br />Available template variables:<br />  - .controlPlane.version: the Kubernetes version of the control plane (e.g. "v1.35.0").<br />    Only set when the cluster has a control plane reference that exposes spec.version.<br />When set to "Raw" or omitted, content is used verbatim. |  | Enum: [Raw Template] <br />Optional: \{\} <br /> |
+
+
+#### FileContentFormat
+
+_Underlying type:_ _string_
+
+FileContentFormat specifies how file content is interpreted after resolving content/contentFrom and before writing bootstrap data.
+
+_Validation:_
+- Enum: [Raw Template]
+
+_Appears in:_
+- [File](#file)
+
+| Field | Description |
+| --- | --- |
+| `Raw` | FileContentFormatRaw means content is used verbatim.<br /> |
+| `Template` | FileContentFormatTemplate means content is rendered as a Go text/template.<br /> |
 
 
 #### FileDiscovery
@@ -1652,6 +1671,8 @@ _Appears in:_
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date control plane machines in this cluster. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
 | `readyReplicas` _integer_ | readyReplicas is the total number of ready control plane machines in this cluster. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the total number of available control plane machines in this cluster. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this control plane. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
+| `upgradePlan` _[StatusUpgradePlanVersion](#statusupgradeplanversion) array_ | upgradePlan reports the list of versions that would be applied to the control plane object according to the upgrade plan.<br />Note:<br />- This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.<br />- Once a version is applied to the control plane object, it is removed from the list (after a version<br />  is applied to a control plane object, it might take some time for the actual upgrade to complete)<br />- During a chained upgrade, the upgrade plan is continuously re-computed, and this field will<br />  report only the last known upgrade plan. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 
 
 
@@ -2438,6 +2459,7 @@ _Appears in:_
 | `unavailableReplicas` _integer_ | unavailableReplicas is the total number of unavailable machines targeted by this deployment.<br />This is the total number of machines that are still required for<br />the deployment to have 100% available capacity. They may either<br />be machines that are running but not yet available or machines<br />that still have not been created.<br />Deprecated: This field is deprecated and is going to be removed when support for v1beta1 will be dropped. Please see https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20240916-improve-status-in-CAPI-resources.md for more details. |  | Optional: \{\} <br /> |
 | `phase` _string_ | phase represents the current phase of a MachineDeployment (ScalingUp, ScalingDown, Running, Failed, or Unknown). |  | Enum: [ScalingUp ScalingDown Running Failed Unknown] <br />Optional: \{\} <br /> |
 | `conditions` _[Conditions](#conditions)_ | conditions defines current service state of the MachineDeployment. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this MachineDeployment. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `v1beta2` _[MachineDeploymentV1Beta2Status](#machinedeploymentv1beta2status)_ | v1beta2 groups all the fields that will be added or modified in MachineDeployment's status with the V1Beta2 version. |  | Optional: \{\} <br /> |
 
 
@@ -3006,7 +3028,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `nodeRefs` _[ObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#objectreference-v1-core) array_ | nodeRefs will point to the corresponding Nodes if it they exist. |  | MaxItems: 10000 <br />Optional: \{\} <br /> |
+| `nodeRefs` _[ObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#objectreference-v1-core) array_ | nodeRefs will point to the corresponding Nodes if they exist. |  | MaxItems: 10000 <br />Optional: \{\} <br /> |
 | `replicas` _integer_ | replicas is the most recently observed number of replicas. |  | Optional: \{\} <br /> |
 | `readyReplicas` _integer_ | readyReplicas is the number of ready replicas for this MachinePool. A machine is considered ready when the node has been created and is "Ready". |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the number of available replicas (ready for at least minReadySeconds) for this MachinePool. |  | Optional: \{\} <br /> |
@@ -3018,6 +3040,7 @@ _Appears in:_
 | `infrastructureReady` _boolean_ | infrastructureReady is the state of the infrastructure provider. |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | observedGeneration is the latest generation observed by the controller. |  | Optional: \{\} <br /> |
 | `conditions` _[Conditions](#conditions)_ | conditions define the current service state of the MachinePool. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this MachinePool. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `v1beta2` _[MachinePoolV1Beta2Status](#machinepoolv1beta2status)_ | v1beta2 groups all the fields that will be added or modified in MachinePool's status with the V1Beta2 version. |  | Optional: \{\} <br /> |
 
 
@@ -3177,7 +3200,7 @@ _Appears in:_
 | `clusterName` _string_ | clusterName is the name of the Cluster this object belongs to. |  | MaxLength: 63 <br />MinLength: 1 <br />Required: \{\} <br /> |
 | `replicas` _integer_ | replicas is the number of desired replicas.<br />This is a pointer to distinguish between explicit zero and unspecified.<br />Defaults to:<br />* if the Kubernetes autoscaler min size and max size annotations are set:<br />  - if it's a new MachineSet, use min size<br />  - if the replicas field of the old MachineSet is < min size, use min size<br />  - if the replicas field of the old MachineSet is > max size, use max size<br />  - if the replicas field of the old MachineSet is in the (min size, max size) range, keep the value from the oldMS<br />* otherwise use 1<br />Note: Defaulting will be run whenever the replicas field is not set:<br />* A new MachineSet is created with replicas not set.<br />* On an existing MachineSet the replicas field was first set and is now unset.<br />Those cases are especially relevant for the following Kubernetes autoscaler use cases:<br />* A new MachineSet is created and replicas should be managed by the autoscaler<br />* An existing MachineSet which initially wasn't controlled by the autoscaler<br />  should be later controlled by the autoscaler |  | Optional: \{\} <br /> |
 | `minReadySeconds` _integer_ | minReadySeconds is the minimum number of seconds for which a Node for a newly created machine should be ready before considering the replica available.<br />Defaults to 0 (machine will be considered available as soon as the Node is ready) |  | Optional: \{\} <br /> |
-| `deletePolicy` _string_ | deletePolicy defines the policy used to identify nodes to delete when downscaling.<br />Defaults to "Random".  Valid values are "Random, "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
+| `deletePolicy` _string_ | deletePolicy defines the policy used to identify nodes to delete when downscaling.<br />Defaults to "Random". Valid values are "Random", "Newest", "Oldest" |  | Enum: [Random Newest Oldest] <br />Optional: \{\} <br /> |
 | `selector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#labelselector-v1-meta)_ | selector is a label query over machines that should match the replica count.<br />Label keys and values that must match in order to be controlled by this MachineSet.<br />It must match the machine template's labels.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors |  | Required: \{\} <br /> |
 | `template` _[MachineTemplateSpec](#machinetemplatespec)_ | template is the object that describes the machine that will be created if<br />insufficient replicas are detected.<br />Object references to custom resources are treated as templates. |  | Optional: \{\} <br /> |
 | `machineNamingStrategy` _[MachineNamingStrategy](#machinenamingstrategy)_ | machineNamingStrategy allows changing the naming pattern used when creating Machines.<br />Note: InfraMachines & BootstrapConfigs will use the same name as the corresponding Machines. |  | Optional: \{\} <br /> |
@@ -3205,6 +3228,7 @@ _Appears in:_
 | `failureReason` _[MachineSetStatusError](#machinesetstatuserror)_ | failureReason will be set in the event that there is a terminal problem<br />reconciling the Machine and will contain a succinct value suitable<br />for machine interpretation.<br />In the event that there is a terminal problem reconciling the<br />replicas, both FailureReason and FailureMessage will be set. FailureReason<br />will be populated with a succinct value suitable for machine<br />interpretation, while FailureMessage will contain a more verbose<br />string suitable for logging and human consumption.<br />These fields should not be set for transitive errors that a<br />controller faces that are expected to be fixed automatically over<br />time (like service outages), but instead indicate that something is<br />fundamentally wrong with the MachineTemplate's spec or the configuration of<br />the machine controller, and that manual intervention is required. Examples<br />of terminal errors would be invalid combinations of settings in the<br />spec, values that are unsupported by the machine controller, or the<br />responsible machine controller itself being critically misconfigured.<br />Any transient errors that occur during the reconciliation of Machines<br />can be added as events to the MachineSet object and/or logged in the<br />controller's output.<br />Deprecated: This field is deprecated and is going to be removed when support for v1beta1 will be dropped. Please see https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20240916-improve-status-in-CAPI-resources.md for more details. |  | Optional: \{\} <br /> |
 | `failureMessage` _string_ | failureMessage will be set in the event that there is a terminal problem<br />reconciling the Machine and will contain a more verbose string suitable<br />for logging and human consumption.<br />Deprecated: This field is deprecated and is going to be removed when support for v1beta1 will be dropped. Please see https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20240916-improve-status-in-CAPI-resources.md for more details. |  | MaxLength: 10240 <br />MinLength: 1 <br />Optional: \{\} <br /> |
 | `conditions` _[Conditions](#conditions)_ | conditions defines current service state of the MachineSet. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this MachineSet. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `v1beta2` _[MachineSetV1Beta2Status](#machinesetv1beta2status)_ | v1beta2 groups all the fields that will be added or modified in MachineSet's status with the V1Beta2 version. |  | Optional: \{\} <br /> |
 
 
@@ -3533,6 +3557,45 @@ _Appears in:_
 
 
 
+#### StatusUpgradePlanVersion
+
+
+
+StatusUpgradePlanVersion groups upgrade plan version-related status information.
+
+
+
+_Appears in:_
+- [ClusterControlPlaneStatus](#clustercontrolplanestatus)
+- [WorkersStatus](#workersstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `version` _string_ | version is the Kubernetes version. |  | MaxLength: 256 <br />MinLength: 1 <br />Required: \{\} <br /> |
+
+
+#### StatusVersion
+
+
+
+StatusVersion groups version-related status information.
+
+
+
+_Appears in:_
+- [ClusterControlPlaneStatus](#clustercontrolplanestatus)
+- [KubeadmControlPlaneStatus](#kubeadmcontrolplanestatus)
+- [MachineDeploymentStatus](#machinedeploymentstatus)
+- [MachinePoolStatus](#machinepoolstatus)
+- [MachineSetStatus](#machinesetstatus)
+- [WorkersStatus](#workersstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `version` _string_ | version is the Kubernetes version. |  | MaxLength: 256 <br />MinLength: 1 <br />Required: \{\} <br /> |
+| `replicas` _integer_ | replicas is the number of replicas at this version. |  | Minimum: 1 <br />Optional: \{\} <br /> |
+
+
 #### Topology
 
 
@@ -3654,6 +3717,8 @@ _Appears in:_
 | `upToDateReplicas` _integer_ | upToDateReplicas is the number of up-to-date worker machines in this cluster. A machine is considered up-to-date when Machine's UpToDate condition is true. |  | Optional: \{\} <br /> |
 | `readyReplicas` _integer_ | readyReplicas is the total number of ready worker machines in this cluster. A machine is considered ready when Machine's Ready condition is true. |  | Optional: \{\} <br /> |
 | `availableReplicas` _integer_ | availableReplicas is the total number of available worker machines in this cluster. A machine is considered available when Machine's Available condition is true. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in cluster workers. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
+| `upgradePlan` _[StatusUpgradePlanVersion](#statusupgradeplanversion) array_ | upgradePlan reports the list of versions that would be applied to the worker objects (all MachineDeployments and MachinePools).<br />Note:<br />- This field is set only when the Cluster topology is managed by Cluster API and a Cluster upgrade is in progress.<br />- Once a version is applied to the worker objects, it is removed from the list (after a version<br />  is applied to a worker object, it might take some time for the actual upgrade to complete)<br />- During a chained upgrade, the upgrade plan is continuously re-computed, and this field will<br />  report only the last known upgrade plan. |  | MaxItems: 32 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 
 
 #### WorkersTopology
@@ -3798,6 +3863,7 @@ _Appears in:_
 | `observedGeneration` _integer_ | observedGeneration is the latest generation observed by the controller. |  | Optional: \{\} <br /> |
 | `conditions` _[Conditions](#conditions)_ | conditions defines current service state of the KubeadmControlPlane. |  | Optional: \{\} <br /> |
 | `lastRemediation` _[LastRemediationStatus](#lastremediationstatus)_ | lastRemediation stores info about last remediation performed. |  | Optional: \{\} <br /> |
+| `versions` _[StatusVersion](#statusversion) array_ | versions is the aggregated Kubernetes versions in this KubeadmControlPlane. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `v1beta2` _[KubeadmControlPlaneV1Beta2Status](#kubeadmcontrolplanev1beta2status)_ | v1beta2 groups all the fields that will be added or modified in KubeadmControlPlane's status with the V1Beta2 version. |  | Optional: \{\} <br /> |
 
 
@@ -4509,7 +4575,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | name is the unique name of the ExtensionHandler. |  | MaxLength: 512 <br />MinLength: 1 <br />Required: \{\} <br /> |
 | `requestHook` _[GroupVersionHook](#groupversionhook)_ | requestHook defines the versioned runtime hook which this ExtensionHandler serves. |  | Required: \{\} <br /> |
-| `timeoutSeconds` _integer_ | timeoutSeconds defines the timeout duration for client calls to the ExtensionHandler.<br />Defaults to 10 is not set. |  | Optional: \{\} <br /> |
+| `timeoutSeconds` _integer_ | timeoutSeconds defines the timeout duration for client calls to the ExtensionHandler.<br />Defaults to 10 seconds if not set. |  | Optional: \{\} <br /> |
 | `failurePolicy` _[FailurePolicy](#failurepolicy)_ | failurePolicy defines how failures in calls to the ExtensionHandler should be handled by a client.<br />Defaults to Fail if not set. |  | Enum: [Ignore Fail] <br />Optional: \{\} <br /> |
 
 
