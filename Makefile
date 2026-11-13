@@ -555,6 +555,7 @@ generate-modules: ## Run go mod tidy to ensure modules are up to date
 	go mod tidy
 	cd $(TOOLS_DIR); go mod tidy
 	cd $(TEST_DIR); go mod tidy
+	cd openshift/capi-ipam-conversion-webhook; go mod tidy
 
 .PHONY: generate-doctoc
 generate-doctoc:
@@ -697,7 +698,7 @@ verify-go-directive:
 
 .PHONY: verify-modules
 verify-modules: generate-modules  ## Verify go modules are up to date
-	@if !(git diff --quiet HEAD -- go.sum go.mod $(TOOLS_DIR)/go.mod $(TOOLS_DIR)/go.sum $(TEST_DIR)/go.mod $(TEST_DIR)/go.sum); then \
+	@if !(git diff --quiet HEAD -- go.sum go.mod $(TOOLS_DIR)/go.mod $(TOOLS_DIR)/go.sum $(TEST_DIR)/go.mod $(TEST_DIR)/go.sum openshift/capi-ipam-conversion-webhook/go.mod openshift/capi-ipam-conversion-webhook/go.sum); then \
 		git diff; \
 		echo "go module files are out of date"; exit 1; \
 	fi
@@ -906,12 +907,20 @@ KUBEBUILDER_ASSETS ?= $(shell $(SETUP_ENVTEST) use --use-env -p path $(KUBEBUILD
 setup-envtest: $(SETUP_ENVTEST) ## Set up envtest (download kubebuilder assets)
 	@echo KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS)
 
+.PHONY: capi-ipam-conversion-webhook
+capi-ipam-conversion-webhook: ## Build the standalone IPAM conversion webhook binary
+	cd openshift/capi-ipam-conversion-webhook; go build -mod=readonly -trimpath -o $(abspath $(BIN_DIR))/capi-ipam-conversion-webhook .
+
+.PHONY: test-capi-ipam-conversion-webhook
+test-capi-ipam-conversion-webhook: $(SETUP_ENVTEST) ## Run standalone IPAM webhook unit and integration tests
+	cd openshift/capi-ipam-conversion-webhook; KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test -mod=readonly -race ./... $(TEST_ARGS)
+
 .PHONY: test-no-race
 test-no-race: $(SETUP_ENVTEST) ## Run unit and integration tests
 	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test ./... $(TEST_ARGS)
 
 .PHONY: test
-test: $(SETUP_ENVTEST) ## Run unit and integration tests with race detector
+test: $(SETUP_ENVTEST) test-capi-ipam-conversion-webhook ## Run unit and integration tests with race detector
 	# Note: Fuzz tests are not executed with race detector because they would just time out.
 	# To achieve that, all files with fuzz tests have the "!race" build tag, to still run fuzz tests
 	# we have an additional `go test` run that focuses on "TestFuzzyConversion".
