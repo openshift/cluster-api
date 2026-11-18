@@ -692,7 +692,7 @@ verify-go-directive:
 
 .PHONY: verify-modules
 verify-modules: generate-modules  ## Verify go modules are up to date
-	@if !(git diff --quiet HEAD -- go.sum go.mod $(TOOLS_DIR)/go.mod $(TOOLS_DIR)/go.sum $(TEST_DIR)/go.mod $(TEST_DIR)/go.sum openshift/capi-ipam-conversion-webhook/go.mod openshift/capi-ipam-conversion-webhook/go.sum); then \
+	@if !(git diff --quiet HEAD -- go.sum go.mod api/go.mod api/go.sum $(TOOLS_DIR)/go.mod $(TOOLS_DIR)/go.sum $(TEST_DIR)/go.mod $(TEST_DIR)/go.sum openshift/capi-ipam-conversion-webhook/go.mod openshift/capi-ipam-conversion-webhook/go.sum); then \
 		git diff; \
 		echo "go module files are out of date"; exit 1; \
 	fi

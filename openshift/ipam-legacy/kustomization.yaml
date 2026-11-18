@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Keep the last IPAM CRDs that did not require a conversion webhook for
+# clusters without the ClusterAPIOperator feature gate.
+commonAnnotations:
+  exclude.release.openshift.io/internal-openshift-hosted: "true"
+  include.release.openshift.io/self-managed-high-availability: "true"
+  include.release.openshift.io/single-node-developer: "true"
+  release.openshift.io/feature-gate: -ClusterAPIOperator,-ClusterAPIMachineManagement
+
+resources:
+- https://github.com/openshift/cluster-api/config/crd?ref=de1db2970e7fede7101e5a8188e74942ab6665e3
+
+# Emit only the two IPAM CRDs.
+patches:
+- target:
+    kind: CustomResourceDefinition
+  patch: |
+    - op: add
+      path: /metadata/annotations/config.kubernetes.io~1local-config
+      value: "true"
+- target:
+    kind: CustomResourceDefinition
+    name: '.*\.ipam\.cluster\.x-k8s\.io$'
+  patch: |
+    - op: remove
+      path: /metadata/annotations/config.kubernetes.io~1local-config
