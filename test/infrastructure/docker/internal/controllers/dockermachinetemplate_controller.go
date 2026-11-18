@@ -19,7 +19,7 @@ package controllers
 import (
 	"context"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -75,16 +75,16 @@ func (r *DockerMachineTemplateReconciler) Reconcile(ctx context.Context, req ctr
 // SetupWithManager will add watches for this controller.
 func (r *DockerMachineTemplateReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	if r.Client == nil || r.ContainerRuntime == nil {
-		return errors.New("Client and ContainerRuntime must not be nil")
+		return pkgerrors.New("Client and ContainerRuntime must not be nil")
 	}
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "dockermachinetemplate")
 	err := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 		For(&infrav1.DockerMachineTemplate{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
-		Complete(r)
+		Complete(ctx, r)
 	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
+		return pkgerrors.Wrap(err, "failed setting up with a controller manager")
 	}
 
 	return nil

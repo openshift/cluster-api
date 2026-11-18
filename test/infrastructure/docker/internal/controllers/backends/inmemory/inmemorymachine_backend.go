@@ -24,12 +24,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
@@ -47,6 +48,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	v1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
+	containerutil "sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/secret"
 )
@@ -61,10 +63,10 @@ type MachineBackendReconciler struct {
 // ReconcileNormal handle in memory backend for DevMachine not yet deleted.
 func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster *clusterv1.Cluster, inMemoryCluster *infrav1.DevCluster, machine *clusterv1.Machine, inMemoryMachine *infrav1.DevMachine) (ctrl.Result, error) {
 	if inMemoryMachine.Spec.Backend.InMemory == nil {
-		return ctrl.Result{}, errors.New("InMemoryBackendReconciler can't be called for DevMachines without an InMemory backend")
+		return ctrl.Result{}, pkgerrors.New("InMemoryBackendReconciler can't be called for DevMachines without an InMemory backend")
 	}
 	if inMemoryCluster.Spec.Backend.InMemory == nil {
-		return ctrl.Result{}, errors.New("InMemoryBackendReconciler can't be called for DevCluster without an InMemory backend")
+		return ctrl.Result{}, pkgerrors.New("InMemoryBackendReconciler can't be called for DevCluster without an InMemory backend")
 	}
 	log := ctrl.LoggerFrom(ctx)
 
@@ -160,7 +162,30 @@ func (r *MachineBackendReconciler) ReconcileNormal(ctx context.Context, cluster 
 		//  the downside of it is that InMemoryMachines status will change by "big steps" vs incrementally.
 		res = util.LowestNonZeroResult(res, phaseResult)
 	}
-	return res, kerrors.NewAggregate(errs)
+	if len(errs) > 0 {
+		return res, kerrors.NewAggregate(errs)
+	}
+
+	if (util.IsControlPlaneMachine(machine) && conditions.IsTrue(inMemoryMachine, infrav1.DevMachineInMemoryAPIServerProvisionedCondition)) ||
+		(!util.IsControlPlaneMachine(machine) && conditions.IsTrue(inMemoryMachine, infrav1.DevMachineInMemoryNodeProvisionedCondition)) {
+		if hasBootstrappedAnnotation(machine) {
+			return res, nil
+		}
+
+		machineObj := &unstructured.Unstructured{}
+		machineObj.SetGroupVersionKind(clusterv1.GroupVersion.WithKind("Machine"))
+		machineObj.SetNamespace(machine.Namespace)
+		machineObj.SetName(machine.Name)
+		original := machineObj.DeepCopy()
+		machineObj.SetAnnotations(map[string]string{
+			MachineBootstrappedAnnotationName: "",
+		})
+		if err := r.Client.Patch(ctx, machineObj, client.MergeFrom(original)); err != nil {
+			return res, err
+		}
+	}
+
+	return res, nil
 }
 
 func (r *MachineBackendReconciler) reconcileNormalCloudMachine(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, inMemoryMachine *infrav1.DevMachine) (_ ctrl.Result, retErr error) {
@@ -192,7 +217,7 @@ func (r *MachineBackendReconciler) reconcileNormalCloudMachine(ctx context.Conte
 		}
 
 		if err := inmemoryClient.Create(ctx, cloudMachine); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create CloudMachine")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create CloudMachine")
 		}
 	}
 
@@ -205,7 +230,7 @@ func (r *MachineBackendReconciler) reconcileNormalCloudMachine(ctx context.Conte
 		if x.StartupJitter != "" {
 			jitter, err := strconv.ParseFloat(x.StartupJitter, 64)
 			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to parse VM's StartupJitter")
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to parse VM's StartupJitter")
 			}
 			if jitter > 0.0 {
 				provisioningDuration += time.Duration(rand.Float64() * jitter * float64(provisioningDuration)) //nolint:gosec // Intentionally using a weak random number generator here.
@@ -215,7 +240,7 @@ func (r *MachineBackendReconciler) reconcileNormalCloudMachine(ctx context.Conte
 
 	start := cloudMachine.CreationTimestamp
 	now := time.Now()
-	if now.Before(start.Add(provisioningDuration)) {
+	if !hasBootstrappedAnnotation(machine) && now.Before(start.Add(provisioningDuration)) {
 		v1beta1conditions.MarkFalse(inMemoryMachine, infrav1.VMProvisionedCondition, infrav1.VMWaitingForStartupTimeoutReason, clusterv1.ConditionSeverityInfo, "")
 		conditions.Set(inMemoryMachine, metav1.Condition{
 			Type:   infrav1.DevMachineInMemoryVMProvisionedCondition,
@@ -270,7 +295,7 @@ func (r *MachineBackendReconciler) reconcileNormalNode(ctx context.Context, clus
 		if x.StartupJitter != "" {
 			jitter, err := strconv.ParseFloat(x.StartupJitter, 64)
 			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to parse node's StartupJitter")
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to parse node's StartupJitter")
 			}
 			if jitter > 0.0 {
 				provisioningDuration += time.Duration(rand.Float64() * jitter * float64(provisioningDuration)) //nolint:gosec // Intentionally using a weak random number generator here.
@@ -280,7 +305,7 @@ func (r *MachineBackendReconciler) reconcileNormalNode(ctx context.Context, clus
 
 	start := conditions.Get(inMemoryMachine, infrav1.DevMachineInMemoryVMProvisionedCondition).LastTransitionTime
 	now := time.Now()
-	if now.Before(start.Add(provisioningDuration)) {
+	if !hasBootstrappedAnnotation(machine) && now.Before(start.Add(provisioningDuration)) {
 		v1beta1conditions.MarkFalse(inMemoryMachine, infrav1.NodeProvisionedCondition, infrav1.NodeWaitingForStartupTimeoutReason, clusterv1.ConditionSeverityInfo, "")
 		conditions.Set(inMemoryMachine, metav1.Condition{
 			Type:   infrav1.DevMachineInMemoryNodeProvisionedCondition,
@@ -304,6 +329,9 @@ func (r *MachineBackendReconciler) reconcileNormalNode(ctx context.Context, clus
 			ProviderID: calculateProviderID(inMemoryMachine),
 		},
 		Status: corev1.NodeStatus{
+			NodeInfo: corev1.NodeSystemInfo{
+				KubeletVersion: machine.Spec.Version,
+			},
 			Conditions: []corev1.NodeCondition{
 				{
 					LastTransitionTime: metav1.Now(),
@@ -347,13 +375,13 @@ func (r *MachineBackendReconciler) reconcileNormalNode(ctx context.Context, clus
 
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(node), node); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get node")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get node")
 		}
 
 		// NOTE: for the first control plane machine we might create the node before etcd and API server pod are running
 		// but this is not an issue, because it won't be visible to CAPI until the API server start serving requests.
 		if err := inmemoryClient.Create(ctx, node); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create Node")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create Node")
 		}
 	}
 
@@ -416,7 +444,7 @@ func (r *MachineBackendReconciler) reconcileNormalETCD(ctx context.Context, clus
 		if x.StartupJitter != "" {
 			jitter, err := strconv.ParseFloat(x.StartupJitter, 64)
 			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to parse etcd's StartupJitter")
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to parse etcd's StartupJitter")
 			}
 			if jitter > 0.0 {
 				provisioningDuration += time.Duration(rand.Float64() * jitter * float64(provisioningDuration)) //nolint:gosec // Intentionally using a weak random number generator here.
@@ -426,7 +454,7 @@ func (r *MachineBackendReconciler) reconcileNormalETCD(ctx context.Context, clus
 
 	start := conditions.Get(inMemoryMachine, infrav1.DevMachineInMemoryNodeProvisionedCondition).LastTransitionTime
 	now := time.Now()
-	if now.Before(start.Add(provisioningDuration)) {
+	if !hasBootstrappedAnnotation(machine) && now.Before(start.Add(provisioningDuration)) {
 		v1beta1conditions.MarkFalse(inMemoryMachine, infrav1.EtcdProvisionedCondition, infrav1.EtcdWaitingForStartupTimeoutReason, clusterv1.ConditionSeverityInfo, "")
 		conditions.Set(inMemoryMachine, metav1.Condition{
 			Type:   infrav1.DevMachineInMemoryEtcdProvisionedCondition,
@@ -469,7 +497,7 @@ func (r *MachineBackendReconciler) reconcileNormalETCD(ctx context.Context, clus
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(etcdPod), etcdPod); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get etcd Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get etcd Pod")
 		}
 
 		// Gets info about the current etcd cluster, if any.
@@ -511,7 +539,7 @@ func (r *MachineBackendReconciler) reconcileNormalETCD(ctx context.Context, clus
 		// NOTE: for the first control plane machine we might create the etcd pod before the API server pod is running
 		// but this is not an issue, because it won't be visible to CAPI until the API server start serving requests.
 		if err := inmemoryClient.Create(ctx, etcdPod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create Pod")
 		}
 	}
 
@@ -520,30 +548,30 @@ func (r *MachineBackendReconciler) reconcileNormalETCD(ctx context.Context, clus
 		// Getting the etcd CA
 		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.EtcdCA)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get etcd CA")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get etcd CA")
 		}
 		certData, exists := s.Data[secret.TLSCrtDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
 		}
 
 		cert, err := certs.DecodeCertPEM(certData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
 		}
 
 		keyData, exists := s.Data[secret.TLSKeyDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid etcd CA: missing data for %s", secret.TLSKeyDataName)
 		}
 
 		key, err := certs.DecodePrivateKeyPEM(keyData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSKeyDataName)
 		}
 
 		if err := r.APIServerMux.AddEtcdMember(listenerName, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to start etcd member")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to start etcd member")
 		}
 	}
 
@@ -570,7 +598,7 @@ func (r *MachineBackendReconciler) getEtcdInfo(ctx context.Context, inmemoryClie
 			"component": "etcd",
 			"tier":      "control-plane"},
 	); err != nil {
-		return etcdInfo{}, errors.Wrap(err, "failed to list etcd members")
+		return etcdInfo{}, pkgerrors.Wrap(err, "failed to list etcd members")
 	}
 
 	if len(etcdPods.Items) == 0 {
@@ -588,7 +616,7 @@ func (r *MachineBackendReconciler) getEtcdInfo(ctx context.Context, inmemoryClie
 		if info.clusterID == "" {
 			info.clusterID = pod.Annotations[cloudv1.EtcdClusterIDAnnotationName]
 		} else if pod.Annotations[cloudv1.EtcdClusterIDAnnotationName] != info.clusterID {
-			return etcdInfo{}, errors.New("invalid etcd cluster, members have different cluster ID")
+			return etcdInfo{}, pkgerrors.New("invalid etcd cluster, members have different cluster ID")
 		}
 		memberID := pod.Annotations[cloudv1.EtcdMemberIDAnnotationName]
 		info.members.Insert(memberID)
@@ -605,7 +633,7 @@ func (r *MachineBackendReconciler) getEtcdInfo(ctx context.Context, inmemoryClie
 		// TODO: consider if and how to automatically recover from this case
 		//  note: this can happen also when reading etcd members in the server, might be it is something we have to take case before deletion...
 		//  for now it should not be an issue because KCP forward etcd leadership before deletion.
-		return etcdInfo{}, errors.New("invalid etcd cluster, no leader found")
+		return etcdInfo{}, pkgerrors.New("invalid etcd cluster, no leader found")
 	}
 
 	return info, nil
@@ -657,7 +685,7 @@ func (r *MachineBackendReconciler) reconcileNormalAPIServer(ctx context.Context,
 		if x.StartupJitter != "" {
 			jitter, err := strconv.ParseFloat(x.StartupJitter, 64)
 			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to parse API server's StartupJitter")
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to parse API server's StartupJitter")
 			}
 			if jitter > 0.0 {
 				provisioningDuration += time.Duration(rand.Float64() * jitter * float64(provisioningDuration)) //nolint:gosec // Intentionally using a weak random number generator here.
@@ -667,7 +695,7 @@ func (r *MachineBackendReconciler) reconcileNormalAPIServer(ctx context.Context,
 
 	start := conditions.Get(inMemoryMachine, infrav1.DevMachineInMemoryNodeProvisionedCondition).LastTransitionTime
 	now := time.Now()
-	if now.Before(start.Add(provisioningDuration)) {
+	if !hasBootstrappedAnnotation(machine) && now.Before(start.Add(provisioningDuration)) {
 		v1beta1conditions.MarkFalse(inMemoryMachine, infrav1.APIServerProvisionedCondition, infrav1.APIServerWaitingForStartupTimeoutReason, clusterv1.ConditionSeverityInfo, "")
 		conditions.Set(inMemoryMachine, metav1.Condition{
 			Type:   infrav1.DevMachineInMemoryAPIServerProvisionedCondition,
@@ -711,11 +739,11 @@ func (r *MachineBackendReconciler) reconcileNormalAPIServer(ctx context.Context,
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(apiServerPod), apiServerPod); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get apiServer Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get apiServer Pod")
 		}
 
 		if err := inmemoryClient.Create(ctx, apiServerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create apiServer Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create apiServer Pod")
 		}
 	}
 
@@ -724,32 +752,32 @@ func (r *MachineBackendReconciler) reconcileNormalAPIServer(ctx context.Context,
 		// Getting the Kubernetes CA
 		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.ClusterCA)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get cluster CA")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get cluster CA")
 		}
 		certData, exists := s.Data[secret.TLSCrtDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
 		}
 
 		cert, err := certs.DecodeCertPEM(certData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
 		}
 
 		keyData, exists := s.Data[secret.TLSKeyDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid cluster CA: missing data for %s", secret.TLSKeyDataName)
 		}
 
 		key, err := certs.DecodePrivateKeyPEM(keyData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSKeyDataName)
 		}
 
 		// Adding the APIServer.
 		// NOTE: When the first APIServer is added, the workload cluster listener is started.
 		if err := r.APIServerMux.AddAPIServer(listenerName, apiServer, cert, key.(*rsa.PrivateKey)); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to start API server")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to start API server")
 		}
 	}
 
@@ -803,7 +831,7 @@ func (r *MachineBackendReconciler) reconcileNormalScheduler(ctx context.Context,
 		},
 	}
 	if err := inmemoryClient.Create(ctx, schedulerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create scheduler Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create scheduler Pod")
 	}
 
 	return ctrl.Result{}, nil
@@ -850,7 +878,7 @@ func (r *MachineBackendReconciler) reconcileNormalControllerManager(ctx context.
 		},
 	}
 	if err := inmemoryClient.Create(ctx, controllerManagerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create controller manager Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create controller manager Pod")
 	}
 
 	return ctrl.Result{}, nil
@@ -883,7 +911,7 @@ func (r *MachineBackendReconciler) reconcileNormalKubeadmObjects(ctx context.Con
 		},
 	}
 	if err := inmemoryClient.Create(ctx, role); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRole")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRole")
 	}
 
 	roleBinding := &rbacv1.ClusterRoleBinding{
@@ -903,7 +931,7 @@ func (r *MachineBackendReconciler) reconcileNormalKubeadmObjects(ctx context.Con
 		},
 	}
 	if err := inmemoryClient.Create(ctx, roleBinding); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRoleBinding")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRoleBinding")
 	}
 
 	// create kubeadm config map
@@ -917,7 +945,7 @@ func (r *MachineBackendReconciler) reconcileNormalKubeadmObjects(ctx context.Con
 		},
 	}
 	if err := inmemoryClient.Create(ctx, cm); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm-config ConfigMap")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kubeadm-config ConfigMap")
 	}
 
 	return ctrl.Result{}, nil
@@ -950,7 +978,7 @@ func (r *MachineBackendReconciler) reconcileNormalKubeProxy(ctx context.Context,
 					Containers: []corev1.Container{
 						{
 							Name:  "kube-proxy",
-							Image: fmt.Sprintf("registry.k8s.io/kube-proxy:%s", machine.Spec.Version),
+							Image: fmt.Sprintf("registry.k8s.io/kube-proxy:%s", containerutil.SemverToOCIImageTag(machine.Spec.Version)),
 						},
 					},
 				},
@@ -959,11 +987,11 @@ func (r *MachineBackendReconciler) reconcileNormalKubeProxy(ctx context.Context,
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(kubeProxyDaemonSet), kubeProxyDaemonSet); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get kube-proxy DaemonSet")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get kube-proxy DaemonSet")
 		}
 
 		if err := inmemoryClient.Create(ctx, kubeProxyDaemonSet); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create kube-proxy DaemonSet")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kube-proxy DaemonSet")
 		}
 	}
 	return ctrl.Result{}, nil
@@ -993,11 +1021,11 @@ func (r *MachineBackendReconciler) reconcileNormalCoredns(ctx context.Context, c
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(corednsConfigMap), corednsConfigMap); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get coreDNS configMap")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get coreDNS configMap")
 		}
 
 		if err := inmemoryClient.Create(ctx, corednsConfigMap); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create coreDNS configMap")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create coreDNS configMap")
 		}
 	}
 	// Create the coredns deployment.
@@ -1022,11 +1050,11 @@ func (r *MachineBackendReconciler) reconcileNormalCoredns(ctx context.Context, c
 
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(corednsDeployment), corednsDeployment); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get coreDNS deployment")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get coreDNS deployment")
 		}
 
 		if err := inmemoryClient.Create(ctx, corednsDeployment); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create coreDNS deployment")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create coreDNS deployment")
 		}
 	}
 	return ctrl.Result{}, nil
@@ -1035,10 +1063,10 @@ func (r *MachineBackendReconciler) reconcileNormalCoredns(ctx context.Context, c
 // ReconcileDelete handle in memory backend for deleted DevMachine.
 func (r *MachineBackendReconciler) ReconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, inMemoryCluster *infrav1.DevCluster, machine *clusterv1.Machine, inMemoryMachine *infrav1.DevMachine) (ctrl.Result, error) {
 	if inMemoryMachine.Spec.Backend.InMemory == nil {
-		return ctrl.Result{}, errors.New("InMemoryBackendReconciler can't be called for DevMachines without an InMemory backend")
+		return ctrl.Result{}, pkgerrors.New("InMemoryBackendReconciler can't be called for DevMachines without an InMemory backend")
 	}
 	if inMemoryCluster.Spec.Backend.InMemory == nil {
-		return ctrl.Result{}, errors.New("InMemoryBackendReconciler can't be called for DevCluster without an InMemory backend")
+		return ctrl.Result{}, pkgerrors.New("InMemoryBackendReconciler can't be called for DevCluster without an InMemory backend")
 	}
 
 	// Call the inner reconciliation methods.
@@ -1083,7 +1111,7 @@ func (r *MachineBackendReconciler) reconcileDeleteCloudMachine(ctx context.Conte
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, cloudMachine); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to delete CloudMachine")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to delete CloudMachine")
 	}
 
 	return ctrl.Result{}, nil
@@ -1103,7 +1131,7 @@ func (r *MachineBackendReconciler) reconcileDeleteNode(ctx context.Context, clus
 
 	// TODO(killianmuldoon): check if we can drop this given that the MachineController is already draining pods and deleting nodes.
 	if err := inmemoryClient.Delete(ctx, node); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to delete Node")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to delete Node")
 	}
 
 	return ctrl.Result{}, nil
@@ -1129,7 +1157,7 @@ func (r *MachineBackendReconciler) reconcileDeleteETCD(ctx context.Context, clus
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, etcdPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to delete etcd Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to delete etcd Pod")
 	}
 	if err := r.APIServerMux.DeleteEtcdMember(listenerName, etcdMember); err != nil {
 		return ctrl.Result{}, err
@@ -1163,7 +1191,7 @@ func (r *MachineBackendReconciler) reconcileDeleteAPIServer(ctx context.Context,
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, apiServerPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to delete apiServer Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to delete apiServer Pod")
 	}
 	if err := r.APIServerMux.DeleteAPIServer(listenerName, apiServer); err != nil {
 		return ctrl.Result{}, err
@@ -1189,7 +1217,7 @@ func (r *MachineBackendReconciler) reconcileDeleteScheduler(ctx context.Context,
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, schedulerPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to scheduler Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to scheduler Pod")
 	}
 
 	return ctrl.Result{}, nil
@@ -1212,7 +1240,7 @@ func (r *MachineBackendReconciler) reconcileDeleteControllerManager(ctx context.
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, controllerManagerPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to controller manager Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to controller manager Pod")
 	}
 
 	return ctrl.Result{}, nil
@@ -1221,7 +1249,7 @@ func (r *MachineBackendReconciler) reconcileDeleteControllerManager(ctx context.
 // PatchDevMachine patch a DevMachine.
 func (r *MachineBackendReconciler) PatchDevMachine(ctx context.Context, patchHelper *patch.Helper, inMemoryMachine *infrav1.DevMachine, isControlPlane bool) error {
 	if inMemoryMachine.Spec.Backend.InMemory == nil {
-		return errors.New("InMemoryBackendReconciler can't be called for DevMachines without an InMemory backend")
+		return pkgerrors.New("InMemoryBackendReconciler can't be called for DevMachines without an InMemory backend")
 	}
 
 	inMemoryMachineV1Beta1Conditions := []clusterv1.ConditionType{
@@ -1262,7 +1290,7 @@ func (r *MachineBackendReconciler) PatchDevMachine(ctx context.Context, patchHel
 			),
 		},
 	); err != nil {
-		return errors.Wrapf(err, "failed to set %s condition", infrav1.DevMachineReadyCondition)
+		return pkgerrors.Wrapf(err, "failed to set %s condition", infrav1.DevMachineReadyCondition)
 	}
 
 	return patchHelper.Patch(ctx, inMemoryMachine,
@@ -1282,4 +1310,14 @@ func (r *MachineBackendReconciler) PatchDevMachine(ctx context.Context, patchHel
 			infrav1.DevMachineInMemoryAPIServerProvisionedCondition,
 		}},
 	)
+}
+
+const (
+	// MachineBootstrappedAnnotationName is added to the Machine once the machine is entirely bootstrapped.
+	MachineBootstrappedAnnotationName = "machine.inmemory.infrastructure.cluster.x-k8s.io/bootstrapped"
+)
+
+func hasBootstrappedAnnotation(machine *clusterv1.Machine) bool {
+	_, ok := machine.Annotations[MachineBootstrappedAnnotationName]
+	return ok
 }
