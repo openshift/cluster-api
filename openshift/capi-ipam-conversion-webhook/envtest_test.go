@@ -175,6 +175,7 @@ func setupIPAMEnvtest(t *testing.T) (client.Client, envtest.WebhookInstallOption
 	// Install the shipped IPAM schemas and storage settings. Envtest replaces
 	// their Service references with a local HTTPS URL and supplies its CA bundle.
 	environment := &envtest.Environment{
+		WebhookInstallOptions: envtest.WebhookInstallOptions{IgnoreSchemeConvertible: true},
 		Scheme:                scheme,
 		CRDDirectoryPaths:     []string{filepath.Join("..", "manifests", "0000_30_cluster-api_04_crd.core-cluster-api.yaml")},
 		CRDs:                  []*apiextensionsv1.CustomResourceDefinition{configCRD},

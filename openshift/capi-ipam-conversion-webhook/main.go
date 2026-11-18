@@ -28,6 +28,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/component-base/logs"
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	_ "k8s.io/component-base/logs/json/register"
@@ -42,6 +43,7 @@ import (
 	ipamv1alpha1 "sigs.k8s.io/cluster-api/api/ipam/v1alpha1"
 	ipamv1beta1 "sigs.k8s.io/cluster-api/api/ipam/v1beta1"
 	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
+	capiconversion "sigs.k8s.io/cluster-api/core/webhooks/conversion"
 )
 
 type options struct {
@@ -160,7 +162,16 @@ func newWebhookServer(scheme *runtime.Scheme, opts options, configureTLS func(*t
 		KeyName:  opts.keyName,
 		TLSOpts:  []func(*tls.Config){configureTLS},
 	})
-	server.Register("/convert", conversion.NewWebhookHandler(scheme, conversion.NewRegistry()))
+	registry := conversion.NewRegistry()
+	for kind, newConverter := range map[string]func(*runtime.Scheme) (conversion.Converter, error){
+		"IPAddress":      capiconversion.IPAddress,
+		"IPAddressClaim": capiconversion.IPAddressClaim,
+	} {
+		converter, err := newConverter(scheme)
+		utilruntime.Must(err)
+		utilruntime.Must(registry.RegisterConverter(ipamv1.GroupVersion.WithKind(kind).GroupKind(), converter))
+	}
+	server.Register("/convert", conversion.NewWebhookHandler(scheme, registry))
 	// These endpoints are served on the same TLS listener as conversion, so a
 	// successful probe also verifies that the serving certificate has been loaded.
 	server.Register("/healthz", healthz.CheckHandler{Checker: healthz.Ping})
