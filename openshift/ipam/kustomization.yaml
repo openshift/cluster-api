@@ -22,7 +22,7 @@ commonAnnotations:
   service.beta.openshift.io/inject-cabundle: "true"
 
 resources:
-- ../../config/crd
+- ../../core/config/crd
 
 patches:
 

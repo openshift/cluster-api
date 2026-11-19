@@ -30,7 +30,7 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
@@ -45,7 +45,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
@@ -95,7 +95,7 @@ func TestMux(t *testing.T) {
 	g.Expect(err).ToNot(HaveOccurred())
 	defer func() { _ = wcmux.Shutdown(ctx) }()
 
-	listener, err := wcmux.InitWorkloadClusterListener(wcl)
+	listener, err := wcmux.InitWorkloadClusterListener(wcl, 0)
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(listener.Host()).To(Equal(host))
 	g.Expect(listener.Port()).ToNot(BeZero())
@@ -276,7 +276,7 @@ func TestAPI_PortForward(t *testing.T) {
 
 	// InfraCluster controller >> when "creating the load balancer"
 	wcl1 := "workload-cluster1-controlPlaneEndpoint"
-	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
+	listener, err := wcmux.InitWorkloadClusterListener(wcl1, 0)
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(listener.Host()).To(Equal(host))
 	g.Expect(listener.Port()).ToNot(BeZero())
@@ -665,7 +665,7 @@ func setupWorkloadClusterListener(g Gomega, ports CustomPorts) (*WorkloadCluster
 	// InfraCluster controller >> when "creating the load balancer"
 	wcl1 := "workload-cluster1-controlPlaneEndpoint"
 
-	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
+	listener, err := wcmux.InitWorkloadClusterListener(wcl1, 0)
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(listener.Host()).To(Equal(host))
 	g.Expect(listener.Port()).ToNot(BeZero())
@@ -728,7 +728,7 @@ func getCachingClient(restConfig *rest.Config) (client.WithWatch, context.Cancel
 		return nil, nil, err
 	}
 
-	ca, err := cache.New(restConfig, cache.Options{})
+	ca, err := ctrlcache.New(restConfig, ctrlcache.Options{})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -792,11 +792,11 @@ func newSelfSignedCACert(key *rsa.PrivateKey) (*x509.Certificate, error) {
 
 	b, err := x509.CreateCertificate(cryptorand.Reader, &tmpl, &tmpl, key.Public(), key)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create self signed CA certificate: %+v", tmpl)
+		return nil, pkgerrors.Wrapf(err, "failed to create self signed CA certificate: %+v", tmpl)
 	}
 
 	c, err := x509.ParseCertificate(b)
-	return c, errors.WithStack(err)
+	return c, pkgerrors.WithStack(err)
 }
 
 func apiServerEtcdClientCertificateConfig() *certs.Config {

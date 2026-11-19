@@ -3,7 +3,7 @@ module tools
 go 1.26.0
 
 require (
-	github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20261106153353-bced174ae373
+	github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20261118090456-a8364bebf7b0
 	sigs.k8s.io/kustomize/kustomize/v5 v5.8.0
 )
 
@@ -40,7 +40,7 @@ require (
 	github.com/monochromegane/go-gitignore v0.0.0-20200626010858-205db1a8cc00 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/openshift/api v0.0.0-20261028095540-9af1f7b4730c // indirect
+	github.com/openshift/api v0.0.0-20261117044008-410efb4bfbac // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
