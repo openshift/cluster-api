@@ -83,3 +83,7 @@ tmp
 
 # Claude's configuration
 .claude/
+
+# Openshift carry: Unignore anything under vendor folders. Needed by Konflux.
+!**/vendor/**
+
