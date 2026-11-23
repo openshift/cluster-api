@@ -12316,6 +12316,7 @@ spec:
         - --additional-sync-machine-annotations=.*
         - --tls-min-version=${TLS_MIN_VERSION}
         - --tls-cipher-suites=${TLS_CIPHER_SUITES}
+        - --tls-curve-preferences=${TLS_CURVE_PREFERENCES}
         command:
         - /manager
         env:
