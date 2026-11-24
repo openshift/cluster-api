@@ -9,7 +9,7 @@ RUN GO111MODULE=on CGO_ENABLED=0 GOOS=${GOOS} GOPROXY=${GOPROXY} go build \
 
 RUN cd openshift/capi-ipam-conversion-webhook && \
   GO111MODULE=on CGO_ENABLED=0 GOOS=${GOOS} GOPROXY=${GOPROXY} go build \
-  -mod=readonly -ldflags="-w -s" -o=/build/capi-ipam-conversion-webhook .
+  -mod=vendor -ldflags="-w -s" -o=/build/capi-ipam-conversion-webhook .
 
 FROM registry.ci.openshift.org/ocp/5.0:base-rhel9
 
